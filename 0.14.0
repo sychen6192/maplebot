@@ -1,0 +1,14 @@
+Ignoring numpy: markers 'python_version == "3.6" and platform_machine != "aarch64" and platform_machine != "arm64"' don't match your environment
+Ignoring numpy: markers 'python_version == "3.7" and platform_machine != "aarch64" and platform_machine != "arm64"' don't match your environment
+Ignoring numpy: markers 'python_version == "3.8" and platform_machine != "aarch64" and platform_machine != "arm64"' don't match your environment
+Ignoring numpy: markers 'python_version <= "3.9" and sys_platform == "linux" and platform_machine == "aarch64"' don't match your environment
+Ignoring numpy: markers 'python_version <= "3.9" and sys_platform == "darwin" and platform_machine == "arm64"' don't match your environment
+Ignoring numpy: markers 'python_version == "3.9" and platform_machine != "aarch64" and platform_machine != "arm64"' don't match your environment
+Ignoring numpy: markers 'python_version == "3.10" and platform_system != "Darwin"' don't match your environment
+Ignoring numpy: markers 'python_version == "3.10" and platform_system == "Darwin"' don't match your environment
+Collecting cmake
+  Downloading https://files.pythonhosted.org/packages/d4/73/ea47cc01e712ab804f1e40840ee8c5243cfdf73d34497cce27fa5d66a82d/cmake-3.27.2-py2.py3-none-win_amd64.whl (34.6MB)
+Collecting numpy==1.22.2
+  Downloading https://files.pythonhosted.org/packages/e9/6c/c0a8130fe198f27bab92f1b28631e0cc2572295f6b7a31e87efe7448aa1c/numpy-1.22.2.zip (11.4MB)
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'error'
