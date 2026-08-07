@@ -12,6 +12,7 @@ import numpy as np
 from .brain.state import GameState
 from .config import AppCfg
 from .vision import minimap, status
+from .vision.locate import PLAYER_NAME, load_ui_template
 from .vision.mobs import MobDetector
 
 
@@ -19,6 +20,8 @@ class Perceiver:
     def __init__(self, cfg: AppCfg, detector: MobDetector):
         self.cfg = cfg
         self.detector = detector
+        # 有玩家點模板就優先用模板匹配（見 vision/minimap.py）
+        self.player_template = load_ui_template(cfg.vision.ui_templates_dir, PLAYER_NAME)
 
     def _slice(self, frame: np.ndarray, name: str) -> Optional[np.ndarray]:
         region = self.cfg.regions.get(name)
@@ -36,7 +39,8 @@ class Perceiver:
 
         mm = self._slice(frame, "minimap")
         if mm is not None:
-            st.player = minimap.find_player(mm, vc)
+            st.minimap_size = (mm.shape[1], mm.shape[0])
+            st.player = minimap.find_player(mm, vc, template=self.player_template)
             st.others = minimap.find_others(mm, vc)
 
         hp = self._slice(frame, "hp_bar")

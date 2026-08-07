@@ -39,6 +39,19 @@ def main() -> int:
     cfg = load_config(args.config)
     profile = load_profile(args.profile)
     cap = ImageCapture(args.source) if args.source else WindowCapture(cfg.window_title)
+
+    if cfg.minimap_auto:
+        from maplebot.vision.locate import BR_NAME, TL_NAME, find_minimap, load_ui_template
+        tl = load_ui_template(cfg.vision.ui_templates_dir, TL_NAME)
+        br = load_ui_template(cfg.vision.ui_templates_dir, BR_NAME)
+        region = find_minimap(cap.grab(), tl, br, cfg.vision.minimap_border) \
+            if tl is not None and br is not None else None
+        if region:
+            cfg.regions["minimap"] = region
+            print(f"小地圖自動定位: {list(region)}")
+        else:
+            print("警告：小地圖自動定位失敗（缺角落模板或分數過低）")
+
     perceiver = Perceiver(cfg, make_detector(cfg.vision, profile.templates_dir))
     rt = fsm.Runtime()
     pf = cfg.region("playfield")

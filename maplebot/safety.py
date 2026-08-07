@@ -68,6 +68,15 @@ def save_anomaly(frame: Optional[np.ndarray], reason: str, logger) -> None:
         logger.warning("異常狀況（%s），但沒有可存的畫面", reason)
 
 
+def is_black_screen(frame: np.ndarray, dark_level: int = 15,
+                    dark_fraction: float = 0.9) -> bool:
+    """整個畫面幾乎全黑 = 斷線/換頻道/讀圖中（參考 auto-maple 的
+    room-change 偵測）。取 1/4 取樣算就夠準。"""
+    sample = frame[::4, ::4]
+    dark = (sample.max(axis=2) < dark_level).mean()
+    return bool(dark >= dark_fraction)
+
+
 class LostPlayerWatchdog:
     """連續一段時間找不到玩家黃點（換圖/斷線/被傳走）就觸發暫停。"""
 

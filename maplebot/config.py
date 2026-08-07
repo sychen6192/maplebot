@@ -1,10 +1,18 @@
-"""載入與驗證 YAML 設定（全域 config + 地圖 profile）。"""
+"""載入與驗證 YAML 設定（全域 config + 地圖 profile）。
+
+支援 config/local.yaml 覆寫層（參考 MapleStoryAutoLevelUp 的
+config_default + config_custom 設計）：個人設定放 local.yaml，
+不用動版本控管的 default.yaml。
+"""
+import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 import yaml
 
 Region = Tuple[int, int, int, int]  # x, y, w, h（遊戲視窗 client 區座標）
+
+LOCAL_OVERRIDE = os.path.join("config", "local.yaml")
 
 
 class ConfigError(Exception):
@@ -20,12 +28,25 @@ def _region(raw, name: str) -> Region:
     return (x, y, w, h)
 
 
+def _deep_merge(base: dict, override: dict) -> dict:
+    out = dict(base)
+    for k, v in override.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
 @dataclass
 class VisionCfg:
     minimap_player_rgb: Tuple[int, int, int] = (255, 255, 0)
     minimap_other_rgb: Tuple[int, int, int] = (255, 0, 0)
     color_tolerance: int = 60
     min_dot_pixels: int = 2
+    max_dot_pixels: int = 60          # 大於此面積的色塊視為地形而非玩家點
+    ui_templates_dir: str = "data/templates/ui"
+    minimap_border: int = 6           # auto 定位小地圖時向內縮的邊框厚度
     bar_colors: Dict[str, str] = field(default_factory=lambda: {"hp": "red", "mp": "blue", "exp": "yellow"})
     mob_detector: str = "template"  # template | yolo
     mob_match_threshold: float = 0.72
@@ -40,6 +61,8 @@ class SafetyCfg:
     critical_hp_ratio: float = 0.25
     pause_when_players: bool = True
     lost_player_timeout: float = 5.0
+    sound_alerts: bool = True         # 危險事件用 winsound 嗶聲提醒
+    black_screen_pause: bool = True   # 黑屏（斷線/讀圖）自動暫停
 
 
 @dataclass
@@ -56,6 +79,7 @@ class AppCfg:
     window_title: str = "MapleStory"
     fps: float = 8.0
     regions: Dict[str, Region] = field(default_factory=dict)
+    minimap_auto: bool = False        # regions.minimap: auto 時用角落模板自動定位
     vision: VisionCfg = field(default_factory=VisionCfg)
     safety: SafetyCfg = field(default_factory=SafetyCfg)
     advisor: AdvisorCfg = field(default_factory=AdvisorCfg)
@@ -67,16 +91,26 @@ class AppCfg:
 
 
 @dataclass
+class Waypoint:
+    x: float                          # >1 = 小地圖絕對 px；<=1 = 佔小地圖寬度比例
+    keys: List[str] = field(default_factory=list)  # 抵達時依序敲的鍵（跳躍/技能等）
+
+
+@dataclass
 class PatrolCfg:
-    waypoints_x: List[int] = field(default_factory=list)
+    waypoints: List[Waypoint] = field(default_factory=list)
     tolerance: int = 4
     step_seconds_per_px: float = 0.02
     max_step_seconds: float = 0.45
+    stuck_seconds: float = 4.0        # 走了這麼久位置都沒變 -> 判定卡住
+    stuck_px: int = 3
+    jump_key: str = "alt"             # 卡住脫困用的跳躍鍵
 
 
 @dataclass
 class AttackCfg:
     key: str = "x"
+    type: str = "directional"         # directional（要面向）| aoe（原地放）
     range_px: int = 320
     vertical_range_px: int = 90
     cast_seconds: float = 0.6
@@ -106,6 +140,7 @@ class Profile:
     attack: AttackCfg = field(default_factory=AttackCfg)
     buffs: List[BuffCfg] = field(default_factory=list)
     potions: Dict[str, PotionCfg] = field(default_factory=dict)
+    panic_return_key: str = ""        # 設定後，Panic 時會先按回城卷再停止
 
 
 def _load_yaml(path: str) -> dict:
@@ -121,8 +156,23 @@ def _load_yaml(path: str) -> dict:
     return data
 
 
-def load_config(path: str) -> AppCfg:
+def _parse_waypoint(raw) -> Waypoint:
+    if isinstance(raw, dict):
+        if "x" not in raw:
+            raise ConfigError(f"waypoint 少了 x: {raw!r}")
+        keys = raw.get("keys", [])
+        if not isinstance(keys, list):
+            raise ConfigError(f"waypoint keys 必須是清單: {raw!r}")
+        return Waypoint(x=float(raw["x"]), keys=[str(k).lower() for k in keys])
+    if isinstance(raw, (int, float)):
+        return Waypoint(x=float(raw))
+    raise ConfigError(f"看不懂的 waypoint 格式: {raw!r}")
+
+
+def load_config(path: str, local_path: str = LOCAL_OVERRIDE) -> AppCfg:
     data = _load_yaml(path)
+    if local_path and os.path.exists(local_path):
+        data = _deep_merge(data, _load_yaml(local_path))
     cfg = AppCfg()
 
     win = data.get("window", {})
@@ -130,6 +180,9 @@ def load_config(path: str) -> AppCfg:
     cfg.fps = float(data.get("loop", {}).get("fps", cfg.fps))
 
     for name, raw in (data.get("regions") or {}).items():
+        if name == "minimap" and raw == "auto":
+            cfg.minimap_auto = True
+            continue
         cfg.regions[name] = _region(raw, name)
 
     v = data.get("vision", {})
@@ -138,6 +191,9 @@ def load_config(path: str) -> AppCfg:
     vc.minimap_other_rgb = tuple(v.get("minimap_other_rgb", vc.minimap_other_rgb))  # type: ignore
     vc.color_tolerance = int(v.get("color_tolerance", vc.color_tolerance))
     vc.min_dot_pixels = int(v.get("min_dot_pixels", vc.min_dot_pixels))
+    vc.max_dot_pixels = int(v.get("max_dot_pixels", vc.max_dot_pixels))
+    vc.ui_templates_dir = str(v.get("ui_templates_dir", vc.ui_templates_dir))
+    vc.minimap_border = int(v.get("minimap_border", vc.minimap_border))
     vc.bar_colors.update(v.get("bars", {}))
     vc.mob_detector = str(v.get("mob_detector", vc.mob_detector))
     vc.mob_match_threshold = float(v.get("mob_match_threshold", vc.mob_match_threshold))
@@ -151,6 +207,8 @@ def load_config(path: str) -> AppCfg:
     sc.critical_hp_ratio = float(s.get("critical_hp_ratio", sc.critical_hp_ratio))
     sc.pause_when_players = bool(s.get("pause_when_players", sc.pause_when_players))
     sc.lost_player_timeout = float(s.get("lost_player_timeout", sc.lost_player_timeout))
+    sc.sound_alerts = bool(s.get("sound_alerts", sc.sound_alerts))
+    sc.black_screen_pause = bool(s.get("black_screen_pause", sc.black_screen_pause))
 
     a = data.get("advisor", {})
     ac = cfg.advisor
@@ -167,15 +225,23 @@ def load_profile(path: str) -> Profile:
     p = Profile()
     p.name = str(data.get("name", p.name))
     p.templates_dir = str(data.get("templates_dir", p.templates_dir))
+    p.panic_return_key = str(data.get("panic_return_key", "")).lower()
 
     pa = data.get("patrol", {})
-    p.patrol.waypoints_x = [int(v) for v in pa.get("waypoints_x", [])]
+    raw_wps = pa.get("waypoints", pa.get("waypoints_x", []))
+    p.patrol.waypoints = [_parse_waypoint(w) for w in raw_wps]
     p.patrol.tolerance = int(pa.get("tolerance", p.patrol.tolerance))
     p.patrol.step_seconds_per_px = float(pa.get("step_seconds_per_px", p.patrol.step_seconds_per_px))
     p.patrol.max_step_seconds = float(pa.get("max_step_seconds", p.patrol.max_step_seconds))
+    p.patrol.stuck_seconds = float(pa.get("stuck_seconds", p.patrol.stuck_seconds))
+    p.patrol.stuck_px = int(pa.get("stuck_px", p.patrol.stuck_px))
+    p.patrol.jump_key = str(pa.get("jump_key", p.patrol.jump_key)).lower()
 
     at = data.get("attack", {})
     p.attack.key = str(at.get("key", p.attack.key)).lower()
+    p.attack.type = str(at.get("type", p.attack.type)).lower()
+    if p.attack.type not in ("directional", "aoe"):
+        raise ConfigError(f"attack.type 只能是 directional 或 aoe，拿到: {p.attack.type!r}")
     p.attack.range_px = int(at.get("range_px", p.attack.range_px))
     p.attack.vertical_range_px = int(at.get("vertical_range_px", p.attack.vertical_range_px))
     p.attack.cast_seconds = float(at.get("cast_seconds", p.attack.cast_seconds))
@@ -195,6 +261,6 @@ def load_profile(path: str) -> Profile:
             below_ratio=float(pot.get("below_ratio", 0.0)),
             cooldown=float(pot.get("cooldown", 1.0)),
         )
-    if not p.patrol.waypoints_x:
-        raise ConfigError("profile 至少要有一個 patrol.waypoints_x 巡邏點")
+    if not p.patrol.waypoints:
+        raise ConfigError("profile 至少要有一個 patrol.waypoints 巡邏點")
     return p

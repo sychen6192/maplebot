@@ -3,7 +3,7 @@ import pytest
 
 from maplebot.brain import fsm
 from maplebot.brain.state import GameState
-from maplebot.config import AppCfg, BuffCfg, PotionCfg, Profile
+from maplebot.config import AppCfg, BuffCfg, PotionCfg, Profile, Waypoint
 from maplebot.vision.mobs import Mob
 
 CENTER = (400, 260)
@@ -18,7 +18,7 @@ def cfg():
 @pytest.fixture
 def profile():
     p = Profile()
-    p.patrol.waypoints_x = [40, 95]
+    p.patrol.waypoints = [Waypoint(40), Waypoint(95)]
     p.attack.key = "x"
     p.attack.range_px = 320
     p.attack.vertical_range_px = 90
@@ -30,8 +30,8 @@ def profile():
     return p
 
 
-def _state(hp=0.9, mp=0.9, player=(60, 30), others=(), mobs=()):
-    return GameState(ts=NOW, hp=hp, mp=mp, player=player,
+def _state(hp=0.9, mp=0.9, player=(60, 30), others=(), mobs=(), minimap_size=(130, 60)):
+    return GameState(ts=NOW, hp=hp, mp=mp, player=player, minimap_size=minimap_size,
                      others=list(others), mobs=list(mobs))
 
 
@@ -98,6 +98,13 @@ def test_attack_nearest_mob_direction(cfg, profile):
     action = fsm.decide(st, cfg, profile, _rt(), NOW, CENTER)
     assert isinstance(action, fsm.Attack)
     assert action.direction == -1
+    assert action.aoe is False
+
+
+def test_aoe_attack_flag(cfg, profile):
+    profile.attack.type = "aoe"
+    action = fsm.decide(_state(mobs=[_mob(420)]), cfg, profile, _rt(), NOW, CENTER)
+    assert isinstance(action, fsm.Attack) and action.aoe is True
 
 
 def test_mob_out_of_vertical_range_ignored(cfg, profile):
@@ -117,3 +124,41 @@ def test_patrol_advances_waypoint_on_arrival(cfg, profile):
     action = fsm.decide(_state(player=(41, 30)), cfg, profile, rt, NOW, CENTER)
     assert isinstance(action, fsm.Wait)
     assert rt.wp_index == 1  # 切到下一個巡邏點
+
+
+def test_relative_waypoint_resolution(cfg, profile):
+    profile.patrol.waypoints = [Waypoint(0.5)]  # 小地圖寬 130 -> x=65
+    action = fsm.decide(_state(player=(20, 30)), cfg, profile, _rt(), NOW, CENTER)
+    assert isinstance(action, fsm.Move)
+    assert action.target_x == 65 and action.direction == 1
+
+
+def test_waypoint_keys_run_on_arrival(cfg, profile):
+    profile.patrol.waypoints = [Waypoint(40, keys=["alt"]), Waypoint(95)]
+    rt = _rt()
+    action = fsm.decide(_state(player=(41, 30)), cfg, profile, rt, NOW, CENTER)
+    assert isinstance(action, fsm.RunKeys)
+    assert action.keys == ["alt"]
+    assert rt.wp_index == 1  # 已切到下一點，keys 只會跑一次
+
+
+def test_stuck_triggers_escape(cfg, profile):
+    rt = _rt()
+    pos = (60, 30)  # 離目標 40 還很遠，位置一直不動
+    a1 = fsm.decide(_state(player=pos), cfg, profile, rt, NOW, CENTER)
+    assert isinstance(a1, fsm.Move)
+    a2 = fsm.decide(_state(player=pos), cfg, profile, rt, NOW + 2.0, CENTER)
+    assert isinstance(a2, fsm.Move)  # 還沒超過 stuck_seconds
+    a3 = fsm.decide(_state(player=pos), cfg, profile, rt, NOW + 4.5, CENTER)
+    assert isinstance(a3, fsm.Escape)
+    assert a3.jump_key == "alt"
+    a4 = fsm.decide(_state(player=pos), cfg, profile, rt, NOW + 4.6, CENTER)
+    assert isinstance(a4, fsm.Move)  # 脫困後重新計時，不會連發
+
+
+def test_moving_player_never_escapes(cfg, profile):
+    rt = _rt()
+    for i, x in enumerate(range(90, 50, -5)):  # 一路有在動
+        action = fsm.decide(_state(player=(x, 30)), cfg, profile, rt,
+                            NOW + i * 2.0, CENTER)
+        assert isinstance(action, fsm.Move)

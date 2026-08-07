@@ -3,14 +3,25 @@ name: "範例：左右巡邏"
 
 templates_dir: "data/templates/mobs"   # 用 tools/grab_template.py 蒐集怪物模板
 
+# HP 進入危險線時先按回城卷再停止（留空 = 直接停止）
+panic_return_key: ""
+
 patrol:
-  waypoints_x: [40, 95]     # 小地圖 x 座標（用 tools/debug_view.py 看玩家綠圈讀值）
+  # 巡邏點三種寫法可混用：
+  #   40            -> 小地圖絕對 x（px）
+  #   0.75          -> 佔小地圖寬度比例（小地圖大小改變也不用重寫）
+  #   {x: 95, keys: [alt]} -> 抵達時依序敲鍵（跳上平台、放置技能等）
+  waypoints: [40, 95]
   tolerance: 4              # 距離巡邏點多少 px 內算抵達
   step_seconds_per_px: 0.02 # 每差 1px 走多久（依角色移速微調）
   max_step_seconds: 0.45    # 單次最長走多久（走一步→重新看位置，閉迴路）
+  stuck_seconds: 4.0        # 移動中位置卡住超過幾秒就跳一下脫困
+  stuck_px: 3
+  jump_key: alt             # 脫困用跳躍鍵
 
 attack:
   key: x                    # 攻擊/技能鍵
+  type: directional         # directional = 先轉向再打；aoe = 原地放（祭司/主教的技能）
   range_px: 320             # 怪物離畫面中心（≈角色）多少 px 內才攻擊
   vertical_range_px: 90     # 垂直容許範圍（避免打不到樓上樓下的怪）
   cast_seconds: 0.6         # 按住攻擊鍵的時間

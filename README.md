@@ -8,14 +8,18 @@
 
 **特色一覽**
 
-- **感知**：小地圖定位（玩家/其他玩家）、HP/MP/EXP 比例讀取、怪物偵測
-  （OpenCV 模板匹配，可一鍵切換自訓 YOLO）
+- **感知**：小地圖定位（玩家/其他玩家、角落模板自動找 ROI）、HP/MP/EXP 比例讀取、
+  怪物偵測（OpenCV 模板匹配，可一鍵切換自訓 YOLO）
 - **決策**：純函式優先權狀態機——保命 > 補給 > 禮讓 > buff > 打怪 > 巡邏，
-  單元測試完整涵蓋
-- **控制**：SendInput scancode（DirectInput 遊戲吃得到），含緊急停止熱鍵
-- **安全**：HP 危險線自動停機、其他玩家出現先暫停、找不到角色觸發 watchdog + 截圖存證
-- **可測性**：44 個 pytest（合成影像 + 真實截圖真值），整條主迴圈可用一張截圖 dry-run
+  含卡住偵測自動脫困，單元測試完整涵蓋
+- **控制**：SendInput scancode（DirectInput 遊戲吃得到），按鍵時間帶 ±20% 抖動
+- **安全**：HP 危險線自動停機（可先回城）、其他玩家出現先暫停、黑屏/找不到角色
+  自動暫停 + 截圖存證 + 聲音警報
+- **可測性**：67 個 pytest（合成影像 + 真實截圖真值），整條主迴圈可用一張截圖 dry-run
 - **ML 擴充**：YOLO 訓練管線（蒐集→自動預標註→校對→訓練→部署）與本地 VLM 督導層
+
+設計對照過同類最高星的開源專案（684★ auto-maple、356★ MapleStoryAutoLevelUp），
+採用/不採用清單見 **[docs/COMPARISON.md](docs/COMPARISON.md)**。
 
 > **用途聲明**：本專案僅供電腦視覺／自動化控制的學習研究。在官方伺服器使用外掛
 > 違反遊戲服務條款，可能導致帳號停權；請只在你自己擁有或獲得允許的環境
@@ -158,7 +162,8 @@ config/profiles/*.yaml       # 各地圖 profile（巡邏、攻擊、buff、藥�
 maplebot/
   capture.py                 # mss 視窗擷取 / 靜態圖片來源（離線）
   window.py                  # 找遊戲視窗、client 區座標、DPI aware
-  vision/minimap.py          #   玩家黃點、其他玩家紅點
+  vision/minimap.py          #   玩家點（模板優先/顏色備援）、其他玩家紅點
+  vision/locate.py           #   小地圖角落模板自動定位（regions.minimap: auto）
   vision/status.py           #   HP/MP/EXP 比例（逐欄色彩統計）
   vision/mobs.py             #   模板匹配偵測 + NMS（MobDetector 介面）
   vision/yolo_mobs.py        #   YOLO 偵測（選配，同介面）
@@ -168,7 +173,8 @@ maplebot/
   brain/advisor.py           # VLM 督導層（選配）
   executor.py                # Executor：Action -> 按鍵序列 + 冷卻/統計
   control/input_win.py       # SendInput scancode 鍵盤層（tap/release_all）
-  safety.py                  # 熱鍵、危險停機、watchdog、異常截圖
+  safety.py                  # 熱鍵、危險停機、黑屏偵測、watchdog、異常截圖
+  alerts.py                  # 危險事件嗶聲警報（winsound）
   runner.py                  # 主迴圈調度：擷取→感知→決策→執行 + 安全機制
   dataset.py                 # YOLO 資料集：模板自動預標註、train/val 打包
 tools/
