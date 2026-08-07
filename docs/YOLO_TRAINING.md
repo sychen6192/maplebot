@@ -114,14 +114,24 @@ python tools/auto_pipeline.py
 不想截模板的話，把第 2 步的自動標註換成 GroundingDINO——一句 prompt 就標：
 
 ```bash
+uv pip install transformers pillow          # 多半已經有了
+
 # 先試一張，確認它看得到你的怪（sprite 是它的弱項，一定要先測）
 python tools/label_gdino.py --test datasets/raw/xxxx.jpg --prompt "monster"
+# 沒框到就降門檻再試
+python tools/label_gdino.py --test datasets/raw/xxxx.jpg --prompt "monster" --box-threshold 0.1
+
 # 看到框對了再批次標，然後照常切分、訓練
-python tools/label_gdino.py --prompt "monster"
+python tools/label_gdino.py --prompt "monster" --box-threshold 0.15
 python tools/prepare_dataset.py && python tools/train_yolo.py
 ```
 
-`--test` 沒框到就別勉強——回頭用模板老師，楓谷 sprite 用模板反而更穩。
+> 用的是 **transformers 官方維護版**的 GroundingDINO，不是 autodistill 那包。
+> autodistill 依賴的 `groundingdino` 套件已停止維護，在 transformers 5.x 會炸在
+> `BertModel has no attribute 'get_head_mask'`——別浪費時間在那條路上。
+
+`--test` 降到 0.1 還是沒框到就別勉強——回頭用模板老師，
+楓谷 sprite 用模板反而更穩。
 
 ## 選配：人工精修（只有想再擠準度時才做）
 
