@@ -175,3 +175,48 @@ def grab_client(win: GameWindow) -> Optional[np.ndarray]:
 def focus(win: GameWindow) -> None:
     if IS_WINDOWS:
         user32.SetForegroundWindow(win.hwnd)
+
+
+def virtual_screen() -> Tuple[int, int, int, int]:
+    """所有螢幕合起來的桌面範圍 (x, y, w, h)，含副螢幕。"""
+    if not IS_WINDOWS:
+        return (0, 0, 1920, 1080)
+    SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN = 76, 77
+    SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN = 78, 79
+    return (user32.GetSystemMetrics(SM_XVIRTUALSCREEN),
+            user32.GetSystemMetrics(SM_YVIRTUALSCREEN),
+            user32.GetSystemMetrics(SM_CXVIRTUALSCREEN),
+            user32.GetSystemMetrics(SM_CYVIRTUALSCREEN))
+
+
+def _overlaps(a: Tuple[int, int, int, int], b: Tuple[int, int, int, int]) -> bool:
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    return not (ax + aw <= bx or bx + bw <= ax or ay + ah <= by or by + bh <= ay)
+
+
+def pick_free_position(game_rect: Tuple[int, int, int, int],
+                       win_size: Tuple[int, int],
+                       screen_rect: Tuple[int, int, int, int]) -> Optional[Tuple[int, int]]:
+    """找一個放得下、又不會蓋住遊戲視窗的位置。
+
+    螢幕擷取模式下，偵錯視窗一旦蓋在遊戲上就會拍到自己（畫面遞迴疊圖），
+    所以寧可放到副螢幕或旁邊；真的沒空位就回 None 讓呼叫端提示使用者。
+    """
+    gx, gy, gw, gh = game_rect
+    ww, wh = win_size
+    sx, sy, sw, sh = screen_rect
+    candidates = [
+        (gx + gw + 8, sy),            # 遊戲右邊（含副螢幕）
+        (sx, sy),                     # 桌面左上
+        (gx, gy + gh + 8),            # 遊戲下方
+        (sx + sw - ww, sy),           # 桌面右上
+        (sx, sy + sh - wh),           # 桌面左下
+    ]
+    for x, y in candidates:
+        if x < sx or y < sy or x + ww > sx + sw or y + wh > sy + sh:
+            continue
+        if _overlaps((x, y, ww, wh), game_rect):
+            continue
+        return (x, y)
+    return None

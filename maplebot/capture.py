@@ -71,6 +71,11 @@ class WindowCapture:
         assert self._win is not None
         return self._win.size
 
+    @property
+    def origin(self):
+        assert self._win is not None
+        return self._win.origin
+
     def _grab_screen(self) -> np.ndarray:
         assert self._win is not None
         ox, oy = self._win.origin
