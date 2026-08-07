@@ -47,12 +47,20 @@ safety:
   black_screen_pause: true  # 畫面全黑（斷線/換頻道/讀圖）自動暫停
 
 # 選配：本地 VLM 督導層（slow loop）。
-# 在 RTX 5090 上用 vLLM / LM Studio / Ollama 起一個 OpenAI 相容端點即可，例：
-#   vllm serve Qwen/Qwen2.5-VL-7B-Instruct --max-model-len 8192
-# 它每 interval 秒看一次畫面，判斷卡死/對話框/斷線等異常，異常時只會把 bot 暫停。
+# 每 interval 秒看一次畫面，判斷卡死/對話框/斷線等異常，異常時只會把 bot 暫停。
+# 必須是「視覺」模型（要看截圖），純文字模型不行。
+#
+# Ollama（最簡單）：
+#   ollama pull qwen2.5vl:7b        # 6GB，判斷異常綽綽有餘
+#   ollama pull qwen2.5vl:32b       # 21GB，5090 純推理可跑，判斷力更強
+#   然後把 enabled 改 true 即可（endpoint/model 預設就是 Ollama）
+#
+# vLLM 使用者改成：
+#   endpoint: "http://127.0.0.1:8000/v1/chat/completions"
+#   model: "Qwen/Qwen2.5-VL-7B-Instruct"
 advisor:
   enabled: false
-  endpoint: "http://127.0.0.1:8000/v1/chat/completions"
-  model: "Qwen/Qwen2.5-VL-7B-Instruct"
+  endpoint: "http://127.0.0.1:11434/v1/chat/completions"
+  model: "qwen2.5vl:7b"
   interval: 20.0
   timeout: 15.0

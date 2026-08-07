@@ -68,8 +68,8 @@ class SafetyCfg:
 @dataclass
 class AdvisorCfg:
     enabled: bool = False
-    endpoint: str = "http://127.0.0.1:8000/v1/chat/completions"
-    model: str = "Qwen/Qwen2.5-VL-7B-Instruct"
+    endpoint: str = "http://127.0.0.1:11434/v1/chat/completions"  # Ollama 預設埠
+    model: str = "qwen2.5vl:7b"
     interval: float = 20.0
     timeout: float = 15.0
 
