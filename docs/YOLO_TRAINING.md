@@ -4,12 +4,28 @@
 「對動作幀敏感、會被重疊干擾」變成毫秒級、對變化魯棒的偵測器，
 決策層（`brain/fsm.py`）完全不用改。
 
-整條管線：
+## 核心觀念：你不用手動標註
+
+業界做法叫 **知識蒸餾 / 自動標註（Autodistill）**：用一個「老師」自動把畫面
+標好，再訓練一個又快又小的 YOLO「學生」。**人工標註不是必要步驟**——它只是
+想再擠一點準度時的選配精修。
+
+老師有兩種，挑一個：
+
+| 老師 | 指令 | 適合 |
+|---|---|---|
+| **模板匹配**（你已經有了） | `tools/auto_pipeline.py` | 楓谷 sprite 每幀像素幾乎相同，模板在這個場景**反而最可靠**。你已經截過 snail 模板且命中 0.78，直接用 |
+| **GroundingDINO**（大模型） | `tools/label_gdino.py` | 完全不想截模板，用一句英文 prompt（"monster"）標。但它是拿真實照片訓練的，對卡通 sprite 不保證認得——**先 `--test` 試一張** |
+
+最短路徑（模板老師，一行指令跑完標註→切分→訓練）：
 
 ```
-collect_dataset  ->  autolabel      ->  labelImg 校對  ->  prepare_dataset  ->  train_yolo  ->  改 config 部署
-（邊玩邊蒐集）      （模板匹配預標註）   （人工修框）        （切 train/val）      （5090 幾分鐘）
+collect_dataset  ->  auto_pipeline  ->  改 config 部署
+（邊玩邊蒐集）       （自動標註+訓練，一鍵）  （貼兩行）
 ```
+
+想用大模型老師就把中間換成 `label_gdino -> prepare_dataset -> train_yolo`。
+想再精修才需要 labelImg（見文末「選配：人工精修」）。
 
 ## 0. 環境準備（一次性，在有 GPU 的那台）
 
@@ -64,7 +80,7 @@ python -c "import torch; print(torch.__version__, torch.cuda.is_available(), tor
 
 > 遊戲機那台**不需要**這些，裝原本的 `requirements.txt` 就好。
 
-## 1. 蒐集畫面
+## 1. 蒐集畫面（遊戲機）
 
 ```bash
 python tools/collect_dataset.py --interval 2 --count 400
@@ -75,60 +91,51 @@ python tools/collect_dataset.py --interval 2 --count 400
 - 工具會自動跳過與上一張幾乎相同的幀（`--min-diff 0` 可關）
 - 建議量：單一地圖 300~500 張就能練出堪用模型；跨 2~4 張地圖 600~800 張更穩
 
-## 2. 自動預標註（bootstrap，省掉大部分人工）
+把 `datasets/raw/` 連同 `data/templates/mobs/` 一起 scp 到有 GPU 的機器。
 
-用你現有的怪物模板（`data/templates/mobs/`）自動產生初版標籤：
-
-```bash
-python tools/autolabel.py            # 門檻沿用 config 的 mob_match_threshold
-# 想抓寬一點（寧可多框讓人工刪）：
-python tools/autolabel.py --threshold 0.65
-# 不分怪種、全部合併成一類 mob（打法不挑怪時建議，資料需求更低）：
-python tools/autolabel.py --single-class
-```
-
-輸出：每張圖同名 `.txt`（YOLO 格式）+ `classes.txt`，與 labelImg 完全相容。
-結尾會列出「一隻都沒偵測到」的影像清單——這些通常是模板匹配的弱點案例，
-**正是 YOLO 要學的重點，校對時優先人工補框**。
-
-## 3. 人工校對
+## 2. 一鍵：自動標註 + 訓練（GPU 機器）
 
 ```bash
-pip install labelImg
-labelImg datasets/raw datasets/raw/classes.txt
+python tools/auto_pipeline.py
+# 想更準（怪小隻/背景花）：python tools/auto_pipeline.py --model yolo11s.pt --epochs 120
+# 不分怪種、全部當一類：  python tools/auto_pipeline.py --single-class
 ```
 
-操作要點：
-
-- 左側切到 **YOLO** 格式（預設可能是 PascalVOC）
-- `W` 畫框、`D` 下一張、`Ctrl+S` 存檔
-- 檢查三件事：**漏框**（有怪沒標）、**誤框**（背景/NPC 被標成怪）、
-  **框太鬆**（框緊貼怪物身體，不含血條與名牌）
-- 純背景圖保持零框直接存檔即可——空標籤就是負樣本
-
-預標註品質夠好的話，這一步大多是掃過去按 `D`，幾百張約 30~60 分鐘。
-
-## 4. 打包訓練集
-
-```bash
-python tools/prepare_dataset.py               # 85/15 切 train/val
-```
-
-輸出 `datasets/yolo/`（images/labels 各分 train/val）與 `dataset.yaml`。
-
-## 5. 訓練
-
-```bash
-python tools/train_yolo.py                    # yolo11n, imgsz 800, 80 epochs
-# 想更準（怪很小隻/背景很花時）：
-python tools/train_yolo.py --model yolo11s.pt --epochs 120
-```
+一條指令跑完：用模板老師自動標註 → 切 train/val → 訓練 → 印出權重路徑與
+要貼進 config 的兩行。全程零人工標註。
 
 - 已內建遊戲畫面特化參數：關閉旋轉/上下翻轉/透視增強（2D 橫向卷軸用不到），
   保留左右翻轉（怪會轉向）
-- 5090 參考速度：yolo11n + 500 張 + 80 epochs ≈ **2~4 分鐘**；batch 用 `-1` 自動吃滿 VRAM
-- 看結果：終端的 `mAP50` 是主要指標，遊戲精靈圖通常能到 **0.95+**；
-  低於 0.85 通常代表標註有問題（漏標/框不準）而不是模型不行
+- 5090 參考速度：yolo11n + 500 張 + 80 epochs ≈ **2~4 分鐘**
+- 終端的 `mAP50` 是主要指標，遊戲精靈圖通常能到 **0.9+**
+
+### 想用大模型老師（免模板）
+
+不想截模板的話，把第 2 步的自動標註換成 GroundingDINO——一句 prompt 就標：
+
+```bash
+# 先試一張，確認它看得到你的怪（sprite 是它的弱項，一定要先測）
+python tools/label_gdino.py --test datasets/raw/xxxx.jpg --prompt "monster"
+# 看到框對了再批次標，然後照常切分、訓練
+python tools/label_gdino.py --prompt "monster"
+python tools/prepare_dataset.py && python tools/train_yolo.py
+```
+
+`--test` 沒框到就別勉強——回頭用模板老師，楓谷 sprite 用模板反而更穩。
+
+## 選配：人工精修（只有想再擠準度時才做）
+
+自動標的框已經能直接訓練。真的想修（例如某隻怪一直漏抓），
+先用 `tools/autolabel.py` 產生標籤再開 labelImg：
+
+```bash
+python tools/autolabel.py              # 只標註、不訓練，產生可校對的 .txt
+pip install labelImg && labelImg datasets/raw datasets/raw/classes.txt
+```
+
+- 左側切到 **YOLO** 格式；`W` 畫框、`D` 下一張、開 Auto Save Mode
+- 只改三種：漏框補上、誤框刪掉、框太鬆拉緊
+- 改完 `python tools/prepare_dataset.py && python tools/train_yolo.py`
 
 訓練完會直接印出權重路徑（`runs/mobs/mobs/weights/best.pt`）與要貼進 config 的兩行。
 路徑以腳本實際印出的為準。
