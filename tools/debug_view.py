@@ -28,6 +28,9 @@ RED = (0, 0, 255)
 YELLOW = (0, 255, 255)
 WHITE = (255, 255, 255)
 
+WINDOW = "maplebot debug (q to quit)"
+MAX_DISPLAY_W = 1280   # 顯示視窗最大寬度，避免大解析度截圖塞爆螢幕
+
 
 def main() -> int:
     ap = argparse.ArgumentParser()
@@ -39,6 +42,8 @@ def main() -> int:
     cfg = load_config(args.config)
     profile = load_profile(args.profile)
     cap = ImageCapture(args.source) if args.source else WindowCapture(cfg.window_title)
+    print(f"擷取尺寸: {cap.size[0]}x{cap.size[1]}"
+          "（若這不是你的遊戲畫面大小，代表抓錯視窗或抓到整個螢幕）")
 
     if cfg.minimap_auto:
         from maplebot.vision.locate import BR_NAME, TL_NAME, find_minimap, load_ui_template
@@ -56,6 +61,11 @@ def main() -> int:
     rt = fsm.Runtime()
     pf = cfg.region("playfield")
     center = (pf[2] // 2, pf[3] // 2)
+
+    # 只建立「一個」視窗；不這樣做的話，某些 Windows OpenCV 版本會在
+    # 迴圈裡每幀開一個新視窗（畫面上會不斷疊出新視窗）。
+    cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
+    delay = 200 if args.source else 30
 
     while True:
         t0 = time.monotonic()
@@ -96,8 +106,21 @@ def main() -> int:
                   f"mobs {len(state.mobs)} | {fps:.0f} FPS | -> {type(action).__name__}")
         cv2.putText(canvas, header, (8, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.55, GREEN, 2)
 
-        cv2.imshow("maplebot debug (q to quit)", canvas)
-        if cv2.waitKey(200 if args.source else 1) & 0xFF == ord("q"):
+        # 大解析度截圖等比例縮到最大寬度以內再顯示（座標讀值不受影響，
+        # 疊框都畫在原尺寸 canvas 上）
+        h, w = canvas.shape[:2]
+        if w > MAX_DISPLAY_W:
+            scale = MAX_DISPLAY_W / w
+            shown = cv2.resize(canvas, (MAX_DISPLAY_W, int(h * scale)))
+        else:
+            shown = canvas
+        cv2.imshow(WINDOW, shown)
+
+        key = cv2.waitKey(delay) & 0xFF
+        if key == ord("q"):
+            break
+        # 按視窗右上角的 X 關閉也結束
+        if cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) < 1:
             break
     cv2.destroyAllWindows()
     return 0
