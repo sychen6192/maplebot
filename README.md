@@ -1,10 +1,21 @@
 # maplebot
 
-楓之谷經典版自動打怪程式（學術研究用途）。
+楓之谷經典版（MapleStory classic）自動打怪研究專案：即時電腦視覺 + 規則決策 + 輸入模擬的完整 pipeline。
 
 純「螢幕視覺」方案：**擷取畫面 → 影像辨識 → 狀態機決策 → 模擬按鍵**。
-不讀寫遊戲記憶體、不碰封包、沒有任何反偵測功能——整個 pipeline 就是一個
-即時電腦視覺 + 自動化控制的研究題目，所有辨識與決策邏輯都能用截圖離線開發與測試。
+不讀寫遊戲記憶體、不碰封包、沒有任何反偵測功能——就是一個可以完整離線開發、
+離線測試的即時 CV + 自動化控制研究題目。
+
+**特色一覽**
+
+- **感知**：小地圖定位（玩家/其他玩家）、HP/MP/EXP 比例讀取、怪物偵測
+  （OpenCV 模板匹配，可一鍵切換自訓 YOLO）
+- **決策**：純函式優先權狀態機——保命 > 補給 > 禮讓 > buff > 打怪 > 巡邏，
+  單元測試完整涵蓋
+- **控制**：SendInput scancode（DirectInput 遊戲吃得到），含緊急停止熱鍵
+- **安全**：HP 危險線自動停機、其他玩家出現先暫停、找不到角色觸發 watchdog + 截圖存證
+- **可測性**：44 個 pytest（合成影像 + 真實截圖真值），整條主迴圈可用一張截圖 dry-run
+- **ML 擴充**：YOLO 訓練管線（蒐集→自動預標註→校對→訓練→部署）與本地 VLM 督導層
 
 > **用途聲明**：本專案僅供電腦視覺／自動化控制的學習研究。在官方伺服器使用外掛
 > 違反遊戲服務條款，可能導致帳號停權；請只在你自己擁有或獲得允許的環境
@@ -104,22 +115,18 @@ buff 週期、藥水鍵與門檻。
 
 **1. 即時感知：YOLO 怪物偵測（取代模板匹配，毫秒級）**
 
+完整教學見 **[docs/YOLO_TRAINING.md](docs/YOLO_TRAINING.md)**，流程一條龍：
+
 ```bash
-python tools/collect_dataset.py --interval 2 --count 500   # 蒐集畫面到 datasets/raw/
-# 用 labelImg / Roboflow / CVAT 標註怪物框，整理成 YOLO 格式
-pip install ultralytics
-yolo detect train data=datasets/mobs.yaml model=yolo11n.pt imgsz=800 epochs=80
+python tools/collect_dataset.py --interval 2 --count 400   # 邊玩邊蒐集（自動去重）
+python tools/autolabel.py                                  # 用模板匹配自動預標註
+labelImg datasets/raw datasets/raw/classes.txt              # 人工校對（大多只是掃過）
+python tools/prepare_dataset.py                            # 切 train/val + dataset.yaml
+python tools/train_yolo.py                                 # 5090 上幾分鐘練完
 ```
 
-訓練完把 `config/default.yaml` 改成：
-
-```yaml
-vision:
-  mob_detector: yolo
-  yolo_model: runs/detect/train/weights/best.pt
-```
-
-介面完全相同（`maplebot/vision/yolo_mobs.py`），決策層不用動。
+訓練結尾會直接印出要貼進 `config/default.yaml` 的兩行（`mob_detector: yolo` +
+權重路徑）。介面完全相同（`maplebot/vision/yolo_mobs.py`），決策層不用動。
 YOLO11n 在 RTX 5090 上推理只要 1~3ms/幀，主迴圈 8 FPS 完全無感。
 
 **2. 大局督導：本地 VLM（slow loop，選配）**
@@ -163,11 +170,16 @@ maplebot/
   control/input_win.py       # SendInput scancode 鍵盤層（tap/release_all）
   safety.py                  # 熱鍵、危險停機、watchdog、異常截圖
   runner.py                  # 主迴圈調度：擷取→感知→決策→執行 + 安全機制
+  dataset.py                 # YOLO 資料集：模板自動預標註、train/val 打包
 tools/
   calibrate.py               # 框選 ROI 產生 config
   grab_template.py           # 擷取怪物模板
-  debug_view.py              # 即時辨識結果疊框
-  collect_dataset.py         # YOLO 資料集蒐集
+  debug_view.py              # 即時辨識結果疊框（與主程式共用 Perceiver）
+  collect_dataset.py         # 訓練資料蒐集（自動去除重複幀）
+  autolabel.py               # 模板匹配自動預標註（labelImg 相容）
+  prepare_dataset.py         # 切 train/val + 產生 dataset.yaml
+  train_yolo.py              # ultralytics 訓練入口（遊戲畫面特化參數）
+docs/YOLO_TRAINING.md        # 5090 訓練流程完整教學
 tests/                       # pytest：合成影像 + 真實截圖 ground truth
 ```
 
