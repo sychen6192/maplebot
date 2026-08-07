@@ -129,3 +129,4 @@ datasets/
 *.pt
 config/local.yaml
 runs/
+.venv/

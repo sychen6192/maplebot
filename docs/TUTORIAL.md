@@ -15,7 +15,17 @@ pip install -r requirements.txt
 pytest -q
 ```
 
-**預期結果**：最後一行 `67 passed`。這代表環境沒問題（測試完全離線，不用開遊戲）。
+**預期結果**：最後一行是 `xx passed`。這代表環境沒問題（測試完全離線，不用開遊戲）。
+
+> 想用虛擬環境（推薦，不會污染系統 Python）可以改用
+> [uv](https://docs.astral.sh/uv/)：
+> ```powershell
+> powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+> uv venv
+> .venv\Scripts\activate
+> uv pip install -r requirements.txt
+> ```
+> 之後每次開新終端機都要先 `.venv\Scripts\activate`。
 
 ## 第 1 步：告訴程式你的遊戲視窗叫什麼
 
