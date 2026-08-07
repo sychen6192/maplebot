@@ -48,10 +48,13 @@ class VisionCfg:
     ui_templates_dir: str = "data/templates/ui"
     minimap_border: int = 6           # auto 定位小地圖時向內縮的邊框厚度
     bar_colors: Dict[str, str] = field(default_factory=lambda: {"hp": "red", "mp": "blue", "exp": "yellow"})
-    mob_detector: str = "template"  # template | yolo
+    mob_detector: str = "template"  # template | yolo | remote
     mob_match_threshold: float = 0.72
     yolo_model: str = ""
     yolo_confidence: float = 0.5
+    remote_endpoint: str = ""          # mob_detector=remote：推理伺服器位址
+    remote_timeout: float = 1.0
+    remote_jpeg_quality: int = 80
 
 
 @dataclass
@@ -201,10 +204,19 @@ def load_config(path: str, local_path: str = LOCAL_OVERRIDE) -> AppCfg:
     vc.ui_templates_dir = str(v.get("ui_templates_dir", vc.ui_templates_dir))
     vc.minimap_border = int(v.get("minimap_border", vc.minimap_border))
     vc.bar_colors.update(v.get("bars", {}))
-    vc.mob_detector = str(v.get("mob_detector", vc.mob_detector))
+    vc.mob_detector = str(v.get("mob_detector", vc.mob_detector)).lower()
+    if vc.mob_detector not in ("template", "yolo", "remote"):
+        raise ConfigError(
+            f"vision.mob_detector 只能是 template / yolo / remote，"
+            f"拿到: {vc.mob_detector!r}")
     vc.mob_match_threshold = float(v.get("mob_match_threshold", vc.mob_match_threshold))
     vc.yolo_model = str(v.get("yolo_model", vc.yolo_model))
     vc.yolo_confidence = float(v.get("yolo_confidence", vc.yolo_confidence))
+    vc.remote_endpoint = str(v.get("remote_endpoint", vc.remote_endpoint))
+    vc.remote_timeout = float(v.get("remote_timeout", vc.remote_timeout))
+    vc.remote_jpeg_quality = int(v.get("remote_jpeg_quality", vc.remote_jpeg_quality))
+    if vc.mob_detector == "remote" and not vc.remote_endpoint:
+        raise ConfigError("vision.mob_detector=remote 必須設定 vision.remote_endpoint")
 
     s = data.get("safety", {})
     sc = cfg.safety
