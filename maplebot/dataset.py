@@ -166,3 +166,28 @@ GAME_TRAIN_OVERRIDES: Dict[str, float] = {
     "flipud": 0.0,
     "fliplr": 0.5,
 }
+
+
+def train(data_yaml: str, model: str = "yolo11n.pt", imgsz: int = 800,
+          epochs: int = 80, batch: int = -1, device: str = "0",
+          project: str = "runs/mobs", name: str = "mobs") -> str:
+    """訓練並回傳最佳權重路徑。ultralytics 為選配相依，延後 import。"""
+    try:
+        from ultralytics import YOLO
+    except ImportError as e:
+        raise ImportError("訓練需要先安裝 ultralytics："
+                          "pip install -r requirements-server.txt") from e
+    net = YOLO(model)
+    net.train(
+        data=data_yaml,
+        imgsz=imgsz,
+        epochs=epochs,
+        batch=batch,
+        device=device,
+        # 用絕對路徑，否則 ultralytics 會再套一層 runs/detect/ 進去
+        project=os.path.abspath(project),
+        name=name,
+        patience=20,
+        **GAME_TRAIN_OVERRIDES,
+    )
+    return str(net.trainer.best)
