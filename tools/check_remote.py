@@ -143,7 +143,13 @@ def main() -> int:
               f"{cfg.vision.remote_jpeg_quality}，試 60）")
         print("  3. 遊戲視窗調小 / 改用區網 IP 而非 VPN 位址")
     if s["avg"] > 30:
-        print(f"（傳輸約佔 {len(buf) / 1024:.0f}KB；延遲大致與封包大小成正比）")
+        print(f"\n（送出 {len(buf) / 1024:.0f}KB。想知道還有多少是「網路本身」的成本，"
+              "比對一下 ping：")
+        host = endpoint.split("//")[-1].split("/")[0].split(":")[0]
+        print(f"   ping {host}"
+              f"　　用 Tailscale 的話再跑 tailscale ping {host}")
+        print("   ping 就已經接近上面的延遲 = 純粹是網路距離，程式端沒得優化；")
+        print("   Tailscale 顯示 via DERP relay = 沒打通直連，繞了中繼站）")
 
     print(f"\n這張圖偵測到 {len(mobs)} 個框：")
     for m in mobs[:5]:
