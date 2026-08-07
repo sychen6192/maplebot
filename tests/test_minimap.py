@@ -30,6 +30,26 @@ def test_single_noise_pixel_ignored():
     assert find_player(mm, VisionCfg(min_dot_pixels=3)) is None
 
 
+def test_terrain_blob_not_mistaken_for_player():
+    """自由市場這類小地圖的地板本身就是黃色——大面積色塊要被排除。"""
+    mm = _minimap()
+    mm[50:56, 10:120] = (0, 255, 255)  # 660px 的黃色地形帶
+    mm[20:23, 70:73] = (0, 255, 255)   # 真正的玩家點（9px）
+    pos = find_player(mm, VisionCfg())
+    assert pos is not None
+    assert abs(pos[0] - 71) <= 1 and abs(pos[1] - 21) <= 1
+
+
+def test_player_template_beats_color(tmp_path):
+    import cv2
+    rng = __import__("numpy").random.default_rng(5)
+    mm = _minimap()
+    tpl_patch = rng.integers(0, 255, (7, 7), dtype="uint8")
+    mm[30:37, 90:97] = tpl_patch[:, :, None]  # 玩家圖示（非黃色也能找到）
+    pos = find_player(mm, VisionCfg(), template=tpl_patch)
+    assert pos == (93, 33)
+
+
 def test_find_two_other_players():
     mm = _minimap()
     mm[20:23, 30:33] = (0, 0, 255)   # 紅點 1

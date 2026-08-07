@@ -12,6 +12,7 @@ class GameState:
     mp: Optional[float] = None
     exp: Optional[float] = None
     player: Optional[Tuple[int, int]] = None   # 小地圖座標
+    minimap_size: Optional[Tuple[int, int]] = None  # 小地圖 ROI 寬高（相對座標換算用）
     others: List[Tuple[int, int]] = field(default_factory=list)
     mobs: List[Mob] = field(default_factory=list)  # playfield 座標
 

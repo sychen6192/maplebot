@@ -1,6 +1,6 @@
 [project]
 name = "maplebot"
-version = "1.2.0"
+version = "1.3.0"
 description = "MapleStory classic auto-hunt research bot (screen vision + FSM + synthetic input)"
 requires-python = ">=3.9"
 dependencies = [

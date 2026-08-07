@@ -49,10 +49,35 @@ def test_attack_faces_then_hits_twice(ex):
     assert executor.stats.attacks == 1
 
 
+def test_aoe_attack_skips_facing(ex):
+    executor, backend = ex
+    executor.execute(fsm.Attack(direction=1, key="x", cast_seconds=0.3,
+                                repeat=1, aoe=True), NOW)
+    assert _taps(backend) == [SCANCODES["x"][0]]  # 沒有方向鍵
+
+
 def test_move_taps_direction(ex):
     executor, backend = ex
     executor.execute(fsm.Move(direction=1, seconds=0.3, target_x=95), NOW)
     assert _taps(backend) == [SCANCODES["right"][0]]
+
+
+def test_run_keys_taps_in_order(ex):
+    executor, backend = ex
+    executor.execute(fsm.RunKeys(keys=["alt", "x"]), NOW)
+    assert _taps(backend) == [SCANCODES["alt"][0], SCANCODES["x"][0]]
+
+
+def test_escape_jumps_while_holding_direction(ex):
+    executor, backend = ex
+    executor.execute(fsm.Escape(direction=1, jump_key="alt"), NOW)
+    assert backend.history == [
+        ("down", SCANCODES["right"][0]),
+        ("down", SCANCODES["alt"][0]),
+        ("up", SCANCODES["alt"][0]),
+        ("up", SCANCODES["right"][0]),
+    ]
+    assert executor.stats.escapes == 1
 
 
 def test_wait_sends_nothing(ex):

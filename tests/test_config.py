@@ -1,0 +1,77 @@
+"""設定載入：local.yaml 覆寫、waypoint 解析、attack.type 驗證。"""
+import pytest
+
+from maplebot.config import ConfigError, load_config, load_profile
+
+
+def _write(path, text):
+    path.write_text(text, encoding="utf-8")
+    return str(path)
+
+
+BASE_CFG = """
+window: { title: "MapleSaga" }
+regions:
+  minimap: [1, 2, 30, 20]
+  playfield: [0, 0, 100, 100]
+safety: { critical_hp_ratio: 0.25 }
+"""
+
+
+def test_local_override_merges_deeply(tmp_path):
+    base = _write(tmp_path / "default.yaml", BASE_CFG)
+    local = _write(tmp_path / "local.yaml", """
+window: { title: "MyWindow" }
+safety: { critical_hp_ratio: 0.4 }
+""")
+    cfg = load_config(base, local_path=local)
+    assert cfg.window_title == "MyWindow"
+    assert cfg.safety.critical_hp_ratio == 0.4
+    assert cfg.regions["minimap"] == (1, 2, 30, 20)  # 沒覆寫的保留
+
+
+def test_minimap_auto(tmp_path):
+    base = _write(tmp_path / "default.yaml", """
+regions:
+  minimap: auto
+  playfield: [0, 0, 100, 100]
+""")
+    cfg = load_config(base, local_path="")
+    assert cfg.minimap_auto is True
+    assert "minimap" not in cfg.regions
+
+
+def test_profile_waypoint_formats(tmp_path):
+    path = _write(tmp_path / "p.yaml", """
+patrol:
+  waypoints:
+    - 40
+    - 0.75
+    - { x: 95, keys: [ALT, x] }
+""")
+    p = load_profile(path)
+    wps = p.patrol.waypoints
+    assert wps[0].x == 40 and wps[0].keys == []
+    assert wps[1].x == 0.75
+    assert wps[2].x == 95 and wps[2].keys == ["alt", "x"]
+
+
+def test_profile_legacy_waypoints_x_still_works(tmp_path):
+    path = _write(tmp_path / "p.yaml", "patrol: { waypoints_x: [10, 20] }\n")
+    p = load_profile(path)
+    assert [w.x for w in p.patrol.waypoints] == [10, 20]
+
+
+def test_profile_bad_attack_type(tmp_path):
+    path = _write(tmp_path / "p.yaml", """
+patrol: { waypoints: [10] }
+attack: { type: melee }
+""")
+    with pytest.raises(ConfigError):
+        load_profile(path)
+
+
+def test_profile_requires_waypoints(tmp_path):
+    path = _write(tmp_path / "p.yaml", "name: x\n")
+    with pytest.raises(ConfigError):
+        load_profile(path)
