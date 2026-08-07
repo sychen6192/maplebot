@@ -113,6 +113,8 @@ def main() -> int:
     ap.add_argument("--source", default="", help="用靜態截圖當畫面來源")
     ap.add_argument("--snapshot", default="",
                     help="只抓一幀存成標註圖後結束，完全不開視窗")
+    ap.add_argument("--track", action="store_true",
+                    help="持續印出玩家小地圖座標，用來讀巡邏點（Ctrl+C 結束）")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
@@ -140,6 +142,28 @@ def main() -> int:
     rt = fsm.Runtime()
     pf = cfg.region("playfield")
     center = (pf[2] // 2, pf[3] // 2)
+
+    if args.track:
+        mm_w = cfg.regions.get("minimap", (0, 0, 0, 0))[2]
+        print("\n在遊戲裡走到你要設的巡邏點，讀下面的 x 值填進 profile 的 "
+              "waypoints。Ctrl+C 結束。\n")
+        try:
+            while True:
+                now = time.monotonic()
+                state = perceiver.perceive(cap.grab(), now)
+                if state.player:
+                    x, y = state.player
+                    # 畫一條位置示意條，方便肉眼確認左右端
+                    pos = int(x / mm_w * 40) if mm_w else 0
+                    bar = "".join("●" if i == pos else "─" for i in range(40))
+                    print(f"\r  x={x:4d}  y={y:4d}   [{bar}]", end="", flush=True)
+                else:
+                    print("\r  找不到玩家點…（小地圖 ROI 或顏色參數要調）",
+                          end="", flush=True)
+                time.sleep(0.3)
+        except KeyboardInterrupt:
+            print("\n")
+        return 0
 
     if args.snapshot:
         now = time.monotonic()
