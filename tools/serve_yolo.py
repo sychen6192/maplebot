@@ -111,11 +111,15 @@ def main() -> int:
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
-    # 先檢查權重再載入重量級套件，訊息才清楚
-    if not os.path.exists(args.model):
+    # 先檢查權重再載入重量級套件，訊息才清楚。
+    # yolo11n.pt 這類官方名稱沒有本機檔案也沒關係，ultralytics 會自己下載。
+    from maplebot.vision.yolo_mobs import is_pretrained_name
+
+    if not os.path.exists(args.model) and not is_pretrained_name(args.model):
         print(f"找不到權重: {args.model}")
         print("還沒訓練的話，先照 docs/YOLO_TRAINING.md 跑完 collect -> autolabel"
               " -> 校對 -> prepare -> train，train 完會印出權重路徑")
+        print("想先測連線可以用官方預訓練權重: --model yolo11n.pt（會自動下載）")
         return 2
     try:
         from ultralytics import YOLO

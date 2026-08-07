@@ -4,11 +4,23 @@
 （流程見 README「進階：ML 感知層」）。RTX 5090 上 YOLO11n/s
 推理可達數百 FPS，適合當即時感知層。
 """
+import os
 from typing import List
 
 import numpy as np
 
 from .mobs import Mob
+
+
+def is_pretrained_name(model: str) -> bool:
+    """像 yolo11n.pt 這種官方權重「名稱」（不是路徑），ultralytics 會自動下載。
+
+    用來區分「使用者打錯路徑」與「刻意用官方預訓練權重」。
+    """
+    if not model or os.sep in model or "/" in model:
+        return False
+    lowered = model.lower()
+    return lowered.startswith("yolo") and lowered.endswith(".pt")
 
 
 class YoloMobDetector:
