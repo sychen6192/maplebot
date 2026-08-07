@@ -89,7 +89,8 @@ python tools/train_yolo.py --model yolo11s.pt --epochs 120
 - 看結果：終端的 `mAP50` 是主要指標，遊戲精靈圖通常能到 **0.95+**；
   低於 0.85 通常代表標註有問題（漏標/框不準）而不是模型不行
 
-訓練完會直接印出要貼進 config 的兩行。
+訓練完會直接印出權重路徑（`runs/mobs/mobs/weights/best.pt`）與要貼進 config 的兩行。
+路徑以腳本實際印出的為準。
 
 ## 6. 部署與驗證
 
