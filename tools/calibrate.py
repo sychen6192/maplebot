@@ -52,7 +52,7 @@ def main() -> int:
         else:
             print(f"  {name}: 跳過")
 
-    print("\n=== 把下面貼進 config/default.yaml 的 regions: ===\n")
+    print("\n=== 把下面貼進 config/local.yaml（建議）或 default.yaml ===\n")
     print("regions:")
     for name, rect in results.items():
         print(f"  {name}: {rect}")

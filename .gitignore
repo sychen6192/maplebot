@@ -127,3 +127,4 @@ logs/
 datasets/
 .idea/
 *.pt
+config/local.yaml

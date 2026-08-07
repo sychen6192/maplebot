@@ -60,6 +60,9 @@ pip install -r requirements.txt
 
 ## 快速開始
 
+> 第一次用？**[docs/TUTORIAL.md](docs/TUTORIAL.md)** 有含預期畫面的手把手教學，
+> 從 clone 一路帶到掛機與接上 Ollama 督導層。
+
 ```bash
 # 1. 設定視窗標題（config/default.yaml -> window.title，子字串比對）
 
@@ -187,7 +190,9 @@ tools/
   autolabel.py               # 模板匹配自動預標註（labelImg 相容）
   prepare_dataset.py         # 切 train/val + 產生 dataset.yaml
   train_yolo.py              # ultralytics 訓練入口（遊戲畫面特化參數）
+docs/TUTORIAL.md             # 手把手教學（含每步預期結果與疑難排解）
 docs/YOLO_TRAINING.md        # 5090 訓練流程完整教學
+docs/COMPARISON.md           # 與高星開源專案的比對與採用清單
 tests/                       # pytest：合成影像 + 真實截圖 ground truth
 ```
 
