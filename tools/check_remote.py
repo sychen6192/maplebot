@@ -84,16 +84,40 @@ def main() -> int:
         return 2
 
     region = cfg.regions.get("playfield")
-    frame = cap.grab(region) if region else cap.grab()
-    ok, buf = cv2.imencode(".jpg", frame,
+    if region:
+        frame = cap.grab(region)
+        print(f"playfield ROI: {list(region)}")
+    else:
+        frame = cap.grab()
+        print("⚠ config 沒有 regions.playfield，改送整個視窗畫面。"
+              "請先跑 tools/calibrate.py 校正")
+
+    # 報告「實際會送出去」的內容（RemoteMobDetector 會先縮到 remote_max_width）
+    h, w = frame.shape[:2]
+    max_w = cfg.vision.remote_max_width
+    if max_w and w > max_w:
+        shrunk = cv2.resize(frame, (max_w, max(round(h * max_w / w), 1)),
+                            interpolation=cv2.INTER_AREA)
+    else:
+        shrunk = frame
+    ok, buf = cv2.imencode(".jpg", shrunk,
                            [cv2.IMWRITE_JPEG_QUALITY, cfg.vision.remote_jpeg_quality])
-    print(f"送出畫面: {frame.shape[1]}x{frame.shape[0]}"
+    print(f"擷取畫面 {w}x{h} -> 實際送出 {shrunk.shape[1]}x{shrunk.shape[0]}"
           f"｜JPEG {len(buf) / 1024:.1f} KB"
-          f"（quality={cfg.vision.remote_jpeg_quality}）\n")
+          f"（quality={cfg.vision.remote_jpeg_quality}, max_width={max_w or '不縮'}）")
+
+    ratio = w / shrunk.shape[1]
+    if ratio >= 2.5:
+        print(f"⚠ 縮了 {ratio:.1f} 倍：畫面上 30px 的怪會變成 {30 / ratio:.0f}px，"
+              "YOLO 可能認不出來。")
+        print("  建議把遊戲視窗調小（經典版 800x600 最單純），"
+              "或把 vision.remote_max_width 調高到 1280")
+    print()
 
     det = RemoteMobDetector(endpoint, confidence=cfg.vision.yolo_confidence,
                             timeout=args.timeout,
-                            jpeg_quality=cfg.vision.remote_jpeg_quality)
+                            jpeg_quality=cfg.vision.remote_jpeg_quality,
+                            max_width=cfg.vision.remote_max_width)
     latencies, mobs = [], []
     for i in range(args.n):
         t0 = time.perf_counter()
