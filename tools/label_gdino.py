@@ -40,22 +40,71 @@ def build_text_prompt(prompts) -> str:
     return " ".join(f"{p.strip().lower().rstrip('.')}." for p in prompts if p.strip())
 
 
-def parse_results(result, class_id: int = 0):
-    """把 HF 的輸出轉成 [(cls_id, cx, cy, w, h, score), ...]（像素座標）。"""
+def extract_boxes(result):
+    """HF 輸出 -> [(x1, y1, x2, y2, score, label), ...]（像素座標）。"""
     boxes = result.get("boxes")
     scores = result.get("scores")
     if boxes is None or scores is None:
         return []
+    # transformers 5.x 用 text_labels，舊版是 labels
+    labels = result.get("text_labels")
+    if labels is None:
+        labels = result.get("labels") or []
     out = []
-    for box, score in zip(boxes, scores):
+    for i, (box, score) in enumerate(zip(boxes, scores)):
         x1, y1, x2, y2 = (int(round(float(v))) for v in box)
-        out.append((class_id, (x1 + x2) // 2, (y1 + y2) // 2,
-                    x2 - x1, y2 - y1, float(score)))
+        label = str(labels[i]).lower() if i < len(labels) else ""
+        out.append((x1, y1, x2, y2, float(score), label))
     return out
 
 
-def load_teacher(prompts, box_threshold=0.25, text_threshold=0.25, model_id=TINY):
-    """回傳 predict(img_path) -> [(cls_id, cx, cy, w, h, score), ...]。"""
+def _iou(a, b) -> float:
+    ax1, ay1, ax2, ay2 = a[:4]
+    bx1, by1, bx2, by2 = b[:4]
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    iw, ih = max(0, ix2 - ix1), max(0, iy2 - iy1)
+    inter = iw * ih
+    if inter == 0:
+        return 0.0
+    area_a = max(0, ax2 - ax1) * max(0, ay2 - ay1)
+    area_b = max(0, bx2 - bx1) * max(0, by2 - by1)
+    return inter / (area_a + area_b - inter)
+
+
+def _matches(label: str, phrases) -> bool:
+    return any(p.strip().lower().rstrip(".") in label for p in phrases if p.strip())
+
+
+def filter_boxes(boxes, keep_phrases, reject_phrases, iou_drop: float = 0.4):
+    """只留下 keep 類、且沒有跟 reject 類重疊的框。
+
+    NPC、其他玩家、招牌這些對 GroundingDINO 來說跟怪一樣是「卡通人形」，
+    所以同時問正反兩組詞，再把反例（與其重疊者）剔掉。
+    同一個框兩邊都命中時以 reject 為準——寧可漏標也不要教模型打 NPC。
+    """
+    rejects = [b for b in boxes if _matches(b[5], reject_phrases)]
+    kept = []
+    for b in boxes:
+        if _matches(b[5], reject_phrases):
+            continue
+        if reject_phrases and not _matches(b[5], keep_phrases):
+            continue        # 有指定正例時，標籤對不上的一律不要
+        if any(_iou(b, r) >= iou_drop for r in rejects):
+            continue        # 同一個東西也被判為 NPC/玩家
+        kept.append(b)
+    return kept
+
+
+def to_yolo_dets(boxes, class_id: int = 0):
+    """[(x1,y1,x2,y2,score,label)] -> [(cls_id, cx, cy, w, h, score)]。"""
+    return [(class_id, (b[0] + b[2]) // 2, (b[1] + b[3]) // 2,
+             b[2] - b[0], b[3] - b[1], b[4]) for b in boxes]
+
+
+def load_teacher(keep, reject=(), box_threshold=0.25, text_threshold=0.25,
+                 model_id=TINY, iou_drop=0.4):
+    """回傳 predict(img_path) -> (保留的框, 被剔除的框)，皆為 extract_boxes 格式。"""
     try:
         import torch
         from PIL import Image
@@ -67,8 +116,10 @@ def load_teacher(prompts, box_threshold=0.25, text_threshold=0.25, model_id=TINY
     print(f"載入 {model_id}（device={device}）…")
     processor = AutoProcessor.from_pretrained(model_id)
     model = AutoModelForZeroShotObjectDetection.from_pretrained(model_id).to(device)
-    text = build_text_prompt(prompts)
+    text = build_text_prompt(list(keep) + list(reject))
     print(f"文字 prompt: {text!r}")
+    if reject:
+        print(f"保留: {list(keep)}｜剔除: {list(reject)}")
 
     def predict(img_path):
         image = Image.open(img_path).convert("RGB")
@@ -80,41 +131,56 @@ def load_teacher(prompts, box_threshold=0.25, text_threshold=0.25, model_id=TINY
             threshold=box_threshold, text_threshold=text_threshold,
             target_sizes=[image.size[::-1]],   # (h, w)
         )
-        return parse_results(results[0])
+        allb = extract_boxes(results[0])
+        kept = filter_boxes(allb, keep, reject, iou_drop)
+        kept_ids = {id(b) for b in kept}
+        return kept, [b for b in allb if id(b) not in kept_ids]
 
     return predict
 
 
-def run_test(image, prompts, out_path, box_threshold, text_threshold, model_id):
+def run_test(image, keep, reject, out_path, box_threshold, text_threshold,
+             model_id, iou_drop):
     if not os.path.exists(image):
         print(f"找不到圖片: {image}")
         return
-    predict = load_teacher(prompts, box_threshold, text_threshold, model_id)
-    dets = predict(image)
-    print(f"\n在 {image}（box_threshold={box_threshold}）偵測到 {len(dets)} 個框")
+    predict = load_teacher(keep, reject, box_threshold, text_threshold,
+                           model_id, iou_drop)
+    kept, dropped = predict(image)
+    print(f"\n在 {image}（box_threshold={box_threshold}）："
+          f"保留 {len(kept)} 個框，剔除 {len(dropped)} 個")
     img = cv2.imread(image)
-    for _, cx, cy, w, h, score in dets:
-        x1, y1 = cx - w // 2, cy - h // 2
-        print(f"  中心({cx},{cy}) {w}x{h}px  conf={score:.2f}")
-        cv2.rectangle(img, (x1, y1), (x1 + w, y1 + h), (0, 255, 255), 2)
-        cv2.putText(img, f"{score:.2f}", (x1, max(y1 - 4, 10)),
+    for x1, y1, x2, y2, score, label in dropped:   # 紅色 = 被剔除
+        cv2.rectangle(img, (x1, y1), (x2, y2), (0, 0, 255), 1)
+        cv2.putText(img, f"x {label}", (x1, max(y1 - 4, 10)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 255), 1)
+    for x1, y1, x2, y2, score, label in kept:      # 黃色 = 會拿去訓練
+        print(f"  保留 ({(x1 + x2) // 2},{(y1 + y2) // 2}) "
+              f"{x2 - x1}x{y2 - y1}px conf={score:.2f} label={label!r}")
+        cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 255), 2)
+        cv2.putText(img, f"{label} {score:.2f}", (x1, max(y1 - 4, 10)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+    for x1, y1, x2, y2, score, label in dropped:
+        print(f"  剔除 ({(x1 + x2) // 2},{(y1 + y2) // 2}) "
+              f"conf={score:.2f} label={label!r}")
     cv2.imwrite(out_path, img)
-    print(f"\n標註預覽已存到 {out_path} —— 一定要親眼看這張圖，"
-          "確認框的是怪而不是樹或 UI")
-    if not dets:
-        print("⚠ 一個都沒框到。依序試：")
+    print(f"\n預覽已存到 {out_path}：**黃框=會拿去訓練，紅框=已剔除**")
+    if not kept:
+        print("⚠ 沒有保留任何框。依序試：")
         print("  1. 降門檻: --box-threshold 0.1")
         print("  2. 換 prompt: --prompt \"blue snail\" / \"cartoon creature\"")
         print("  3. 換大模型: --model base")
-        print("  4. 都不行就是它認不得 sprite —— 改用模板老師："
-              "python tools/auto_pipeline.py（一行跑完，零手標）")
+        print("  4. 都不行 —— 改用模板老師：python tools/auto_pipeline.py")
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--prompt", default="monster",
-                    help="文字 prompt；多個用逗號分隔（都標成同一類）")
+                    help="要標的東西；多個用逗號分隔（都標成同一類）")
+    ap.add_argument("--reject", default="npc,person,player character,signboard",
+                    help="不要標的東西（NPC、其他玩家等）；設空字串可關閉")
+    ap.add_argument("--iou-drop", type=float, default=0.4,
+                    help="怪物框與剔除框重疊超過這個比例就一起剔除")
     ap.add_argument("--class-name", default="mob", help="輸出的類別名稱")
     ap.add_argument("--images", default="datasets/raw")
     ap.add_argument("--test", default="", help="只在這張圖試跑並輸出預覽圖，不批次")
@@ -125,35 +191,40 @@ def main() -> int:
                     help="tiny 約 230MB 夠快；base 約 900MB 較準")
     args = ap.parse_args()
 
-    prompts = [p.strip() for p in args.prompt.split(",") if p.strip()]
-    if not prompts:
+    keep = [p.strip() for p in args.prompt.split(",") if p.strip()]
+    reject = [p.strip() for p in args.reject.split(",") if p.strip()]
+    if not keep:
         print("prompt 不能是空的")
         return 2
     model_id = TINY if args.model == "tiny" else BASE
 
     if args.test:
-        run_test(args.test, prompts, "gdino_test.jpg",
-                 args.box_threshold, args.text_threshold, model_id)
+        run_test(args.test, keep, reject, "gdino_test.jpg",
+                 args.box_threshold, args.text_threshold, model_id, args.iou_drop)
         return 0
 
-    predict = load_teacher(prompts, args.box_threshold, args.text_threshold, model_id)
+    predict = load_teacher(keep, reject, args.box_threshold, args.text_threshold,
+                           model_id, args.iou_drop)
     paths = list_images(args.images)
     if not paths:
         print(f"{args.images} 裡沒有圖片，先用 tools/collect_dataset.py 蒐集")
         return 2
 
     labels_per_image = {}
-    total = 0
+    total = dropped_total = 0
     for i, path in enumerate(paths, 1):
-        dets = predict(path)
-        labels_per_image[path] = [(d[0], d[1], d[2], d[3], d[4]) for d in dets]
-        total += len(dets)
-        print(f"\r  標註中 {i}/{len(paths)} 張（共 {total} 個框）", end="", flush=True)
+        kept, dropped = predict(path)
+        labels_per_image[path] = [d[:5] for d in to_yolo_dets(kept)]
+        total += len(kept)
+        dropped_total += len(dropped)
+        print(f"\r  標註中 {i}/{len(paths)} 張（保留 {total}，剔除 {dropped_total}）",
+              end="", flush=True)
     print()
 
     write_yolo_labels(args.images, labels_per_image, [args.class_name])
     labeled = sum(1 for v in labels_per_image.values() if v)
-    print(f"完成：{len(paths)} 張，{labeled} 張有框，共 {total} 個框")
+    print(f"完成：{len(paths)} 張，{labeled} 張有框，共 {total} 個框"
+          f"（另剔除 {dropped_total} 個 NPC/玩家等）")
     print("下一步：python tools/prepare_dataset.py && python tools/train_yolo.py")
     return 0
 
