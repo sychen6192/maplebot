@@ -1,12 +1,15 @@
-"""即時偵錯視窗：用與主程式完全相同的 Perceiver 做辨識，疊框顯示。
+"""偵錯視覺化：用與主程式完全相同的 Perceiver 做辨識，把結果疊在畫面上。
 
 顯示內容：各 ROI 框、玩家綠圈/其他人紅圈（含小地圖座標數值）、
 HP/MP/EXP 比例、怪物框、狀態機當下會做的決策。
 
 用法：
-  python tools/debug_view.py                          # 對著遊戲視窗跑
-  python tools/debug_view.py --source shot.png        # 看單張截圖
-按 q 離開。
+  python tools/debug_view.py                       # 即時視窗（按 q 離開）
+  python tools/debug_view.py --snapshot out.png    # 只存一張標註圖，不開視窗
+  python tools/debug_view.py --source shot.png     # 用靜態截圖當來源
+
+擷取方式若是 screen（客戶端不支援 PrintWindow），偵錯視窗蓋住遊戲時會
+拍到自己造成畫面遞迴疊圖——程式會自動把視窗挪開，挪不開時請用 --snapshot。
 """
 import argparse
 import os
@@ -22,6 +25,7 @@ from maplebot.capture import ImageCapture, WindowCapture  # noqa: E402
 from maplebot.config import load_config, load_profile  # noqa: E402
 from maplebot.perception import Perceiver  # noqa: E402
 from maplebot.vision.mobs import make_detector  # noqa: E402
+from maplebot.window import pick_free_position, virtual_screen  # noqa: E402
 
 GREEN = (0, 255, 0)
 RED = (0, 0, 255)
@@ -29,14 +33,86 @@ YELLOW = (0, 255, 255)
 WHITE = (255, 255, 255)
 
 WINDOW = "maplebot debug (q to quit)"
-MAX_DISPLAY_W = 1280   # 顯示視窗最大寬度，避免大解析度截圖塞爆螢幕
+MAX_DISPLAY_W = 1280   # 顯示視窗最大寬度，避免大解析度畫面塞爆螢幕
+TITLE_BAR_H = 40       # 估算標題列高度，找擺放位置時要算進去
+
+
+def _pct(v):
+    return f"{v:.0%}" if v is not None else "?"
+
+
+def _display_size(capture_size):
+    w, h = capture_size
+    if w <= MAX_DISPLAY_W:
+        return w, h
+    return MAX_DISPLAY_W, int(h * MAX_DISPLAY_W / w)
+
+
+def annotate(frame, state, action, cfg, fps=None):
+    """把辨識結果畫上去（畫在原尺寸畫面，座標讀值才準）。"""
+    canvas = frame.copy()
+
+    for name, (x, y, w, h) in cfg.regions.items():
+        cv2.rectangle(canvas, (x, y), (x + w, y + h), WHITE, 1)
+        cv2.putText(canvas, name, (x, max(y - 3, 10)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, WHITE, 1)
+
+    if "minimap" in cfg.regions:
+        mx, my = cfg.regions["minimap"][:2]
+        if state.player:
+            px, py = state.player
+            cv2.circle(canvas, (mx + px, my + py), 4, GREEN, 2)
+            cv2.putText(canvas, f"({px},{py})", (mx + px + 6, my + py),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, GREEN, 1)
+        for ox, oy in state.others:
+            cv2.circle(canvas, (mx + ox, my + oy), 4, RED, 2)
+
+    if "playfield" in cfg.regions:
+        fx, fy = cfg.regions["playfield"][:2]
+        for mob in state.mobs:
+            x1 = fx + mob.cx - mob.w // 2
+            y1 = fy + mob.cy - mob.h // 2
+            cv2.rectangle(canvas, (x1, y1), (x1 + mob.w, y1 + mob.h), YELLOW, 2)
+            cv2.putText(canvas, f"{mob.name} {mob.score:.2f}", (x1, max(y1 - 4, 10)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, YELLOW, 1)
+
+    header = (f"HP {_pct(state.hp)} | MP {_pct(state.mp)} | EXP {_pct(state.exp)} | "
+              f"mobs {len(state.mobs)}")
+    if fps is not None:
+        header += f" | {fps:.0f} FPS"
+    header += f" | -> {type(action).__name__}"
+    cv2.putText(canvas, header, (8, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.55, GREEN, 2)
+    return canvas
+
+
+def _place_away_from_game(cap, disp_w, disp_h) -> None:
+    """螢幕擷取模式下視窗蓋住遊戲就會拍到自己，自動挪到遊戲畫面以外。"""
+    spot = pick_free_position((*cap.origin, *cap.size),
+                              (disp_w, disp_h + TITLE_BAR_H), virtual_screen())
+    if spot:
+        cv2.moveWindow(WINDOW, spot[0], spot[1])
+        print(f"已把偵錯視窗移到 {spot}，避免拍到自己造成畫面遞迴疊圖")
+    else:
+        print("⚠ 螢幕空間不足以把偵錯視窗放到遊戲畫面以外。"
+              "請改用 --snapshot out.png（不開視窗），或縮小遊戲視窗／用副螢幕")
+
+
+def _report(state, action):
+    print(f"  HP {_pct(state.hp)} | MP {_pct(state.mp)} | EXP {_pct(state.exp)}")
+    print(f"  玩家小地圖座標: {state.player}｜其他玩家: {len(state.others)}")
+    print(f"  偵測到怪物: {len(state.mobs)}")
+    for mob in state.mobs[:5]:
+        print(f"    - {mob.name} ({mob.cx},{mob.cy}) 分數 {mob.score:.2f}")
+    print(f"  當下決策: {type(action).__name__}")
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="config/default.yaml")
     ap.add_argument("--profile", default="config/profiles/example.yaml")
-    ap.add_argument("--source", default="")
+    ap.add_argument("--source", default="", help="用靜態截圖當畫面來源")
+    ap.add_argument("--snapshot", default="",
+                    help="只抓一幀存成標註圖後結束，完全不開視窗")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
@@ -45,8 +121,8 @@ def main() -> int:
         WindowCapture(cfg.window_title, cfg.capture_method)
     print(f"擷取尺寸: {cap.size[0]}x{cap.size[1]}｜擷取方式: {cap.method}")
     if cap.method == "screen":
-        print("⚠ 此客戶端不支援 PrintWindow，改用螢幕擷取。"
-              "請把這個偵錯視窗拖到遊戲畫面以外，否則會拍到視窗自己（畫面像是一直放大）")
+        print("⚠ 此客戶端不支援 PrintWindow，改用螢幕擷取："
+              "任何蓋住遊戲的視窗都會被拍進去")
 
     if cfg.minimap_auto:
         from maplebot.vision.locate import BR_NAME, TL_NAME, find_minimap, load_ui_template
@@ -65,9 +141,23 @@ def main() -> int:
     pf = cfg.region("playfield")
     center = (pf[2] // 2, pf[3] // 2)
 
+    if args.snapshot:
+        now = time.monotonic()
+        frame = cap.grab()
+        state = perceiver.perceive(frame, now)
+        action = fsm.decide(state, cfg, profile, rt, now, center)
+        cv2.imwrite(args.snapshot, annotate(frame, state, action, cfg))
+        print(f"\n已存標註圖: {args.snapshot}")
+        _report(state, action)
+        return 0
+
     # 只建立「一個」視窗；不這樣做的話，某些 Windows OpenCV 版本會在
     # 迴圈裡每幀開一個新視窗（畫面上會不斷疊出新視窗）。
-    cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
+    cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
+    disp_w, disp_h = _display_size(cap.size)
+    cv2.resizeWindow(WINDOW, disp_w, disp_h)
+    if cap.method == "screen":
+        _place_away_from_game(cap, disp_w, disp_h)
     delay = 200 if args.source else 30
 
     while True:
@@ -75,56 +165,17 @@ def main() -> int:
         frame = cap.grab()
         state = perceiver.perceive(frame, t0)
         action = fsm.decide(state, cfg, profile, rt, t0, center)
-        canvas = frame.copy()
-
-        for name, (x, y, w, h) in cfg.regions.items():
-            cv2.rectangle(canvas, (x, y), (x + w, y + h), WHITE, 1)
-            cv2.putText(canvas, name, (x, max(y - 3, 10)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, WHITE, 1)
-
-        if "minimap" in cfg.regions:
-            mx, my = cfg.regions["minimap"][:2]
-            if state.player:
-                px, py = state.player
-                cv2.circle(canvas, (mx + px, my + py), 4, GREEN, 2)
-                cv2.putText(canvas, f"({px},{py})", (mx + px + 6, my + py),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, GREEN, 1)
-            for ox, oy in state.others:
-                cv2.circle(canvas, (mx + ox, my + oy), 4, RED, 2)
-
-        if "playfield" in cfg.regions:
-            fx, fy = cfg.regions["playfield"][:2]
-            for mob in state.mobs:
-                x1 = fx + mob.cx - mob.w // 2
-                y1 = fy + mob.cy - mob.h // 2
-                cv2.rectangle(canvas, (x1, y1), (x1 + mob.w, y1 + mob.h), YELLOW, 2)
-                cv2.putText(canvas, f"{mob.name} {mob.score:.2f}", (x1, max(y1 - 4, 10)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, YELLOW, 1)
-
-        def pct(v):
-            return f"{v:.0%}" if v is not None else "?"
-
         fps = 1.0 / max(time.monotonic() - t0, 1e-6)
-        header = (f"HP {pct(state.hp)} | MP {pct(state.mp)} | EXP {pct(state.exp)} | "
-                  f"mobs {len(state.mobs)} | {fps:.0f} FPS | -> {type(action).__name__}")
-        cv2.putText(canvas, header, (8, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.55, GREEN, 2)
+        canvas = annotate(frame, state, action, cfg, fps)
 
-        # 大解析度截圖等比例縮到最大寬度以內再顯示（座標讀值不受影響，
-        # 疊框都畫在原尺寸 canvas 上）
-        h, w = canvas.shape[:2]
-        if w > MAX_DISPLAY_W:
-            scale = MAX_DISPLAY_W / w
-            shown = cv2.resize(canvas, (MAX_DISPLAY_W, int(h * scale)))
-        else:
-            shown = canvas
+        shown = canvas if canvas.shape[1] <= disp_w else \
+            cv2.resize(canvas, (disp_w, disp_h))
         cv2.imshow(WINDOW, shown)
 
-        key = cv2.waitKey(delay) & 0xFF
-        if key == ord("q"):
+        if cv2.waitKey(delay) & 0xFF == ord("q"):
             break
-        # 按視窗右上角的 X 關閉也結束
         if cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) < 1:
-            break
+            break  # 按了視窗右上角的 X
     cv2.destroyAllWindows()
     return 0
 

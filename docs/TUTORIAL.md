@@ -64,6 +64,10 @@ python tools/grab_template.py --name snail    # 名字自取
 python tools/debug_view.py
 ```
 
+> 如果視窗一直遞迴疊圖（擷取方式是 `screen` 且視窗擠不開），改用不開視窗的
+> 快照模式，看存出來的 PNG 即可：
+> `python tools/debug_view.py --snapshot check.png`
+
 檢查四件事：
 
 1. 小地圖上你的位置有**綠圈**，旁邊顯示座標 `(x,y)`
@@ -149,7 +153,7 @@ advisor:
 
 | 症狀 | 解法 |
 |---|---|
-| 畫面像無限鏡像一直放大 | 擷取方式退回了 `screen`，而偵錯視窗蓋在遊戲上，拍到自己。把視窗拖離遊戲畫面即可（`debug_view` 啟動時會提示目前擷取方式） |
+| 畫面像無限鏡像一直放大／視窗一層層疊 | 擷取方式是 `screen` 且偵錯視窗蓋在遊戲上，拍到自己。程式會自動挪開視窗；螢幕不夠大就用 `--snapshot out.png`（不開視窗）|
 | 按鍵沒反應 | 終端機用系統管理員開；確認遊戲視窗在前景 |
 | `找不到標題含「...」的視窗` | `window.title` 打錯；視窗模式才抓得到 |
 | 玩家綠圈不見/亂跳 | 小地圖框太大含到雜物 → 重框；或調 `vision.color_tolerance`（黃點偏色）、`max_dot_pixels`（黃色地形干擾）。最穩：截一張玩家點模板存成 `data/templates/ui/minimap_player.png` |
