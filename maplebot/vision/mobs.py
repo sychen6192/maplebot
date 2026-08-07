@@ -110,6 +110,7 @@ def make_detector(vision_cfg, templates_dir: str, logger=None) -> MobDetector:
             confidence=vision_cfg.yolo_confidence,
             timeout=vision_cfg.remote_timeout,
             jpeg_quality=vision_cfg.remote_jpeg_quality,
+            max_width=vision_cfg.remote_max_width,
             logger=logger,
         )
     return TemplateMobDetector(templates_dir, vision_cfg.mob_match_threshold)

@@ -3,6 +3,7 @@ import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import cv2
 import numpy as np
 import pytest
 
@@ -118,6 +119,94 @@ def test_failures_reset_after_success(good_server):
 def test_empty_endpoint_rejected():
     with pytest.raises(ValueError):
         RemoteMobDetector("")
+
+
+def test_malformed_endpoint_rejected():
+    with pytest.raises(ValueError):
+        RemoteMobDetector("192.168.1.50:8100/detect")   # 少了 http://
+
+
+def test_connection_is_reused_across_calls():
+    """keep-alive：多次偵測應共用同一條 TCP 連線（VPN/WiFi 下省下反覆握手）。"""
+    conns = []
+
+    class H(_Base):
+        protocol_version = "HTTP/1.1"
+
+        def setup(self):
+            super().setup()
+            conns.append(self.connection)
+
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length", 0))
+            self.rfile.read(n)
+            self._send(200, json.dumps({"mobs": []}).encode())
+
+    server, url = _serve(H)
+    try:
+        det = RemoteMobDetector(url, timeout=5)
+        for _ in range(3):
+            det.detect(FRAME)
+        assert len(conns) == 1, f"預期重用 1 條連線，實際開了 {len(conns)} 條"
+        det.close()
+    finally:
+        server.shutdown()
+
+
+def test_recovers_after_server_closes_connection():
+    """伺服器用 HTTP/1.0 每次關閉連線時，客戶端要能自動重連。"""
+    class H(_Base):            # 沒設 protocol_version，預設 HTTP/1.0 會關連線
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length", 0))
+            self.rfile.read(n)
+            self._send(200, json.dumps({
+                "mobs": [{"name": "m", "cx": 1, "cy": 2, "w": 3, "h": 4}]}).encode())
+
+    server, url = _serve(H)
+    try:
+        det = RemoteMobDetector(url, timeout=5)
+        for _ in range(3):
+            assert len(det.detect(FRAME)) == 1
+        assert det.failures == 0
+    finally:
+        server.shutdown()
+
+
+def test_downscale_shrinks_payload_and_rescales_boxes():
+    """送出前縮圖省頻寬，收到的框要按比例還原成原尺寸座標。"""
+    sent = {}
+
+    class H(_Base):
+        protocol_version = "HTTP/1.1"
+
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length", 0))
+            sent["body"] = self.rfile.read(n)
+            # 在「縮圖後」的座標系回一個框
+            self._send(200, json.dumps({"mobs": [
+                {"name": "m", "cx": 320, "cy": 100, "w": 32, "h": 20, "score": 0.9}]}).encode())
+
+    big = np.random.default_rng(3).integers(0, 255, (520, 1280, 3), dtype=np.uint8)
+    server, url = _serve(H)
+    try:
+        det = RemoteMobDetector(url, timeout=5, max_width=640)
+        mobs = det.detect(big)
+        # 送出去的應該是 640 寬
+        got = cv2.imdecode(np.frombuffer(sent["body"], np.uint8), cv2.IMREAD_COLOR)
+        assert got.shape[1] == 640
+        # 1280/640 = 2 倍還原
+        assert (mobs[0].cx, mobs[0].cy, mobs[0].w, mobs[0].h) == (640, 200, 64, 40)
+    finally:
+        server.shutdown()
+
+
+def test_no_downscale_when_already_small(good_server):
+    url, received = good_server
+    det = RemoteMobDetector(url, timeout=5, max_width=640)
+    mobs = det.detect(FRAME)                       # 200x120，本來就比 640 小
+    got = cv2.imdecode(np.frombuffer(received["body"], np.uint8), cv2.IMREAD_COLOR)
+    assert got.shape[1] == 200
+    assert mobs[0].cx == 100                       # 座標不變
 
 
 def test_parse_payload_defaults():
