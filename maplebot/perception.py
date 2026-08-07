@@ -5,6 +5,7 @@
 區域超出畫面（視窗被縮小/校正錯誤）時對應欄位維持 None，
 由決策層與 watchdog 處理。
 """
+from dataclasses import replace
 from typing import Optional
 
 import numpy as np
@@ -63,7 +64,22 @@ class Perceiver:
             due = (interval <= 0 or self._mobs_ts is None
                    or now - self._mobs_ts >= interval)
             if due:
-                self._mobs_cache = self.detector.detect(pf)
+                roi, ox, oy = self._search_roi(pf)
+                mobs = self.detector.detect(roi)
+                if ox or oy:      # 換算回 playfield 座標
+                    mobs = [replace(m, cx=m.cx + ox, cy=m.cy + oy) for m in mobs]
+                self._mobs_cache = mobs
                 self._mobs_ts = now
             st.mobs = self._mobs_cache
         return st
+
+    def _search_roi(self, playfield: np.ndarray):
+        """只取角色周圍的攻擊範圍框；回傳 (影像, x偏移, y偏移)。"""
+        box = self.cfg.vision.mob_search_box
+        if not box:
+            return playfield, 0, 0
+        h, w = playfield.shape[:2]
+        bw, bh = min(box[0], w), min(box[1], h)
+        x0 = max((w - bw) // 2, 0)
+        y0 = max((h - bh) // 2, 0)
+        return playfield[y0:y0 + bh, x0:x0 + bw], x0, y0
