@@ -4,6 +4,11 @@
 
 window:
   title: "MapleSaga"        # 遊戲視窗標題（子字串比對即可）
+  # 擷取方式：
+  #   auto        啟動時自動測試，優先用 printwindow（建議）
+  #   printwindow 直接向視窗要畫面，被其他視窗蓋住也正確
+  #   screen      抓螢幕座標；快，但任何蓋在遊戲上的視窗都會被拍進去
+  capture: auto
 
 loop:
   fps: 8                    # 主迴圈頻率（擷取+辨識+決策 每秒次數）

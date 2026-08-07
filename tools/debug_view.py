@@ -41,9 +41,12 @@ def main() -> int:
 
     cfg = load_config(args.config)
     profile = load_profile(args.profile)
-    cap = ImageCapture(args.source) if args.source else WindowCapture(cfg.window_title)
-    print(f"擷取尺寸: {cap.size[0]}x{cap.size[1]}"
-          "（若這不是你的遊戲畫面大小，代表抓錯視窗或抓到整個螢幕）")
+    cap = ImageCapture(args.source) if args.source else \
+        WindowCapture(cfg.window_title, cfg.capture_method)
+    print(f"擷取尺寸: {cap.size[0]}x{cap.size[1]}｜擷取方式: {cap.method}")
+    if cap.method == "screen":
+        print("⚠ 此客戶端不支援 PrintWindow，改用螢幕擷取。"
+              "請把這個偵錯視窗拖到遊戲畫面以外，否則會拍到視窗自己（畫面像是一直放大）")
 
     if cfg.minimap_auto:
         from maplebot.vision.locate import BR_NAME, TL_NAME, find_minimap, load_ui_template

@@ -1,4 +1,12 @@
-"""畫面擷取：遊戲視窗即時擷取（mss）或靜態圖片（離線測試/開發用）。
+"""畫面擷取：遊戲視窗即時擷取或靜態圖片（離線測試/開發用）。
+
+兩種即時擷取方式：
+- printwindow：直接向視窗要畫面，**被其他視窗蓋住也正確**（預設優先）
+- screen：用 mss 抓螢幕上那塊座標，會拍到擋在遊戲前面的任何視窗
+  （包含本程式自己的偵錯視窗——那會造成無限鏡像、畫面看起來一直放大）
+
+method="auto" 會在啟動時實測一次 PrintWindow，拿不到內容（部分 DirectX
+客戶端會回全黑）才退回 screen。
 
 所有 grab() 都回傳 BGR 的 numpy 陣列；region 一律是 client 區座標 [x, y, w, h]。
 """
@@ -8,21 +16,48 @@ import cv2
 import numpy as np
 
 from .config import Region
-from .window import GameWindow, find_game_window
+from .window import GameWindow, find_game_window, grab_client
 
 
 class CaptureError(Exception):
     pass
 
 
+def looks_blank(frame: Optional[np.ndarray], dark_level: int = 8,
+                fraction: float = 0.98) -> bool:
+    """畫面幾乎全黑 = PrintWindow 對這個客戶端沒作用。"""
+    if frame is None or frame.size == 0:
+        return True
+    sample = frame[::4, ::4]
+    return bool((sample.max(axis=2) < dark_level).mean() >= fraction)
+
+
+def _crop(frame: np.ndarray, region: Optional[Region]) -> np.ndarray:
+    if region is None:
+        return frame
+    x, y, w, h = region
+    fh, fw = frame.shape[:2]
+    if x < 0 or y < 0 or x + w > fw or y + h > fh:
+        raise CaptureError(f"region {region} 超出畫面範圍 {fw}x{fh}")
+    return frame[y:y + h, x:x + w].copy()
+
+
 class WindowCapture:
-    def __init__(self, title_substr: str):
+    def __init__(self, title_substr: str, method: str = "auto"):
         import mss  # Windows 以外的環境可能沒有顯示裝置，延後 import/初始化
 
         self._title = title_substr
         self._sct = mss.mss()
         self._win: Optional[GameWindow] = None
         self.refresh()
+        self.method = method if method in ("printwindow", "screen") else self._probe()
+
+    def _probe(self) -> str:
+        try:
+            frame = grab_client(self._win)  # type: ignore[arg-type]
+        except Exception:
+            frame = None
+        return "screen" if looks_blank(frame) else "printwindow"
 
     def refresh(self) -> GameWindow:
         win = find_game_window(self._title)
@@ -36,15 +71,22 @@ class WindowCapture:
         assert self._win is not None
         return self._win.size
 
-    def grab(self, region: Optional[Region] = None) -> np.ndarray:
+    def _grab_screen(self) -> np.ndarray:
         assert self._win is not None
         ox, oy = self._win.origin
-        if region is None:
-            x, y, (w, h) = 0, 0, self._win.size
-        else:
-            x, y, w, h = region
-        shot = self._sct.grab({"left": ox + x, "top": oy + y, "width": w, "height": h})
+        w, h = self._win.size
+        shot = self._sct.grab({"left": ox, "top": oy, "width": w, "height": h})
         return np.asarray(shot)[:, :, :3].copy()  # BGRA -> BGR
+
+    def grab(self, region: Optional[Region] = None) -> np.ndarray:
+        assert self._win is not None
+        if self.method == "printwindow":
+            frame = grab_client(self._win)
+            if frame is None:
+                raise CaptureError("PrintWindow 擷取失敗（視窗可能已關閉）")
+        else:
+            frame = self._grab_screen()
+        return _crop(frame, region)
 
 
 class ImageCapture:
@@ -55,6 +97,7 @@ class ImageCapture:
         if img is None:
             raise CaptureError(f"讀不到圖片: {path}")
         self._img = img
+        self.method = "image"
 
     @property
     def size(self):
@@ -62,10 +105,4 @@ class ImageCapture:
         return (w, h)
 
     def grab(self, region: Optional[Region] = None) -> np.ndarray:
-        if region is None:
-            return self._img.copy()
-        x, y, w, h = region
-        ih, iw = self._img.shape[:2]
-        if x < 0 or y < 0 or x + w > iw or y + h > ih:
-            raise CaptureError(f"region {region} 超出圖片範圍 {iw}x{ih}")
-        return self._img[y:y + h, x:x + w].copy()
+        return _crop(self._img, region).copy()
