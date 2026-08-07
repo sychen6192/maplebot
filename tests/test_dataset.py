@@ -70,6 +70,16 @@ def test_autolabel_writes_yolo_format(raw_dir):
     assert os.path.getsize(os.path.join(raw, "frame_004.txt")) == 0
 
 
+def test_autolabel_reports_progress(raw_dir):
+    raw, tpl = raw_dir
+    seen = []
+    autolabel_dir(raw, tpl, threshold=0.8,
+                  progress=lambda i, total, boxes: seen.append((i, total)))
+    assert seen[0] == (1, 6)
+    assert seen[-1] == (6, 6)
+    assert [i for i, _ in seen] == [1, 2, 3, 4, 5, 6]
+
+
 def test_autolabel_single_class(raw_dir):
     raw, tpl = raw_dir
     res = autolabel_dir(raw, tpl, threshold=0.8, single_class=True)

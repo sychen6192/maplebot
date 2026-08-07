@@ -33,8 +33,13 @@ def main() -> int:
     if threshold is None:
         threshold = load_config(args.config).vision.mob_match_threshold
 
+    def show(index, total, boxes):
+        print(f"\r  標註中 {index}/{total} 張（已找到 {boxes} 個框）",
+              end="", flush=True)
+
     res = autolabel_dir(args.images, args.templates, threshold,
-                        single_class=args.single_class)
+                        single_class=args.single_class, progress=show)
+    print()
     print(f"影像 {res.images} 張 | 有預標註 {res.labeled} 張 | 共 {res.boxes} 個框")
     print(f"類別: {res.classes}")
     if res.unlabeled_files:
