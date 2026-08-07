@@ -47,8 +47,12 @@ def main(argv=None) -> int:
         if not IS_WINDOWS:
             logger.error("即時擷取只支援 Windows。開發環境請加 --source <截圖> 離線執行")
             return 2
-        capture = WindowCapture(cfg.window_title)
-        logger.info("已鎖定遊戲視窗（client 區 %dx%d）", *capture.size)
+        capture = WindowCapture(cfg.window_title, cfg.capture_method)
+        logger.info("已鎖定遊戲視窗（client 區 %dx%d，擷取方式 %s）",
+                    *capture.size, capture.method)
+        if capture.method == "screen":
+            logger.warning("此客戶端不支援 PrintWindow，改用螢幕擷取："
+                           "執行期間不要讓任何視窗蓋住遊戲畫面")
 
     keyboard = Keyboard(NullBackend() if (dry_run or not IS_WINDOWS) else None)
     detector = make_detector(cfg.vision, profile.templates_dir)

@@ -77,6 +77,7 @@ class AdvisorCfg:
 @dataclass
 class AppCfg:
     window_title: str = "MapleStory"
+    capture_method: str = "auto"      # auto | printwindow | screen
     fps: float = 8.0
     regions: Dict[str, Region] = field(default_factory=dict)
     minimap_auto: bool = False        # regions.minimap: auto 時用角落模板自動定位
@@ -177,6 +178,11 @@ def load_config(path: str, local_path: str = LOCAL_OVERRIDE) -> AppCfg:
 
     win = data.get("window", {})
     cfg.window_title = str(win.get("title", cfg.window_title))
+    cfg.capture_method = str(win.get("capture", cfg.capture_method)).lower()
+    if cfg.capture_method not in ("auto", "printwindow", "screen"):
+        raise ConfigError(
+            f"window.capture 只能是 auto / printwindow / screen，"
+            f"拿到: {cfg.capture_method!r}")
     cfg.fps = float(data.get("loop", {}).get("fps", cfg.fps))
 
     for name, raw in (data.get("regions") or {}).items():
