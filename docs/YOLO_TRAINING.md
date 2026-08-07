@@ -112,6 +112,44 @@ python main.py --profile config/profiles/example.yaml             # 上線
 推理耗時 1~3ms/幀，相對 8 FPS 主迴圈（125ms/tick）完全無感；
 `vision/yolo_mobs.py` 與模板匹配實作同一個 `MobDetector` 介面，其餘程式碼零改動。
 
+## GPU 在另一台機器？用推理伺服器
+
+遊戲在筆電/主力機、5090 在工作站的話，不用把模型搬來搬去——讓工作站當推理伺服器：
+
+**工作站上**（要有 ultralytics + cu128 PyTorch）：
+
+```bash
+python tools/serve_yolo.py --model runs/mobs/mobs/weights/best.pt
+# 印出 http://0.0.0.0:8100/detect
+ipconfig    # 記下這台機器的區網 IP，例如 192.168.1.50
+```
+
+**遊戲機上** `config/local.yaml`：
+
+```yaml
+vision:
+  mob_detector: remote
+  remote_endpoint: "http://192.168.1.50:8100/detect"
+  remote_timeout: 1.0
+```
+
+遊戲機完全不用裝 PyTorch/ultralytics（只要原本的 requirements）。
+
+延遲概算（主迴圈每 tick 有 125ms 預算）：
+
+| 環節 | 有線區網 | WiFi |
+|---|---|---|
+| JPEG 編碼 + 傳輸（800x520 約 60KB） | ~2ms | 15~40ms |
+| 5090 推理（yolo11n） | 1~3ms | 1~3ms |
+| **合計往返** | **5~15ms** | **20~50ms** |
+
+兩者都遠低於預算。WiFi 若不穩可把 `remote_jpeg_quality` 降到 60~70。
+
+連不上或逾時時，客戶端會記錄警告並把該幀當成「沒看到怪」——bot 會繼續巡邏
+而不是崩潰。驗證伺服器活著：`curl http://192.168.1.50:8100/health`
+
+> 伺服器沒有身分驗證，只適合自己的區網；不要開到公網。
+
 ## 什麼時候需要重練
 
 - 換新地圖/新怪：蒐集新地圖 100~200 張 → autolabel → 校對 → 併入 `datasets/raw/` 重跑 4、5

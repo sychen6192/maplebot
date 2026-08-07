@@ -55,7 +55,7 @@ def main(argv=None) -> int:
                            "執行期間不要讓任何視窗蓋住遊戲畫面")
 
     keyboard = Keyboard(NullBackend() if (dry_run or not IS_WINDOWS) else None)
-    detector = make_detector(cfg.vision, profile.templates_dir)
+    detector = make_detector(cfg.vision, profile.templates_dir, logger)
 
     runner = Runner(cfg, profile, capture, keyboard, detector, logger,
                     dry_run=dry_run, max_ticks=args.max_ticks)

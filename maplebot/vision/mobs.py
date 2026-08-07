@@ -97,9 +97,19 @@ class TemplateMobDetector:
         ]
 
 
-def make_detector(vision_cfg, templates_dir: str) -> MobDetector:
+def make_detector(vision_cfg, templates_dir: str, logger=None) -> MobDetector:
     if vision_cfg.mob_detector == "yolo":
         from .yolo_mobs import YoloMobDetector
 
         return YoloMobDetector(vision_cfg.yolo_model, vision_cfg.yolo_confidence)
+    if vision_cfg.mob_detector == "remote":
+        from .remote_mobs import RemoteMobDetector
+
+        return RemoteMobDetector(
+            vision_cfg.remote_endpoint,
+            confidence=vision_cfg.yolo_confidence,
+            timeout=vision_cfg.remote_timeout,
+            jpeg_quality=vision_cfg.remote_jpeg_quality,
+            logger=logger,
+        )
     return TemplateMobDetector(templates_dir, vision_cfg.mob_match_threshold)
