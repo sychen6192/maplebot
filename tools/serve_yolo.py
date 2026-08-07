@@ -39,6 +39,10 @@ MAX_BODY = 16 * 1024 * 1024   # 單張圖上限，擋掉異常請求
 def build_handler(model, default_conf, device, model_path, verbose):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
+        # 回應的標頭與內容是分兩次寫入 socket。Nagle 開著時，第二個小封包
+        # 會等第一個的 ACK，而對方的 delayed ACK 最多可拖 40ms(Linux)~
+        # 200ms(Windows)——每次請求都白等一次。關掉。
+        disable_nagle_algorithm = True
 
         def log_message(self, fmt, *args):
             if verbose:
