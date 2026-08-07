@@ -126,6 +126,24 @@ python tools/label_gdino.py --prompt "monster" --box-threshold 0.15
 python tools/prepare_dataset.py && python tools/train_yolo.py
 ```
 
+**它會把 NPC 和其他玩家也當成怪**——對它來說都是「卡通人形」。
+所以預設就開了負面 prompt，把這些框剔掉：
+
+```bash
+--reject "npc,person,player character,signboard"      # 預設值
+```
+
+`--test` 的預覽圖裡 **黃框 = 會拿去訓練，紅框 = 已剔除**，一眼就看得出
+過濾對不對。NPC 還是漏網的話，把它的特徵加進去，例如：
+
+```bash
+python tools/label_gdino.py --test shot.jpg --prompt "monster" \
+  --reject "npc,person,player character,shopkeeper,merchant,girl,boy,signboard"
+```
+
+反過來，如果**怪被誤剔**（黃框太少、紅框框到怪），把該詞從 `--reject` 拿掉，
+或調高 `--iou-drop`（預設 0.4，調到 0.7 只剔除幾乎完全重疊的）。
+
 > 用的是 **transformers 官方維護版**的 GroundingDINO，不是 autodistill 那包。
 > autodistill 依賴的 `groundingdino` 套件已停止維護，在 transformers 5.x 會炸在
 > `BertModel has no attribute 'get_head_mask'`——別浪費時間在那條路上。
