@@ -56,6 +56,7 @@ class VisionCfg:
     remote_timeout: float = 1.0
     remote_jpeg_quality: int = 80
     remote_max_width: int = 640        # 送出前先縮到這個寬度（0=不縮）
+    mob_interval: float = 0.0          # 每幾秒才做一次怪物偵測（0=每個 tick 都做）
 
 
 @dataclass
@@ -217,6 +218,7 @@ def load_config(path: str, local_path: str = LOCAL_OVERRIDE) -> AppCfg:
     vc.remote_timeout = float(v.get("remote_timeout", vc.remote_timeout))
     vc.remote_jpeg_quality = int(v.get("remote_jpeg_quality", vc.remote_jpeg_quality))
     vc.remote_max_width = int(v.get("remote_max_width", vc.remote_max_width))
+    vc.mob_interval = float(v.get("mob_interval", vc.mob_interval))
     if vc.mob_detector == "remote" and not vc.remote_endpoint:
         raise ConfigError("vision.mob_detector=remote 必須設定 vision.remote_endpoint")
 

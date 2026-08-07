@@ -22,6 +22,10 @@ class Perceiver:
         self.detector = detector
         # 有玩家點模板就優先用模板匹配（見 vision/minimap.py）
         self.player_template = load_ui_template(cfg.vision.ui_templates_dir, PLAYER_NAME)
+        # 怪物偵測若很貴（遠端推理、大畫面），可以降頻並沿用上次結果；
+        # HP/位置這些便宜又攸關安全的辨識仍然每個 tick 都做。
+        self._mobs_cache: list = []
+        self._mobs_ts: Optional[float] = None
 
     def _slice(self, frame: np.ndarray, name: str) -> Optional[np.ndarray]:
         region = self.cfg.regions.get(name)
@@ -55,5 +59,11 @@ class Perceiver:
 
         pf = self._slice(frame, "playfield")
         if pf is not None:
-            st.mobs = self.detector.detect(pf)
+            interval = vc.mob_interval
+            due = (interval <= 0 or self._mobs_ts is None
+                   or now - self._mobs_ts >= interval)
+            if due:
+                self._mobs_cache = self.detector.detect(pf)
+                self._mobs_ts = now
+            st.mobs = self._mobs_cache
         return st
