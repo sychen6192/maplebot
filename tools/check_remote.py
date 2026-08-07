@@ -133,10 +133,17 @@ def main() -> int:
     if s["avg"] < budget * 0.5:
         print("✓ 延遲充裕，可以正式使用")
     elif s["avg"] < budget:
-        print("△ 延遲偏高但仍可用；WiFi 的話可調降 vision.remote_jpeg_quality")
+        print("△ 延遲偏高但仍可用")
     else:
-        print("✗ 延遲超過預算：改用有線網路、調降 remote_jpeg_quality，"
-              "或把 loop.fps 調低")
+        print("✗ 延遲超過預算。建議依序試：")
+        interval = max(round(s["avg"] * 2 / 1000, 1), 0.3)
+        print(f"  1. config 設 vision.mob_interval: {interval}"
+              "（怪物偵測降頻，主迴圈與安全機制仍全速）")
+        print(f"  2. 調降 vision.remote_jpeg_quality（目前 "
+              f"{cfg.vision.remote_jpeg_quality}，試 60）")
+        print("  3. 遊戲視窗調小 / 改用區網 IP 而非 VPN 位址")
+    if s["avg"] > 30:
+        print(f"（傳輸約佔 {len(buf) / 1024:.0f}KB；延遲大致與封包大小成正比）")
 
     print(f"\n這張圖偵測到 {len(mobs)} 個框：")
     for m in mobs[:5]:

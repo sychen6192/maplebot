@@ -51,6 +51,10 @@ vision:
   remote_jpeg_quality: 80             # 降低可省頻寬（VPN/WiFi 可調到 60）
   remote_max_width: 640               # 送出前縮到這個寬度；YOLO 內部本來就會
                                       # 縮到 640，所以這是免費的頻寬節省（0=不縮）
+  # 每幾秒才做一次怪物偵測（0 = 每個 tick 都做）。
+  # 怪物偵測很貴時（遠端推理走 VPN、畫面很大）設 0.3~0.5，
+  # 主迴圈仍然全速跑——HP/位置這些攸關安全的辨識不受影響。
+  mob_interval: 0.0
 
 safety:
   stop_key: f12             # 緊急停止
