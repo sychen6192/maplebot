@@ -50,7 +50,8 @@ class AutoLabelResult:
 
 
 def autolabel_dir(images_dir: str, templates_dir: str, threshold: float,
-                  single_class: bool = False, class_name: str = "mob") -> AutoLabelResult:
+                  single_class: bool = False, class_name: str = "mob",
+                  progress=None) -> AutoLabelResult:
     """對資料夾內所有影像跑模板匹配，寫出同名 .txt 與 classes.txt。
 
     沒偵測到怪的影像也會寫出空 .txt——校對時人工補框，
@@ -67,7 +68,10 @@ def autolabel_dir(images_dir: str, templates_dir: str, threshold: float,
     cls_idx = {c: i for i, c in enumerate(classes)}
 
     res = AutoLabelResult(classes=classes)
-    for path in list_images(images_dir):
+    paths = list_images(images_dir)
+    for index, path in enumerate(paths, 1):
+        if progress:
+            progress(index, len(paths), res.boxes)
         img = cv2.imread(path, cv2.IMREAD_COLOR)
         if img is None:
             continue
