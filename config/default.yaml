@@ -51,9 +51,16 @@ safety:
 # 必須是「視覺」模型（要看截圖），純文字模型不行。
 #
 # Ollama（最簡單）：
-#   ollama pull qwen2.5vl:7b        # 6GB，判斷異常綽綽有餘
-#   ollama pull qwen2.5vl:32b       # 21GB，5090 純推理可跑，判斷力更強
+#   ollama pull qwen2.5vl:7b        # 6GB，判斷異常綽綽有餘（相容最廣的安全預設）
+#   較新版 Ollama 也可用 qwen3-vl:8b（新一代、同級大小），
+#   或任何你已有的視覺模型（例如 qwen3.6 系列非 -mlx 標籤都有 vision，
+#   用 `ollama show <model>` 確認 capabilities 含 vision）。
 #   然後把 enabled 改 true 即可（endpoint/model 預設就是 Ollama）
+#
+#   跟其他大模型共存的原則（advisor 每 interval 秒呼叫會讓模型常駐 VRAM）：
+#   32GB 卡 = 一顆大文字模型（17~21GB）+ 一顆小 VL（6~7GB）可同時駐留；
+#   兩顆大的塞不下會被 Ollama LRU 換出，若 log 出現督導呼叫逾時，
+#   把 timeout 調高或改用小 VL 專職督導。
 #
 # vLLM 使用者改成：
 #   endpoint: "http://127.0.0.1:8000/v1/chat/completions"
