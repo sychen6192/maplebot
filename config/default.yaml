@@ -38,12 +38,22 @@ vision:
     mp: blue
     exp: yellow
   # 怪物偵測方式：
-  #   template 模板匹配（不用 GPU，預設）
-  #   yolo     本機 GPU 跑訓練好的模型
-  #   remote   把畫面送到另一台有 GPU 的機器（工作站）推理，
-  #            那台跑 python tools/serve_yolo.py --model best.pt
-  mob_detector: template
-  mob_match_threshold: 0.72
+  #   outline  【預設，零設定】靠 sprite 的黑色描邊找怪。不用模板、
+  #            不用訓練、不用標註，換地圖換怪都直接能用
+  #   template 模板匹配（要先用 grab_template.py 截圖）
+  #   yolo     本機 GPU 跑訓練好的模型（最穩，但要先訓練）
+  #   remote   送到另一台有 GPU 的機器推理（那台跑 tools/serve_yolo.py）
+  mob_detector: outline
+
+  # --- outline 模式參數（用 tools/debug_view.py 邊看邊調）---
+  outline_black_level: 8      # 判定為描邊的最大亮度。即時擷取是無損的用 0~8；
+                              # 拿 JPEG 截圖離線測試時要調到 12~20
+  outline_min_area: 800       # 小於此面積視為雜訊
+  outline_max_area: 40000     # 大於此面積視為背景/UI
+  outline_close_kernel: 20    # 把斷續的描邊連成一整塊
+  outline_player_box: [100, 140]   # 畫面中央挖掉的範圍（你自己的角色）
+
+  mob_match_threshold: 0.72   # template 模式用
   yolo_model: ""                      # mob_detector=yolo 時填訓練好的 .pt 路徑
   yolo_confidence: 0.5                # yolo 與 remote 共用的信心門檻
   remote_endpoint: ""                 # 例: "http://192.168.1.50:8100/detect"
@@ -55,6 +65,12 @@ vision:
   # 怪物偵測很貴時（遠端推理走 VPN、畫面很大）設 0.3~0.5，
   # 主迴圈仍然全速跑——HP/位置這些攸關安全的辨識不受影響。
   mob_interval: 0.0
+
+  # 只在角色周圍這個大小的框內找怪（角色永遠在畫面中央）。
+  # 打不到的地方本來就不用看：省時間、少誤判，遠端推理的封包也變小。
+  # 大視窗（>1500px）強烈建議設定，實測 2554x1430 從 135ms 降到 12ms。
+  # 設成攻擊範圍的兩倍左右即可。留空 = 掃整個 playfield。
+  # mob_search_box: [700, 400]
 
 safety:
   stop_key: f12             # 緊急停止

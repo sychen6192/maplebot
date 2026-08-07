@@ -104,6 +104,49 @@ def test_hp_still_read_every_tick_while_mobs_throttled(cfg, frame):
     assert st.hp == 0.0
 
 
+class _RecordingDetector:
+    """記錄收到的影像尺寸，並固定回報影像中心的一隻怪。"""
+
+    def __init__(self):
+        self.seen_shape = None
+
+    def detect(self, playfield):
+        from maplebot.vision.mobs import Mob
+        self.seen_shape = playfield.shape[:2]
+        h, w = playfield.shape[:2]
+        return [Mob(cx=w // 2, cy=h // 2, w=10, h=10, score=1.0, name="m")]
+
+
+def test_search_box_crops_and_restores_coordinates(cfg, frame):
+    """只搜角色周圍，但回報的座標要是 playfield 座標。"""
+    cfg.regions["playfield"] = (0, 80, 300, 200)
+    cfg.vision.mob_search_box = (100, 60)
+    det = _RecordingDetector()
+
+    st = Perceiver(cfg, det).perceive(frame, now=1.0)
+
+    assert det.seen_shape == (60, 100)          # 偵測器只看到小框
+    # 小框中心 (50,30) + 偏移 (100,70) = playfield 的中心 (150,100)
+    assert (st.mobs[0].cx, st.mobs[0].cy) == (150, 100)
+
+
+def test_no_search_box_uses_whole_playfield(cfg, frame):
+    cfg.regions["playfield"] = (0, 80, 300, 200)
+    cfg.vision.mob_search_box = None
+    det = _RecordingDetector()
+    st = Perceiver(cfg, det).perceive(frame, now=1.0)
+    assert det.seen_shape == (200, 300)
+    assert (st.mobs[0].cx, st.mobs[0].cy) == (150, 100)
+
+
+def test_search_box_larger_than_playfield_is_clamped(cfg, frame):
+    cfg.regions["playfield"] = (0, 80, 300, 200)
+    cfg.vision.mob_search_box = (9999, 9999)
+    det = _RecordingDetector()
+    Perceiver(cfg, det).perceive(frame, now=1.0)
+    assert det.seen_shape == (200, 300)
+
+
 def test_region_out_of_bounds_gives_none(cfg, frame, tmp_path):
     cfg.regions["hp_bar"] = (280, 290, 50, 8)   # 超出 300x300 畫面
     cfg.regions["playfield"] = (0, 80, 400, 400)

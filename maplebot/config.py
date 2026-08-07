@@ -48,7 +48,12 @@ class VisionCfg:
     ui_templates_dir: str = "data/templates/ui"
     minimap_border: int = 6           # auto 定位小地圖時向內縮的邊框厚度
     bar_colors: Dict[str, str] = field(default_factory=lambda: {"hp": "red", "mp": "blue", "exp": "yellow"})
-    mob_detector: str = "template"  # template | yolo | remote
+    mob_detector: str = "outline"   # outline | template | yolo | remote
+    outline_black_level: int = 8       # 判定為描邊的最大亮度（JPEG 測試時調高到 12~20）
+    outline_min_area: int = 800        # 太小的黑塊當雜訊
+    outline_max_area: int = 40000      # 太大的當背景/UI
+    outline_close_kernel: int = 20     # 把斷續描邊連成整塊
+    outline_player_box: Tuple[int, int] = (100, 140)   # 畫面中央挖掉的自己
     mob_match_threshold: float = 0.72
     yolo_model: str = ""
     yolo_confidence: float = 0.5
@@ -57,6 +62,9 @@ class VisionCfg:
     remote_jpeg_quality: int = 80
     remote_max_width: int = 640        # 送出前先縮到這個寬度（0=不縮）
     mob_interval: float = 0.0          # 每幾秒才做一次怪物偵測（0=每個 tick 都做）
+    # 只在角色周圍這個大小的框內找怪（None=整個 playfield）。
+    # 角色永遠在畫面中央，打不到的地方本來就不用看——省時間也少誤判。
+    mob_search_box: Optional[Tuple[int, int]] = None
 
 
 @dataclass
@@ -207,10 +215,17 @@ def load_config(path: str, local_path: str = LOCAL_OVERRIDE) -> AppCfg:
     vc.minimap_border = int(v.get("minimap_border", vc.minimap_border))
     vc.bar_colors.update(v.get("bars", {}))
     vc.mob_detector = str(v.get("mob_detector", vc.mob_detector)).lower()
-    if vc.mob_detector not in ("template", "yolo", "remote"):
+    if vc.mob_detector not in ("outline", "template", "yolo", "remote"):
         raise ConfigError(
-            f"vision.mob_detector 只能是 template / yolo / remote，"
+            f"vision.mob_detector 只能是 outline / template / yolo / remote，"
             f"拿到: {vc.mob_detector!r}")
+    vc.outline_black_level = int(v.get("outline_black_level", vc.outline_black_level))
+    vc.outline_min_area = int(v.get("outline_min_area", vc.outline_min_area))
+    vc.outline_max_area = int(v.get("outline_max_area", vc.outline_max_area))
+    vc.outline_close_kernel = int(v.get("outline_close_kernel", vc.outline_close_kernel))
+    if "outline_player_box" in v:
+        pb = v["outline_player_box"]
+        vc.outline_player_box = (int(pb[0]), int(pb[1]))
     vc.mob_match_threshold = float(v.get("mob_match_threshold", vc.mob_match_threshold))
     vc.yolo_model = str(v.get("yolo_model", vc.yolo_model))
     vc.yolo_confidence = float(v.get("yolo_confidence", vc.yolo_confidence))
@@ -219,6 +234,9 @@ def load_config(path: str, local_path: str = LOCAL_OVERRIDE) -> AppCfg:
     vc.remote_jpeg_quality = int(v.get("remote_jpeg_quality", vc.remote_jpeg_quality))
     vc.remote_max_width = int(v.get("remote_max_width", vc.remote_max_width))
     vc.mob_interval = float(v.get("mob_interval", vc.mob_interval))
+    if v.get("mob_search_box"):
+        sb = v["mob_search_box"]
+        vc.mob_search_box = (int(sb[0]), int(sb[1]))
     if vc.mob_detector == "remote" and not vc.remote_endpoint:
         raise ConfigError("vision.mob_detector=remote 必須設定 vision.remote_endpoint")
 

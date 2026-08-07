@@ -4,6 +4,17 @@
 「對動作幀敏感、會被重疊干擾」變成毫秒級、對變化魯棒的偵測器，
 決策層（`brain/fsm.py`）完全不用改。
 
+> **先等一下——你可能根本不需要訓練。**
+>
+> 預設的 `outline` 偵測器（`vision/outline_mobs.py`）靠 sprite 的黑色描邊找怪，
+> **零模板、零訓練、零標註**，換地圖換怪都直接能用。做法取自
+> [MapleStoryAutoLevelUp](https://github.com/KenYu910645/MapleStoryAutoLevelUp)（356★，
+> 同為楓之谷 Artale）的 `template_free` 模式。
+>
+> 先跑 `python tools/debug_view.py --snapshot check.png` 看它抓不抓得到。
+> 抓得到就收工，不用碰這份文件。真的不夠穩（背景很暗、怪與地形黏在一起）
+> 再往下走 YOLO 路線。
+
 ## 核心觀念：你不用手動標註
 
 業界做法叫 **知識蒸餾 / 自動標註（Autodistill）**：用一個「老師」自動把畫面

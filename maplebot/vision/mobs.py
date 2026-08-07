@@ -98,6 +98,16 @@ class TemplateMobDetector:
 
 
 def make_detector(vision_cfg, templates_dir: str, logger=None) -> MobDetector:
+    if vision_cfg.mob_detector == "outline":
+        from .outline_mobs import OutlineMobDetector
+
+        return OutlineMobDetector(
+            black_level=vision_cfg.outline_black_level,
+            min_area=vision_cfg.outline_min_area,
+            max_area=vision_cfg.outline_max_area,
+            close_kernel=vision_cfg.outline_close_kernel,
+            player_box=vision_cfg.outline_player_box,
+        )
     if vision_cfg.mob_detector == "yolo":
         from .yolo_mobs import YoloMobDetector
 
