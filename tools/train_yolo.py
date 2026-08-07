@@ -1,11 +1,13 @@
-"""YOLO 怪物偵測訓練（RTX 5090 建議路線）。
+"""YOLO 怪物偵測訓練（資料集已備好時用）。
+
+多數情況直接用 tools/auto_pipeline.py 一鍵跑完（自動標註 -> 切分 -> 訓練）。
+這支是只想單獨重跑訓練時用。
 
 用法：
   python tools/train_yolo.py                       # 用 datasets/yolo/dataset.yaml
   python tools/train_yolo.py --model yolo11s.pt --epochs 120
 
-需要：pip install ultralytics（5090/Blackwell 要先裝 cu128 版 PyTorch，
-見 docs/YOLO_TRAINING.md）。訓練完會直接印出要貼進 config 的兩行設定。
+需要：pip install -r requirements-server.txt（見 docs/YOLO_TRAINING.md）
 """
 import argparse
 import os
@@ -13,7 +15,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from maplebot.dataset import GAME_TRAIN_OVERRIDES  # noqa: E402
+from maplebot.dataset import train  # noqa: E402
 
 
 def main() -> int:
@@ -30,31 +32,19 @@ def main() -> int:
     ap.add_argument("--name", default="mobs")
     args = ap.parse_args()
 
-    try:
-        from ultralytics import YOLO
-    except ImportError:
-        print("需要先安裝 ultralytics：pip install ultralytics")
-        print("RTX 5090 請先裝 cu128 版 PyTorch（見 docs/YOLO_TRAINING.md）")
-        return 2
     if not os.path.exists(args.data):
-        print(f"找不到 {args.data}，請先跑 tools/prepare_dataset.py")
+        print(f"找不到 {args.data}，請先跑 tools/prepare_dataset.py"
+              "（或直接用 tools/auto_pipeline.py 一鍵跑完）")
         return 2
 
-    model = YOLO(args.model)
-    model.train(
-        data=args.data,
-        imgsz=args.imgsz,
-        epochs=args.epochs,
-        batch=args.batch,
-        device=args.device,
-        # 用絕對路徑，否則 ultralytics 會再套一層 runs/detect/ 進去
-        project=os.path.abspath(args.project),
-        name=args.name,
-        patience=20,
-        **GAME_TRAIN_OVERRIDES,
-    )
+    try:
+        best = train(args.data, model=args.model, imgsz=args.imgsz,
+                     epochs=args.epochs, batch=args.batch, device=args.device,
+                     project=args.project, name=args.name)
+    except ImportError as e:
+        print(e)
+        return 2
 
-    best = str(model.trainer.best)
     print("\n=== 訓練完成 ===")
     print(f"最佳權重: {best}")
     print("\n把下面貼進 config/default.yaml 的 vision: 區塊即可切換：\n")
