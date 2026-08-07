@@ -136,20 +136,22 @@ YOLO11n 在 RTX 5090 上推理只要 1~3ms/幀，主迴圈 8 FPS 完全無感。
 **2. 大局督導：本地 VLM（slow loop，選配）**
 
 VLM 單張推理要 0.5~2 秒，當不了即時反應層，但很適合每隔一段時間看一次
-「整體狀況」：卡死、對話框、驗證視窗、斷線畫面。用 vLLM / LM Studio / Ollama
-在本機開 OpenAI 相容端點即可：
+「整體狀況」：卡死、對話框、驗證視窗、斷線畫面。要用**視覺**模型（看得懂截圖）。
+
+用 Ollama 最簡單（設定檔預設就是 Ollama 端點）：
 
 ```bash
-vllm serve Qwen/Qwen2.5-VL-7B-Instruct --max-model-len 8192
+ollama pull qwen2.5vl:7b     # 6GB；要更強的判斷力可換 qwen2.5vl:32b（21GB）
 ```
 
 ```yaml
 advisor:
-  enabled: true
-  endpoint: "http://127.0.0.1:8000/v1/chat/completions"
-  model: "Qwen/Qwen2.5-VL-7B-Instruct"
+  enabled: true              # 其餘用預設值（Ollama 127.0.0.1:11434 + qwen2.5vl:7b）
   interval: 20.0
 ```
+
+vLLM 使用者：`vllm serve Qwen/Qwen2.5-VL-7B-Instruct --max-model-len 8192`，
+並把 endpoint 改成 `http://127.0.0.1:8000/v1/chat/completions`。
 
 VLM 判定異常時**只會把 bot 切到暫停並截圖存證**，不會執行 VLM 產生的任何操作指令。
 
