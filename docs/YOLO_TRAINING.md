@@ -13,11 +13,40 @@ collect_dataset  ->  autolabel      ->  labelImg 校對  ->  prepare_dataset  ->
 
 ## 0. 環境準備（一次性，在有 GPU 的那台）
 
+用 [uv](https://docs.astral.sh/uv/) 開虛擬環境最省事——不需要先有 pip，
+連 Python 都能幫你裝：
+
 ```bash
-pip install -r requirements-server.txt      # 會一起帶 torch / opencv / numpy
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source $HOME/.local/bin/env          # 或直接重開終端機
+
+cd ~/projects/maplebot
+uv venv --python 3.11                # 系統沒有 3.11 會自動下載
+source .venv/bin/activate
+uv pip install -r requirements-server.txt      # torch/opencv/ultralytics 約一分鐘
+
 python -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.cuda.get_device_name(0))"
 # 預期輸出類似: 2.13.0+cu130 True NVIDIA GeForce RTX 5090
 ```
+
+之後每次開新終端機都要先 `source .venv/bin/activate`；
+不想每次啟用的話，把指令改成 `uv run python tools/...` 即可。
+
+兩個常見狀況：
+
+- **`cuda.is_available()` 是 False，或跑起來報 `no kernel image available`**：
+  RTX 5090 是 Blackwell（sm_120），需要夠新的 CUDA build。裝明確版本：
+  ```bash
+  uv pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu128
+  ```
+- **headless Linux 出現 `libGL.so.1: cannot open shared object file`**：
+  ultralytics 依賴的 `opencv-python` 需要 GUI 函式庫。二選一：
+  ```bash
+  sudo apt install -y libgl1 libglib2.0-0                                    # 有 sudo
+  uv pip uninstall opencv-python && uv pip install opencv-python-headless    # 沒 sudo
+  ```
+
+> 遊戲機那台**不需要**這些，裝原本的 `requirements.txt` 就好。
 
 兩個常見狀況：
 
@@ -128,12 +157,13 @@ python main.py --profile config/profiles/example.yaml             # 上線
 
 遊戲在筆電/主力機、5090 在工作站的話，不用把模型搬來搬去——讓工作站當推理伺服器：
 
-**工作站上**（要有 ultralytics + cu128 PyTorch）：
+**工作站上**（已照第 0 步建好 venv）：
 
 ```bash
+source .venv/bin/activate
 python tools/serve_yolo.py --model runs/mobs/mobs/weights/best.pt
 # 印出 http://0.0.0.0:8100/detect
-ipconfig    # 記下這台機器的區網 IP，例如 192.168.1.50
+hostname -I     # 記下這台機器的區網 IP，例如 192.168.1.50（Windows 用 ipconfig）
 ```
 
 **遊戲機上** `config/local.yaml`：

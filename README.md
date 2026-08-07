@@ -58,6 +58,15 @@
 pip install -r requirements.txt
 ```
 
+用虛擬環境（推薦）：
+
+```
+uv venv && .venv\Scripts\activate && uv pip install -r requirements.txt
+```
+
+有 GPU 的機器要跑訓練或推理伺服器，另外裝 `requirements-server.txt`
+（見 [docs/YOLO_TRAINING.md](docs/YOLO_TRAINING.md)）。
+
 ## 快速開始
 
 > 第一次用？**[docs/TUTORIAL.md](docs/TUTORIAL.md)** 有含預期畫面的手把手教學，
