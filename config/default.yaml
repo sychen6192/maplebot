@@ -48,7 +48,9 @@ vision:
   yolo_confidence: 0.5                # yolo 與 remote 共用的信心門檻
   remote_endpoint: ""                 # 例: "http://192.168.1.50:8100/detect"
   remote_timeout: 1.0                 # 逾時就當作這幀沒看到怪，不會中斷 bot
-  remote_jpeg_quality: 80             # 降低可省頻寬（WiFi 環境可調到 60~70）
+  remote_jpeg_quality: 80             # 降低可省頻寬（VPN/WiFi 可調到 60）
+  remote_max_width: 640               # 送出前縮到這個寬度；YOLO 內部本來就會
+                                      # 縮到 640，所以這是免費的頻寬節省（0=不縮）
 
 safety:
   stop_key: f12             # 緊急停止
