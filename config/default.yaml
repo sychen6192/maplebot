@@ -1,0 +1,48 @@
+# maplebot 全域設定
+# regions 的預設值是對 tests/fixtures/mapleaga_800x600.jpg（MapleSaga 800x600 視窗）校正的，
+# 你的解析度/UI 位置不同時，執行 python tools/calibrate.py 重新框選。
+
+window:
+  title: "MapleSaga"        # 遊戲視窗標題（子字串比對即可）
+
+loop:
+  fps: 8                    # 主迴圈頻率（擷取+辨識+決策 每秒次數）
+
+regions:                    # 都是遊戲視窗 client 區座標 [x, y, w, h]
+  minimap:   [18, 98, 128, 58]
+  hp_bar:    [223, 609, 105, 10]
+  mp_bar:    [332, 609, 103, 10]
+  exp_bar:   [444, 609, 115, 10]
+  playfield: [8, 60, 790, 520]
+
+vision:
+  minimap_player_rgb: [255, 255, 0]   # 玩家在小地圖上的點色（黃）
+  minimap_other_rgb:  [255, 0, 0]     # 其他玩家的點色（紅）
+  color_tolerance: 60                 # 各通道容許誤差；誤判/漏判時用 tools/debug_view.py 調
+  min_dot_pixels: 2
+  bars:                               # 各 bar 的顏色（見 vision/status.py 的 COLOR_PRESETS）
+    hp: red
+    mp: blue
+    exp: yellow
+  mob_detector: template              # template | yolo
+  mob_match_threshold: 0.72
+  yolo_model: ""                      # mob_detector=yolo 時填訓練好的 .pt 路徑
+  yolo_confidence: 0.5
+
+safety:
+  stop_key: f12             # 緊急停止
+  pause_key: f9             # 暫停 / 繼續
+  critical_hp_ratio: 0.25   # HP 低於此比例直接停止程式並截圖
+  pause_when_players: true  # 小地圖出現其他玩家時暫停動作
+  lost_player_timeout: 5.0  # 連續幾秒找不到玩家黃點就自動暫停
+
+# 選配：本地 VLM 督導層（slow loop）。
+# 在 RTX 5090 上用 vLLM / LM Studio / Ollama 起一個 OpenAI 相容端點即可，例：
+#   vllm serve Qwen/Qwen2.5-VL-7B-Instruct --max-model-len 8192
+# 它每 interval 秒看一次畫面，判斷卡死/對話框/斷線等異常，異常時只會把 bot 暫停。
+advisor:
+  enabled: false
+  endpoint: "http://127.0.0.1:8000/v1/chat/completions"
+  model: "Qwen/Qwen2.5-VL-7B-Instruct"
+  interval: 20.0
+  timeout: 15.0

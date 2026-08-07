@@ -1,0 +1,27 @@
+# 地圖/職業 profile 範例：左右兩點巡邏，範圍內有怪就打
+name: "範例：左右巡邏"
+
+templates_dir: "data/templates/mobs"   # 用 tools/grab_template.py 蒐集怪物模板
+
+patrol:
+  waypoints_x: [40, 95]     # 小地圖 x 座標（用 tools/debug_view.py 看玩家綠圈讀值）
+  tolerance: 4              # 距離巡邏點多少 px 內算抵達
+  step_seconds_per_px: 0.02 # 每差 1px 走多久（依角色移速微調）
+  max_step_seconds: 0.45    # 單次最長走多久（走一步→重新看位置，閉迴路）
+
+attack:
+  key: x                    # 攻擊/技能鍵
+  range_px: 320             # 怪物離畫面中心（≈角色）多少 px 內才攻擊
+  vertical_range_px: 90     # 垂直容許範圍（避免打不到樓上樓下的怪）
+  cast_seconds: 0.6         # 按住攻擊鍵的時間
+  repeat: 2                 # 一次決策連續施放幾下
+  cooldown: 0.2
+
+buffs:
+  - key: "8"                # buff 鍵
+    every: 120              # 每幾秒補一次
+    cast_seconds: 1.5
+
+potions:
+  hp: { key: pageup,   below_ratio: 0.50, cooldown: 1.0 }
+  mp: { key: pagedown, below_ratio: 0.30, cooldown: 1.0 }
