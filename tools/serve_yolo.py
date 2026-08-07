@@ -21,10 +21,17 @@ import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-import cv2
-import numpy as np
-
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+try:
+    import cv2
+    import numpy as np
+except ImportError as e:
+    sys.exit(
+        f"缺少套件（{e.name}）。這台推理機請先安裝：\n"
+        "  pip install -r requirements-server.txt\n"
+        "（headless Linux 若出現 libGL.so.1 錯誤，見 docs/YOLO_TRAINING.md）"
+    )
 
 MAX_BODY = 16 * 1024 * 1024   # 單張圖上限，擋掉異常請求
 
@@ -104,13 +111,16 @@ def main() -> int:
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
+    # 先檢查權重再載入重量級套件，訊息才清楚
+    if not os.path.exists(args.model):
+        print(f"找不到權重: {args.model}")
+        print("還沒訓練的話，先照 docs/YOLO_TRAINING.md 跑完 collect -> autolabel"
+              " -> 校對 -> prepare -> train，train 完會印出權重路徑")
+        return 2
     try:
         from ultralytics import YOLO
     except ImportError:
-        print("需要先安裝 ultralytics：pip install ultralytics")
-        return 2
-    if not os.path.exists(args.model):
-        print(f"找不到權重: {args.model}")
+        print("需要先安裝 ultralytics：pip install -r requirements-server.txt")
         return 2
 
     print(f"載入模型 {args.model}（device={args.device}）…")

@@ -1,0 +1,9 @@
+# 推理機（有 GPU 的那台）用：訓練 + tools/serve_yolo.py
+# 遊戲機不需要這些，裝 requirements.txt 就好。
+#
+# ultralytics 會一起帶進 torch / opencv-python / numpy / pillow。
+# 裝完務必驗證 GPU：
+#   python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+# 若是 False（RTX 5090 等 Blackwell 卡需要夠新的 CUDA build）：
+#   pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu128
+ultralytics>=8.3

@@ -11,17 +11,29 @@ collect_dataset  ->  autolabel      ->  labelImg 校對  ->  prepare_dataset  ->
 （邊玩邊蒐集）      （模板匹配預標註）   （人工修框）        （切 train/val）      （5090 幾分鐘）
 ```
 
-## 0. 環境準備（一次性）
-
-RTX 5090 是 Blackwell 架構（sm_120），**必須用 CUDA 12.8 版的 PyTorch**，
-舊版 cu121/cu124 wheel 不支援、會直接報 `no kernel image available`：
+## 0. 環境準備（一次性，在有 GPU 的那台）
 
 ```bash
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
-pip install ultralytics
+pip install -r requirements-server.txt      # 會一起帶 torch / opencv / numpy
 python -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.cuda.get_device_name(0))"
-# 預期輸出類似: 2.7.x True NVIDIA GeForce RTX 5090
+# 預期輸出類似: 2.13.0+cu130 True NVIDIA GeForce RTX 5090
 ```
+
+兩個常見狀況：
+
+- **`cuda.is_available()` 是 False，或跑起來報 `no kernel image available`**：
+  RTX 5090 是 Blackwell（sm_120），需要夠新的 CUDA build。裝明確版本：
+  ```bash
+  pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu128
+  ```
+- **headless Linux 出現 `libGL.so.1: cannot open shared object file`**：
+  ultralytics 依賴的 `opencv-python` 需要 GUI 函式庫。二選一：
+  ```bash
+  sudo apt install -y libgl1 libglib2.0-0            # 有 sudo
+  pip uninstall -y opencv-python && pip install opencv-python-headless   # 沒 sudo
+  ```
+
+> 遊戲機那台**不需要**這些，裝原本的 `requirements.txt` 就好。
 
 ## 1. 蒐集畫面
 
