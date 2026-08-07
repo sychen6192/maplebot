@@ -40,6 +40,28 @@ def list_images(images_dir: str) -> List[str]:
     return sorted(out)
 
 
+def write_yolo_labels(images_dir: str, labels_per_image: Dict[str, list],
+                      classes: List[str]) -> None:
+    """把 {影像路徑: [(cls_id, cx, cy, w, h), ...]} 寫成 YOLO 標籤 + classes.txt。
+
+    座標是影像像素；會讀每張圖尺寸換算成 0~1。沒有框的影像寫空檔（背景負樣本）。
+    供 label_gdino.py（GroundingDINO 老師）與其他自訂老師共用。
+    """
+    for path, boxes in labels_per_image.items():
+        img = cv2.imread(path, cv2.IMREAD_COLOR)
+        if img is None:
+            continue
+        h, w = img.shape[:2]
+        lines = []
+        for cls_id, cx, cy, bw, bh in boxes:
+            lines.append(f"{int(cls_id)} {cx / w:.6f} {cy / h:.6f} "
+                         f"{bw / w:.6f} {bh / h:.6f}")
+        with open(os.path.splitext(path)[0] + ".txt", "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + ("\n" if lines else ""))
+    with open(os.path.join(images_dir, "classes.txt"), "w", encoding="utf-8") as f:
+        f.write("\n".join(classes) + "\n")
+
+
 @dataclass
 class AutoLabelResult:
     images: int = 0

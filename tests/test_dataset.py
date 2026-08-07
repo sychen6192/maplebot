@@ -7,7 +7,7 @@ import pytest
 import yaml
 
 from maplebot.dataset import (autolabel_dir, class_from_template_name,
-                              prepare_dataset)
+                              prepare_dataset, write_yolo_labels)
 
 
 def _sprite():
@@ -106,6 +106,29 @@ def test_prepare_dataset_split_and_yaml(raw_dir, tmp_path):
     assert data["names"] == {0: "snail"}
     assert data["train"] == "images/train"
     assert os.path.isabs(data["path"])
+
+
+def test_write_yolo_labels_normalizes_and_writes_classes(tmp_path):
+    import cv2
+    img = np.zeros((100, 200, 3), dtype=np.uint8)   # 200x100
+    p = str(tmp_path / "a.jpg")
+    cv2.imwrite(p, img)
+    empty = str(tmp_path / "b.jpg")
+    cv2.imwrite(empty, img)
+
+    write_yolo_labels(str(tmp_path),
+                      {p: [(0, 100, 50, 40, 20)], empty: []},
+                      classes=["mob"])
+
+    with open(os.path.splitext(p)[0] + ".txt") as f:
+        cls, cx, cy, w, h = f.read().split()
+    assert cls == "0"
+    assert float(cx) == pytest.approx(0.5) and float(cy) == pytest.approx(0.5)
+    assert float(w) == pytest.approx(0.2) and float(h) == pytest.approx(0.2)
+    # 沒有框 -> 空檔（背景負樣本）
+    assert os.path.getsize(os.path.splitext(empty)[0] + ".txt") == 0
+    with open(os.path.join(str(tmp_path), "classes.txt")) as f:
+        assert f.read().strip() == "mob"
 
 
 def test_prepare_dataset_requires_classes(tmp_path):
