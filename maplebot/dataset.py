@@ -1,0 +1,164 @@
+"""YOLO 資料集工具：模板匹配自動預標註（bootstrap）與訓練集打包。
+
+流程：collect_dataset 蒐集畫面 -> autolabel_dir 用模板匹配器產生
+YOLO 格式預標註 -> labelImg 人工校對 -> prepare_dataset 切分
+train/val 並產生 dataset.yaml -> ultralytics 訓練。
+
+標籤格式與 labelImg 相容：每張圖同名 .txt（`cls cx cy w h`，
+皆為 0~1 正規化值）加上一份 classes.txt。
+"""
+import glob
+import os
+import random
+import re
+import shutil
+from dataclasses import dataclass, field
+from typing import Dict, List, Tuple
+
+import cv2
+import yaml
+
+from .vision.mobs import Mob, TemplateMobDetector
+
+IMG_EXTS = (".jpg", ".jpeg", ".png")
+
+
+def class_from_template_name(name: str) -> str:
+    """模板檔名 snail_01 -> 類別 snail。"""
+    return re.sub(r"_\d+$", "", name)
+
+
+def yolo_line(cls_id: int, mob: Mob, img_w: int, img_h: int) -> str:
+    return (f"{cls_id} {mob.cx / img_w:.6f} {mob.cy / img_h:.6f} "
+            f"{mob.w / img_w:.6f} {mob.h / img_h:.6f}")
+
+
+def list_images(images_dir: str) -> List[str]:
+    out: List[str] = []
+    for ext in IMG_EXTS:
+        out.extend(glob.glob(os.path.join(images_dir, f"*{ext}")))
+    return sorted(out)
+
+
+@dataclass
+class AutoLabelResult:
+    images: int = 0
+    labeled: int = 0          # 至少有一個框的影像數
+    boxes: int = 0
+    classes: List[str] = field(default_factory=list)
+    unlabeled_files: List[str] = field(default_factory=list)
+
+
+def autolabel_dir(images_dir: str, templates_dir: str, threshold: float,
+                  single_class: bool = False, class_name: str = "mob") -> AutoLabelResult:
+    """對資料夾內所有影像跑模板匹配，寫出同名 .txt 與 classes.txt。
+
+    沒偵測到怪的影像也會寫出空 .txt——校對時人工補框，
+    留空則成為負樣本（背景），能有效壓低誤報。
+    """
+    det = TemplateMobDetector(templates_dir, threshold)
+    if not det.templates:
+        raise ValueError(f"{templates_dir} 裡沒有任何模板 PNG，先用 tools/grab_template.py 蒐集")
+
+    if single_class:
+        classes = [class_name]
+    else:
+        classes = sorted({class_from_template_name(n) for n, _ in det.templates})
+    cls_idx = {c: i for i, c in enumerate(classes)}
+
+    res = AutoLabelResult(classes=classes)
+    for path in list_images(images_dir):
+        img = cv2.imread(path, cv2.IMREAD_COLOR)
+        if img is None:
+            continue
+        res.images += 1
+        h, w = img.shape[:2]
+        lines = []
+        for mob in det.detect(img):
+            cls = class_name if single_class else class_from_template_name(mob.name)
+            lines.append(yolo_line(cls_idx[cls], mob, w, h))
+        with open(os.path.splitext(path)[0] + ".txt", "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + ("\n" if lines else ""))
+        if lines:
+            res.labeled += 1
+            res.boxes += len(lines)
+        else:
+            res.unlabeled_files.append(os.path.basename(path))
+
+    with open(os.path.join(images_dir, "classes.txt"), "w", encoding="utf-8") as f:
+        f.write("\n".join(classes) + "\n")
+    return res
+
+
+@dataclass
+class PrepareResult:
+    train: int = 0
+    val: int = 0
+    negatives: int = 0        # 沒有任何框的背景影像
+    classes: List[str] = field(default_factory=list)
+    yaml_path: str = ""
+
+
+def prepare_dataset(raw_dir: str, out_dir: str, val_fraction: float = 0.15,
+                    seed: int = 42) -> PrepareResult:
+    """把 raw_dir 的影像+標籤切成 train/val，輸出 ultralytics 資料集結構。"""
+    classes_path = os.path.join(raw_dir, "classes.txt")
+    if not os.path.exists(classes_path):
+        raise FileNotFoundError(f"找不到 {classes_path}，請先跑 tools/autolabel.py")
+    with open(classes_path, encoding="utf-8") as f:
+        classes = [line.strip() for line in f if line.strip()]
+
+    images = list_images(raw_dir)
+    if len(images) < 4:
+        raise ValueError(f"{raw_dir} 只有 {len(images)} 張影像，太少了（建議 300 張以上）")
+
+    rng = random.Random(seed)
+    rng.shuffle(images)
+    n_val = max(1, round(len(images) * val_fraction))
+    splits: List[Tuple[str, List[str]]] = [("val", images[:n_val]), ("train", images[n_val:])]
+
+    res = PrepareResult(classes=classes)
+    for split, paths in splits:
+        img_dir = os.path.join(out_dir, "images", split)
+        lbl_dir = os.path.join(out_dir, "labels", split)
+        os.makedirs(img_dir, exist_ok=True)
+        os.makedirs(lbl_dir, exist_ok=True)
+        for img_path in paths:
+            stem = os.path.splitext(os.path.basename(img_path))[0]
+            shutil.copy2(img_path, os.path.join(img_dir, os.path.basename(img_path)))
+            txt_src = os.path.splitext(img_path)[0] + ".txt"
+            txt_dst = os.path.join(lbl_dir, stem + ".txt")
+            if os.path.exists(txt_src):
+                shutil.copy2(txt_src, txt_dst)
+                with open(txt_src, encoding="utf-8") as f:
+                    if not f.read().strip():
+                        res.negatives += 1
+            else:
+                open(txt_dst, "w").close()   # 無標籤 = 背景負樣本
+                res.negatives += 1
+            if split == "train":
+                res.train += 1
+            else:
+                res.val += 1
+
+    data = {
+        "path": os.path.abspath(out_dir),
+        "train": "images/train",
+        "val": "images/val",
+        "names": {i: c for i, c in enumerate(classes)},
+    }
+    res.yaml_path = os.path.join(out_dir, "dataset.yaml")
+    with open(res.yaml_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
+    return res
+
+
+# 遊戲畫面特化的訓練參數：2D 橫向卷軸沒有旋轉/上下翻轉/透視變形，
+# 關掉這些增強讓模型收斂更快也更準；左右翻轉保留（怪物會轉向）。
+GAME_TRAIN_OVERRIDES: Dict[str, float] = {
+    "degrees": 0.0,
+    "shear": 0.0,
+    "perspective": 0.0,
+    "flipud": 0.0,
+    "fliplr": 0.5,
+}
