@@ -18,13 +18,18 @@ COLOR_PRESETS: Dict[str, Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]
 
 # 欄內至少要有這個比例的像素是目標色，該欄才算「有填色」
 _COLUMN_FILL_MIN = 0.30
-# 有填色欄位至少要占 bar 的這個比例，才視為有效讀值（避免雜訊誤判）
-_MIN_VALID_FRACTION = 0.01
 
 
 def bar_ratio(bar_bgr: np.ndarray, color: str) -> Optional[float]:
+    """回傳 0.0~1.0；ROI 無效（零面積）才回 None。
+
+    注意：找不到任何填色一律回 0.0 而不是 None——寧可把「ROI 框錯」
+    當成低血量觸發停機，也不能把真的快死掉誤判成視覺失效而繼續打。
+    """
     if color not in COLOR_PRESETS:
         raise ValueError(f"未知的 bar 顏色 {color!r}，可用: {list(COLOR_PRESETS)}")
+    if bar_bgr.size == 0:
+        return None
     (rmin, rmax), (gmin, gmax), (bmin, bmax) = COLOR_PRESETS[color]
     b = bar_bgr[:, :, 0].astype(np.int16)
     g = bar_bgr[:, :, 1].astype(np.int16)
@@ -36,9 +41,6 @@ def bar_ratio(bar_bgr: np.ndarray, color: str) -> Optional[float]:
     )
     col_fill = mask.mean(axis=0)
     filled = np.nonzero(col_fill >= _COLUMN_FILL_MIN)[0]
-    width = bar_bgr.shape[1]
     if len(filled) == 0:
         return 0.0
-    if len(filled) < width * _MIN_VALID_FRACTION:
-        return None
-    return float((filled[-1] + 1) / width)
+    return float((filled[-1] + 1) / bar_bgr.shape[1])

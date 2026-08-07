@@ -1,0 +1,17 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # CI 無顯示裝置，用 headless 版 OpenCV 跑離線測試
+      - run: pip install numpy opencv-python-headless PyYAML pytest mss
+      - run: pytest -q

@@ -72,10 +72,12 @@ python main.py --profile config/profiles/example.yaml
 不開遊戲也能開發：所有辨識/決策都可以吃靜態截圖。
 
 ```bash
-pytest                                   # 32 個單元測試（合成影像 + 真實截圖真值）
+pytest                                   # 單元測試（合成影像 + 真實截圖真值）
 python main.py --source tests/fixtures/mapleaga_800x600.jpg --dry-run --max-ticks 5
 python tools/debug_view.py --source <你的截圖>
 ```
+
+推上 GitHub 後 CI（`.github/workflows/ci.yml`）會自動跑整套測試。
 
 `tests/fixtures/mapleaga_800x600.jpg` 是真實客戶端截圖，畫面上 HP 100%、MP 100%、
 EXP 59.89%，測試直接拿這些畫面顯示值當 ground truth 驗證辨識精度。
@@ -153,12 +155,14 @@ maplebot/
   vision/status.py           #   HP/MP/EXP 比例（逐欄色彩統計）
   vision/mobs.py             #   模板匹配偵測 + NMS（MobDetector 介面）
   vision/yolo_mobs.py        #   YOLO 偵測（選配，同介面）
+  perception.py              # Perceiver：一張完整畫面 -> GameState（每 tick 只擷取一次）
   brain/state.py             # GameState：每 tick 的感知快照
   brain/fsm.py               # 決策狀態機（純函式，單元測試涵蓋）
   brain/advisor.py           # VLM 督導層（選配）
-  control/input_win.py       # SendInput scancode 鍵盤層（tap/hold/release_all）
+  executor.py                # Executor：Action -> 按鍵序列 + 冷卻/統計
+  control/input_win.py       # SendInput scancode 鍵盤層（tap/release_all）
   safety.py                  # 熱鍵、危險停機、watchdog、異常截圖
-  runner.py                  # 主迴圈：擷取→感知→決策→執行
+  runner.py                  # 主迴圈調度：擷取→感知→決策→執行 + 安全機制
 tools/
   calibrate.py               # 框選 ROI 產生 config
   grab_template.py           # 擷取怪物模板

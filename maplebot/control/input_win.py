@@ -122,9 +122,6 @@ class Keyboard:
         finally:
             self.release(key)
 
-    def hold(self, key: str, seconds: float) -> None:
-        self.tap(key, seconds)
-
     def release_all(self) -> None:
         for key in list(self._held):
             try:

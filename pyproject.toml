@@ -1,0 +1,25 @@
+[project]
+name = "maplebot"
+version = "1.1.0"
+description = "MapleStory classic auto-hunt research bot (screen vision + FSM + synthetic input)"
+requires-python = ">=3.9"
+dependencies = [
+    "mss>=9.0",
+    "numpy>=1.24",
+    "opencv-python>=4.8",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4"]
+yolo = ["ultralytics>=8.3"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["maplebot*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
