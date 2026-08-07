@@ -26,6 +26,7 @@ def main() -> int:
     ap.add_argument("--epochs", type=int, default=80)
     ap.add_argument("--batch", type=int, default=-1, help="-1 = 依 VRAM 自動")
     ap.add_argument("--device", default="0")
+    ap.add_argument("--project", default="runs/mobs")
     ap.add_argument("--name", default="mobs")
     args = ap.parse_args()
 
@@ -46,7 +47,8 @@ def main() -> int:
         epochs=args.epochs,
         batch=args.batch,
         device=args.device,
-        project="runs/mobs",
+        # 用絕對路徑，否則 ultralytics 會再套一層 runs/detect/ 進去
+        project=os.path.abspath(args.project),
         name=args.name,
         patience=20,
         **GAME_TRAIN_OVERRIDES,

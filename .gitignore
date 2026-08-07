@@ -128,3 +128,4 @@ datasets/
 .idea/
 *.pt
 config/local.yaml
+runs/
