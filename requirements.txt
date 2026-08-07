@@ -1,0 +1,10 @@
+mss==9.0.1
+numpy>=1.24
+opencv-python>=4.8
+PyYAML>=6.0
+
+# 開發/測試
+pytest>=7.4
+
+# 選配：YOLO 怪物偵測（RTX 5090 建議路線，見 README「進階：ML 感知層」）
+# ultralytics>=8.3
