@@ -29,20 +29,30 @@ class Safety:
         self.log = logger
         self._stop_vk = _VK.get(stop_key.lower())
         self._pause_vk = _VK.get(pause_key.lower())
+        self._prev_down = {"stop": False, "pause": False}
         if IS_WINDOWS:
             import ctypes
             self._gaks = ctypes.windll.user32.GetAsyncKeyState
         else:
             self._gaks = None
 
+    def _rising_edge(self, name: str, vk: Optional[int]) -> bool:
+        # GetAsyncKeyState 的 LSB（上次呼叫以來按過）會被其他行程清掉，
+        # 不可靠；改用 0x8000（目前按住）自己做邊緣偵測。
+        if not vk:
+            return False
+        down = bool(self._gaks(vk) & 0x8000)
+        fired = down and not self._prev_down[name]
+        self._prev_down[name] = down
+        return fired
+
     def poll(self) -> None:
         if self._gaks is None:
             return
-        # bit 0 = 上次呼叫以來是否被按過
-        if self._stop_vk and self._gaks(self._stop_vk) & 0x1:
+        if self._rising_edge("stop", self._stop_vk):
             self.log.warning("偵測到停止熱鍵，正在結束…")
             self.stop = True
-        if self._pause_vk and self._gaks(self._pause_vk) & 0x1:
+        if self._rising_edge("pause", self._pause_vk):
             self.paused = not self.paused
             self.log.warning("熱鍵切換：%s", "已暫停" if self.paused else "繼續執行")
 
