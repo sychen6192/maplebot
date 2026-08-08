@@ -223,7 +223,7 @@ python main.py --profile config/profiles/mymap.yaml
 | 誤判有其他玩家 | 用 `--snapshot` 看紅圈畫在哪。縮小 minimap ROI（別框到紅色 UI）、調低 `vision.color_tolerance`，或先設 `safety.pause_when_players: false` |
 | 玩家綠圈不見/亂跳 | 小地圖框太大含到雜物 → 重框；或調 `vision.color_tolerance` |
 | HP/MP % 不對 | 條的框含到文字/外框 → 重框，只框色條本體 |
-| 自動巡邏報「校正失敗」 | 方向鍵沒送進遊戲（權限問題），或小地圖 ROI 錯了 |
+| 自動巡邏報「校正失敗」 | 會自動重試 2 次才放棄。仍失敗代表方向鍵沒送進遊戲（跑 `tools/test_keys.py`）或小地圖 ROI 錯了。怪太多一直被打斷的話，可改用手動 `waypoints: [左x, 右x]` |
 | 一直說沒賺到經驗 | 技能鍵對嗎？怪打得到嗎？先用 `--dry-run` 看決策是不是一直 `Move` |
 | 走路一頓一頓的 | 已修正為持續按住方向鍵。還是頓的話多半是 `loop.fps` 太低（預設 8），或大視窗導致辨識太慢——加 `vision: { mob_search_box: [700, 400] }` |
 | 走過頭來回震盪 | `patrol.tolerance` 調大（預設 4），或 `step_seconds_per_px` 調小 |
