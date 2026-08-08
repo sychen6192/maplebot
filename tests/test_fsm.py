@@ -251,6 +251,95 @@ def test_loot_disabled_without_key(cfg, profile):
     assert isinstance(fsm.decide(_state(), cfg, profile, rt, NOW, CENTER), fsm.Move)
 
 
+# ---- 多技能輪替（profile.skills）----
+
+
+def _skills(profile, *specs):
+    """specs: (key, cooldown, min_mobs, min_mp, range_px) 的序列，依優先權排。"""
+    from maplebot.config import AttackCfg
+    profile.skills = [
+        AttackCfg(key=k, cooldown=cd, min_mobs=mm, min_mp=mp, range_px=rng,
+                  vertical_range_px=90)
+        for k, cd, mm, mp, rng in specs
+    ]
+    return profile
+
+
+def test_prefers_first_ready_skill(cfg, profile):
+    _skills(profile, ("v", 30.0, 1, 0.0, 400), ("x", 0.2, 1, 0.0, 320))
+    action = fsm.decide(_state(mobs=[_mob(420)]), cfg, profile, _rt(), NOW, CENTER)
+    assert isinstance(action, fsm.Attack)
+    assert action.key == "v" and action.index == 0
+
+
+def test_falls_through_to_next_skill_on_cooldown(cfg, profile):
+    _skills(profile, ("v", 30.0, 1, 0.0, 400), ("x", 0.2, 1, 0.0, 320))
+    rt = _rt()
+    rt.note_skill(0, NOW - 5.0)          # 大絕還在冷卻
+    action = fsm.decide(_state(mobs=[_mob(420)]), cfg, profile, rt, NOW, CENTER)
+    assert action.key == "x" and action.index == 1
+
+
+def test_min_mobs_saves_aoe_for_crowds(cfg, profile):
+    """30 秒冷卻的大絕別浪費在單隻蝸牛身上。"""
+    _skills(profile, ("v", 30.0, 3, 0.0, 400), ("x", 0.2, 1, 0.0, 320))
+    lone = fsm.decide(_state(mobs=[_mob(420)]), cfg, profile, _rt(), NOW, CENTER)
+    assert lone.key == "x"               # 只有一隻 -> 用主攻
+
+    crowd = _state(mobs=[_mob(380), _mob(420), _mob(460)])
+    assert fsm.decide(crowd, cfg, profile, _rt(), NOW, CENTER).key == "v"
+
+
+def test_skill_skipped_when_its_own_mp_gate_fails(cfg, profile):
+    """大絕耗魔多、主攻耗魔少——MP 中等時應該退而求其次而不是完全不打。"""
+    _skills(profile, ("v", 1.0, 1, 0.6, 400), ("x", 0.2, 1, 0.0, 320))
+    action = fsm.decide(_state(mp=0.4, mobs=[_mob(420)]), cfg, profile,
+                        _rt(), NOW, CENTER)
+    assert action.key == "x"
+
+
+def test_all_skills_unavailable_falls_back_to_patrol(cfg, profile):
+    _skills(profile, ("v", 30.0, 1, 0.0, 400), ("x", 30.0, 1, 0.0, 320))
+    rt = _rt()
+    rt.note_skill(0, NOW - 1.0)
+    rt.note_skill(1, NOW - 1.0)
+    assert isinstance(fsm.decide(_state(mobs=[_mob(420)]), cfg, profile, rt,
+                                 NOW, CENTER), fsm.Move)
+
+
+def test_per_skill_range(cfg, profile):
+    """遠程大絕構得到、近戰主攻構不到時，要選構得到的那個。"""
+    _skills(profile, ("x", 0.2, 1, 0.0, 100), ("v", 0.2, 1, 0.0, 500))
+    action = fsm.decide(_state(mobs=[_mob(750)]), cfg, profile, _rt(), NOW, CENTER)
+    assert action.key == "v"             # 離中心 350，只有 range 500 的構得到
+
+
+def test_cooldowns_are_tracked_per_skill(cfg, profile):
+    _skills(profile, ("v", 30.0, 1, 0.0, 400), ("x", 0.2, 1, 0.0, 320))
+    rt = _rt()
+    rt.note_skill(1, NOW)                # 只有主攻剛放過
+    action = fsm.decide(_state(mobs=[_mob(420)]), cfg, profile, rt, NOW, CENTER)
+    assert action.key == "v"             # 大絕的冷卻不受影響
+
+
+def test_single_attack_profile_still_works(cfg, profile):
+    """沒設定 skills 的舊 profile 行為完全不變。"""
+    assert profile.skills == []
+    action = fsm.decide(_state(mobs=[_mob(420)]), cfg, profile, _rt(), NOW, CENTER)
+    assert isinstance(action, fsm.Attack) and action.key == "x" and action.index == 0
+
+
+def test_loot_waits_for_any_skill_range(cfg, profile):
+    """怪只在遠程技能範圍內時也不該先撿東西。"""
+    _skills(profile, ("x", 0.2, 1, 0.0, 100), ("v", 30.0, 1, 0.0, 500))
+    profile.loot.key = "z"
+    rt = _rt()
+    rt.note_skill(1, NOW - 1.0)          # 遠程還在冷卻
+    rt.last_attack = NOW - 1.0
+    action = fsm.decide(_state(mobs=[_mob(750)]), cfg, profile, rt, NOW, CENTER)
+    assert not isinstance(action, fsm.Loot)
+
+
 # ---- 自動巡邏（patrol.waypoints: auto）----
 
 

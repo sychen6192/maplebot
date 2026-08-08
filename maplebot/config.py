@@ -142,6 +142,7 @@ class PatrolCfg:
 
 @dataclass
 class AttackCfg:
+    """一個攻擊技能。多技能輪替時 profile.skills 就是一串這個。"""
     key: str = "x"
     type: str = "directional"         # directional（要面向）| aoe（原地放）
     range_px: int = 320
@@ -150,6 +151,7 @@ class AttackCfg:
     repeat: int = 1
     cooldown: float = 0.2
     min_mp: float = 0.0               # MP 低於此比例就不放技能（0=不檢查）
+    min_mobs: int = 1                 # 範圍內至少幾隻才放（大絕別浪費在單隻怪）
 
 
 @dataclass
@@ -181,11 +183,16 @@ class Profile:
     name: str = "unnamed"
     templates_dir: str = "data/templates/mobs"
     patrol: PatrolCfg = field(default_factory=PatrolCfg)
-    attack: AttackCfg = field(default_factory=AttackCfg)
+    attack: AttackCfg = field(default_factory=AttackCfg)   # 單技能寫法（相容舊 profile）
+    skills: List[AttackCfg] = field(default_factory=list)  # 多技能輪替；空的話用 attack
     buffs: List[BuffCfg] = field(default_factory=list)
     potions: Dict[str, PotionCfg] = field(default_factory=dict)
     loot: LootCfg = field(default_factory=LootCfg)
     panic_return_key: str = ""        # 設定後，Panic 時會先按回城卷再停止
+
+    def active_skills(self) -> List[AttackCfg]:
+        """依優先權排好的技能清單。沒設定 skills 就退回單一 attack。"""
+        return self.skills or [self.attack]
 
 
 def _load_yaml(path: str) -> dict:
@@ -199,6 +206,22 @@ def _load_yaml(path: str) -> dict:
     if not isinstance(data, dict):
         raise ConfigError(f"設定檔 {path} 的頂層必須是 mapping")
     return data
+
+
+def _parse_attack(raw: dict, cfg: AttackCfg) -> AttackCfg:
+    """把 YAML 的攻擊設定填進 AttackCfg。attack: 與 skills: 共用同一份解析。"""
+    cfg.key = str(raw.get("key", cfg.key)).lower()
+    cfg.type = str(raw.get("type", cfg.type)).lower()
+    if cfg.type not in ("directional", "aoe"):
+        raise ConfigError(f"attack.type 只能是 directional 或 aoe，拿到: {cfg.type!r}")
+    cfg.range_px = int(raw.get("range_px", cfg.range_px))
+    cfg.vertical_range_px = int(raw.get("vertical_range_px", cfg.vertical_range_px))
+    cfg.cast_seconds = float(raw.get("cast_seconds", cfg.cast_seconds))
+    cfg.repeat = int(raw.get("repeat", cfg.repeat))
+    cfg.cooldown = float(raw.get("cooldown", cfg.cooldown))
+    cfg.min_mp = float(raw.get("min_mp", cfg.min_mp))
+    cfg.min_mobs = int(raw.get("min_mobs", cfg.min_mobs))
+    return cfg
 
 
 def _parse_waypoint(raw) -> Waypoint:
@@ -338,17 +361,13 @@ def load_profile(path: str) -> Profile:
     pt.climb_up_key = str(pa.get("climb_up_key", pt.climb_up_key)).lower()
     pt.climb_down_key = str(pa.get("climb_down_key", pt.climb_down_key)).lower()
 
-    at = data.get("attack", {})
-    p.attack.key = str(at.get("key", p.attack.key)).lower()
-    p.attack.type = str(at.get("type", p.attack.type)).lower()
-    if p.attack.type not in ("directional", "aoe"):
-        raise ConfigError(f"attack.type 只能是 directional 或 aoe，拿到: {p.attack.type!r}")
-    p.attack.range_px = int(at.get("range_px", p.attack.range_px))
-    p.attack.vertical_range_px = int(at.get("vertical_range_px", p.attack.vertical_range_px))
-    p.attack.cast_seconds = float(at.get("cast_seconds", p.attack.cast_seconds))
-    p.attack.repeat = int(at.get("repeat", p.attack.repeat))
-    p.attack.cooldown = float(at.get("cooldown", p.attack.cooldown))
-    p.attack.min_mp = float(at.get("min_mp", p.attack.min_mp))
+    _parse_attack(data.get("attack", {}), p.attack)
+    for raw in data.get("skills", []) or []:
+        if not isinstance(raw, dict):
+            raise ConfigError(f"skills 的每一項都要是 mapping，拿到: {raw!r}")
+        p.skills.append(_parse_attack(raw, AttackCfg()))
+    if p.skills and not all(s.key for s in p.skills):
+        raise ConfigError("skills 裡每個技能都必須有 key")
 
     for b in data.get("buffs", []) or []:
         p.buffs.append(BuffCfg(
