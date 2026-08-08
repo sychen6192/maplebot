@@ -14,6 +14,7 @@ from .brain.state import GameState
 from .config import AppCfg
 from .vision import minimap, status
 from .vision.locate import PLAYER_NAME, load_ui_template
+from .vision.follower import FollowerFilter
 from .vision.mobs import MobDetector
 
 
@@ -27,6 +28,11 @@ class Perceiver:
         # HP/位置這些便宜又攸關安全的辨識仍然每個 tick 都做。
         self._mobs_cache: list = []
         self._mobs_ts: Optional[float] = None
+        self._followers = FollowerFilter(
+            drift_px=cfg.vision.follower_drift_px,
+            hits_needed=cfg.vision.follower_hits) if cfg.vision.filter_followers else None
+        self._prev_player: Optional[tuple] = None
+        self.last_followers: list = []      # 給 debug_view 畫出來用
 
     def _slice(self, frame: np.ndarray, name: str) -> Optional[np.ndarray]:
         region = self.cfg.regions.get(name)
@@ -68,10 +74,32 @@ class Perceiver:
                 mobs = self.detector.detect(roi)
                 if ox or oy:      # 換算回 playfield 座標
                     mobs = [replace(m, cx=m.cx + ox, cy=m.cy + oy) for m in mobs]
+                if self._followers is not None:
+                    mobs, self.last_followers = self._followers.filter(
+                        mobs, self._player_moved(st.player))
                 self._mobs_cache = mobs
                 self._mobs_ts = now
             st.mobs = self._mobs_cache
         return st
+
+    def _player_moved(self, player: Optional[tuple]) -> bool:
+        """角色自上次計分後是否已在小地圖上移動夠遠。
+
+        小地圖一格等於畫面上好幾十 px，所以「移動 1~2 格」就足以讓靜止的怪
+        在畫面上明顯滑動。逐幀比對量不出來（8 fps 一個 tick 走不到一格），
+        所以基準是上次回報 True 的位置。
+        """
+        if player is None:
+            return False
+        if self._prev_player is None:
+            self._prev_player = player
+            return False
+        moved = (abs(player[0] - self._prev_player[0])
+                 + abs(player[1] - self._prev_player[1]))
+        if moved < self.cfg.vision.player_move_px:
+            return False
+        self._prev_player = player
+        return True
 
     def _search_roi(self, playfield: np.ndarray):
         """只取角色周圍的攻擊範圍框；回傳 (影像, x偏移, y偏移)。"""

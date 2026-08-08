@@ -31,6 +31,7 @@ GREEN = (0, 255, 0)
 RED = (0, 0, 255)
 YELLOW = (0, 255, 255)
 WHITE = (255, 255, 255)
+GRAY = (150, 150, 150)      # 跟隨物（寵物）：偵測到但不攻擊
 
 WINDOW = "maplebot debug (q to quit)"
 MAX_DISPLAY_W = 1280   # 顯示視窗最大寬度，避免大解析度畫面塞爆螢幕
@@ -48,7 +49,7 @@ def _display_size(capture_size):
     return MAX_DISPLAY_W, int(h * MAX_DISPLAY_W / w)
 
 
-def annotate(frame, state, action, cfg, fps=None):
+def annotate(frame, state, action, cfg, fps=None, followers=()):
     """把辨識結果畫上去（畫在原尺寸畫面，座標讀值才準）。"""
     canvas = frame.copy()
 
@@ -75,6 +76,13 @@ def annotate(frame, state, action, cfg, fps=None):
             cv2.rectangle(canvas, (x1, y1), (x1 + mob.w, y1 + mob.h), YELLOW, 2)
             cv2.putText(canvas, f"{mob.name} {mob.score:.2f}", (x1, max(y1 - 4, 10)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.4, YELLOW, 1)
+        # 跟著角色跑的（寵物）畫灰框，代表看得到但不會打
+        for mob in followers:
+            x1 = fx + mob.cx - mob.w // 2
+            y1 = fy + mob.cy - mob.h // 2
+            cv2.rectangle(canvas, (x1, y1), (x1 + mob.w, y1 + mob.h), GRAY, 1)
+            cv2.putText(canvas, "follower", (x1, max(y1 - 4, 10)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, GRAY, 1)
 
     header = (f"HP {_pct(state.hp)} | MP {_pct(state.mp)} | EXP {_pct(state.exp)} | "
               f"mobs {len(state.mobs)}")
@@ -97,12 +105,14 @@ def _place_away_from_game(cap, disp_w, disp_h) -> None:
               "請改用 --snapshot out.png（不開視窗），或縮小遊戲視窗／用副螢幕")
 
 
-def _report(state, action):
+def _report(state, action, followers=()):
     print(f"  HP {_pct(state.hp)} | MP {_pct(state.mp)} | EXP {_pct(state.exp)}")
     print(f"  玩家小地圖座標: {state.player}｜其他玩家: {len(state.others)}")
     print(f"  偵測到怪物: {len(state.mobs)}")
     for mob in state.mobs[:5]:
         print(f"    - {mob.name} ({mob.cx},{mob.cy}) 分數 {mob.score:.2f}")
+    if followers:
+        print(f"  跟隨物（寵物，不攻擊）: {len(followers)}")
     print(f"  當下決策: {type(action).__name__}")
 
 
@@ -192,9 +202,10 @@ def main() -> int:
         frame = cap.grab()
         state = perceiver.perceive(frame, now)
         action = fsm.decide(state, cfg, profile, rt, now, center)
-        cv2.imwrite(args.snapshot, annotate(frame, state, action, cfg))
+        cv2.imwrite(args.snapshot, annotate(frame, state, action, cfg,
+                                            followers=perceiver.last_followers))
         print(f"\n已存標註圖: {args.snapshot}")
-        _report(state, action)
+        _report(state, action, perceiver.last_followers)
         return 0
 
     # 只建立「一個」視窗；不這樣做的話，某些 Windows OpenCV 版本會在
@@ -212,7 +223,7 @@ def main() -> int:
         state = perceiver.perceive(frame, t0)
         action = fsm.decide(state, cfg, profile, rt, t0, center)
         fps = 1.0 / max(time.monotonic() - t0, 1e-6)
-        canvas = annotate(frame, state, action, cfg, fps)
+        canvas = annotate(frame, state, action, cfg, fps, perceiver.last_followers)
 
         shown = canvas if canvas.shape[1] <= disp_w else \
             cv2.resize(canvas, (disp_w, disp_h))

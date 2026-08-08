@@ -168,7 +168,9 @@ EXP 59.89%，測試直接拿這些畫面顯示值當 ground truth 驗證辨識�
 | `regions.*` | 小地圖/HP/MP/EXP/主畫面的 ROI，用 `tools/calibrate.py` 產生 |
 | `vision.color_tolerance` | 小地圖點色容差；誤判/漏判用 `tools/debug_view.py` 邊看邊調 |
 | `vision.mob_detector` | `outline`（預設，零設定）/ `template` / `yolo` / `remote` |
+| `vision.filter_followers` | 把寵物從怪物清單剔除（角色移動時牠不會在畫面上滑動） |
 | `safety.*` | 危險線、熱鍵、他人暫停、watchdog 秒數 |
+| `safety.attack_stall_seconds` | 連續攻擊這麼久位置卻沒變就強制去巡邏（打不死的東西） |
 | `advisor.*` | 選配 VLM 督導層（見下） |
 
 `config/profiles/*.yaml`（一張地圖一份）：
@@ -239,6 +241,8 @@ maplebot/
   vision/locate.py           #   小地圖角落模板自動定位（regions.minimap: auto）
   vision/status.py           #   HP/MP/EXP 比例（逐欄色彩統計）
   vision/mobs.py             #   模板匹配偵測 + NMS（MobDetector 介面）
+  vision/outline_mobs.py     #   描邊偵測（預設：零設定，不用模板/訓練）
+  vision/follower.py         #   濾掉跟著角色跑的東西（寵物）
   vision/yolo_mobs.py        #   YOLO 偵測（選配，同介面）
   perception.py              # Perceiver：一張完整畫面 -> GameState（每 tick 只擷取一次）
   brain/state.py             # GameState：每 tick 的感知快照

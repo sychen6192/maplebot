@@ -157,3 +157,67 @@ def test_region_out_of_bounds_gives_none(cfg, frame, tmp_path):
     assert st.hp is None
     assert st.mobs == []
     assert not st.vision_ok
+
+
+def _move_player(frame, dx):
+    """把小地圖上的玩家黃點往右挪 dx px（模擬角色走路）。"""
+    f = frame.copy()
+    f[28:31, 38:41] = (150, 190, 205)              # 擦掉原本的點
+    f[28:31, 38 + dx:41 + dx] = (0, 255, 255)
+    return f
+
+
+class _FixedDetector:
+    """永遠回報同一個「畫面」位置——這正是寵物的行為。"""
+
+    def detect(self, playfield):
+        from maplebot.vision.mobs import Mob
+        return [Mob(cx=150, cy=100, w=20, h=20, score=1.0, name="m")]
+
+
+class _SlidingDetector:
+    """角色往右走時，站著不動的怪會在畫面上往左滑。"""
+
+    def __init__(self):
+        self.step = 0
+
+    def detect(self, playfield):
+        from maplebot.vision.mobs import Mob
+        self.step += 1
+        return [Mob(cx=250 - self.step * 45, cy=100, w=20, h=20, score=1.0, name="m")]
+
+
+def test_pet_following_the_player_is_filtered_out(cfg, frame):
+    """角色走了 4 步，牠在畫面上完全沒動 -> 判定成寵物，不列入怪物清單。"""
+    cfg.vision.follower_hits = 3
+    p = Perceiver(cfg, _FixedDetector())
+    for i in range(5):
+        st = p.perceive(_move_player(frame, i * 3), now=float(i))
+    assert st.mobs == []
+    assert len(p.last_followers) == 1
+
+
+def test_mob_that_slides_past_is_still_attacked(cfg, frame):
+    cfg.vision.follower_hits = 3
+    p = Perceiver(cfg, _SlidingDetector())
+    for i in range(5):
+        st = p.perceive(_move_player(frame, i * 3), now=float(i))
+    assert len(st.mobs) == 1
+    assert not p.last_followers
+
+
+def test_standing_still_never_filters_anything(cfg, frame):
+    """角色沒移動就無從判別，這時不能亂排除。"""
+    cfg.vision.follower_hits = 3
+    p = Perceiver(cfg, _FixedDetector())
+    for i in range(20):
+        st = p.perceive(frame, now=float(i))
+    assert len(st.mobs) == 1
+
+
+def test_follower_filter_can_be_turned_off(cfg, frame):
+    cfg.vision.filter_followers = False
+    p = Perceiver(cfg, _FixedDetector())
+    for i in range(5):
+        st = p.perceive(_move_player(frame, i * 3), now=float(i))
+    assert len(st.mobs) == 1

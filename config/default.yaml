@@ -55,6 +55,15 @@ vision:
   outline_close_kernel: 20    # 把斷續的描邊連成一整塊
   outline_player_box: [100, 140]   # 畫面中央挖掉的範圍（你自己的角色）
 
+  # --- 跟隨物過濾（把寵物從怪物清單剔除）---
+  # 寵物也有黑色描邊，描邊偵測分不出牠跟怪。但鏡頭永遠跟著角色，所以角色走動時
+  # 怪會在畫面上滑動、寵物不會——連續幾次都沒滑動的就判定成跟隨物。
+  # 真的怪被誤排除的話設 false（改用調大 outline_player_box 蓋掉寵物）。
+  filter_followers: true
+  follower_drift_px: 40       # 畫面位移小於此值視為沒跟著滑動
+  follower_hits: 3            # 累積幾次才判定為跟隨物（調小=更快但更容易誤判）
+  player_move_px: 2           # 小地圖座標變化超過此值才算「角色真的移動了」
+
   mob_match_threshold: 0.72   # template 模式用
   yolo_model: ""                      # mob_detector=yolo 時填訓練好的 .pt 路徑
   yolo_confidence: 0.5                # yolo 與 remote 共用的信心門檻
@@ -88,6 +97,13 @@ safety:
   # 「辨識→決策→按鍵→遊戲有反應」整條鏈路，技能鍵設錯、怪抓不到、
   # 卡在打不到怪的地方，都只有這個看得出來。
   exp_stall_minutes: 10
+
+  # 連續攻擊這麼多秒、角色位置卻完全沒變，就強制去巡邏幾秒（0=不檢查）。
+  # 正常打怪一定會有進展（怪死了就往下一個點走）；打不停又不移動代表在打
+  # 一個打不死也不會走的東西——最常見是寵物被當成怪，其次是隔著地形打不到。
+  # 讓路的那幾秒也剛好給跟隨物過濾器判別寵物需要的移動樣本。
+  attack_stall_seconds: 12
+  attack_break_seconds: 3
 
 # 選配：本地 VLM 督導層（slow loop）。
 # 每 interval 秒看一次畫面，判斷卡死/對話框/斷線等異常，異常時只會把 bot 暫停。

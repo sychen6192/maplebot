@@ -53,6 +53,8 @@ class Runner:
         self._input_warned = False
         self._idle_since: Optional[float] = None
         self._idle_warned = False
+        self._follower_warned = False
+        self._attack_breaks = 0
 
     # ---- 小地圖自動定位（auto-maple corner-template 法）----
 
@@ -125,6 +127,30 @@ class Runner:
                 "用 tools/debug_view.py --snapshot 看紅圈畫在哪，"
                 "縮小 minimap ROI、調低 vision.color_tolerance，"
                 "或先設 safety.pause_when_players: false")
+
+    def _notice_followers(self) -> None:
+        """跟隨物過濾器抓到東西時說一聲——不然使用者只會看到「怪數量少了一隻」，
+        猜不到是寵物被排除了。"""
+        if self._follower_warned or not self.perceiver.last_followers:
+            return
+        self._follower_warned = True
+        self.log.info(
+            "偵測到 %d 個跟著角色移動的目標（幾乎都是寵物），已排除、不會攻擊。"
+            "誤排除到真的怪的話設 vision.filter_followers: false",
+            len(self.perceiver.last_followers))
+
+    def _notice_attack_break(self) -> None:
+        """一直打同一個打不死的東西（寵物、隔著地形的怪）會被強制打斷。"""
+        if self.rt.attack_breaks <= self._attack_breaks:
+            return
+        self._attack_breaks = self.rt.attack_breaks
+        self.log.warning(
+            "連續攻擊 %.0f 秒但角色位置完全沒變，先去巡邏 %.0f 秒。"
+            "常見原因：把寵物當成怪在打、或隔著地形打不到。"
+            "第 %d 次觸發——一直發生的話用 tools/debug_view.py --snapshot "
+            "看黃框框在什麼東西上",
+            self.cfg.safety.attack_stall_seconds,
+            self.cfg.safety.attack_break_seconds, self.rt.attack_breaks)
 
     def _check_input_delivered(self) -> None:
         """SendInput 被擋掉時，log 會照常顯示「已送出按鍵」但遊戲毫無反應。
@@ -230,6 +256,8 @@ class Runner:
                         state.player, len(state.mobs), len(state.others),
                         type(action).__name__, why)
                 self._check_idle(action, now)
+                self._notice_followers()
+                self._notice_attack_break()
 
                 if isinstance(action, fsm.Panic):
                     self._panic(frame, action.reason, action.return_home)
