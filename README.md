@@ -8,6 +8,11 @@
 
 **特色一覽**
 
+- **圖形介面**：`python gui.py` 一個視窗做完全部——校正、辨識自檢、錄製路線、
+  打怪/藥水/循環按鍵設定、即時狀態與系統日誌。所有邏輯都在 controller 層，
+  命令列版（`main.py`）與 GUI 共用同一份引擎和設定檔
+- **錄製巡邏路線**：照平常走一趟，程式把軌跡壓成巡邏點（折返點、爬繩點、
+  定點技能）。方向鍵不錄進去，所以被怪打歪還是能自己回到路線上
 - **感知**：小地圖定位（玩家/其他玩家、角落模板自動找 ROI）、HP/MP/EXP 比例讀取、
   怪物偵測**零設定即可用**（靠 sprite 黑色描邊，不用模板/訓練/標註），
   也可切換模板匹配或自訓 YOLO
@@ -19,7 +24,7 @@
 - **控制**：SendInput scancode（DirectInput 遊戲吃得到），按鍵時間帶 ±20% 抖動
 - **安全**：HP 危險線自動停機（可先回城）、其他玩家出現先暫停、黑屏/找不到角色
   自動暫停 + 截圖存證 + 聲音警報
-- **可測性**：156 個 pytest（合成影像 + 真實截圖真值），整條主迴圈可用一張截圖 dry-run
+- **可測性**：268 個 pytest（合成影像 + 真實截圖真值），整條主迴圈可用一張截圖 dry-run
 - **ML 擴充**：YOLO 訓練管線（蒐集→自動預標註→校對→訓練→部署）與本地 VLM 督導層
 
 設計對照過同類最高星的開源專案（684★ auto-maple、356★ MapleStoryAutoLevelUp），
@@ -82,11 +87,21 @@ uv venv && .venv\Scripts\activate && uv pip install -r requirements.txt
 > 第一次用？**[docs/TUTORIAL.md](docs/TUTORIAL.md)** 有含預期畫面的手把手教學，
 > 從 clone 一路帶到掛機與接上 Ollama 督導層。
 
+**圖形介面（最快）**
+
+```bash
+python gui.py
+# 視窗裡照順序按：重新校正 ROI -> 辨識自檢 -> 開始錄製（走一趟）-> 停止錄製
+#                -> 儲存設定 -> 開始打怪
+```
+
+**命令列**
+
 ```bash
 # 1. 設定視窗標題（config/default.yaml -> window.title，子字串比對）
 
-# 2. 校正區域：框選 小地圖 / HP / MP / EXP / 主畫面，把輸出貼回 config/default.yaml
-python tools/calibrate.py
+# 2. 校正區域：框選 小地圖 / HP / MP / EXP / 主畫面，--write 直接寫回 config/local.yaml
+python tools/calibrate.py --write
 
 # 3.（選配）怪物偵測預設就是零設定的 outline，要用模板路線才需要這步
 python tools/grab_template.py --name snail
@@ -230,7 +245,8 @@ VLM 判定異常時**只會把 bot 切到暫停並截圖存證**，不會執行 
 ## 專案結構
 
 ```
-main.py                      # 進入點（--dry-run / --source / --max-ticks）
+main.py                      # 命令列進入點（--dry-run / --source / --max-ticks）
+gui.py                       # 圖形介面進入點
 config/default.yaml          # 全域設定（視窗、ROI、視覺參數、安全、advisor）
 config/profiles/example.yaml    # 單層地圖 profile 範例（含 waypoints: auto 說明）
 config/profiles/multilevel.yaml # 多層地圖 profile 範例（爬繩 + 下跳平台）
@@ -253,6 +269,11 @@ maplebot/
   safety.py                  # 熱鍵、危險停機、黑屏偵測、watchdog、異常截圖
   alerts.py                  # 危險事件嗶聲警報（winsound）
   runner.py                  # 主迴圈調度：擷取→感知→決策→執行 + 安全機制
+  recorder.py                # 錄製：輪詢按鍵 + 小地圖位置收成軌跡
+  route.py                   #   軌跡 -> 巡邏點（折返點/爬繩點/定點技能）
+  gui/controller.py          # GUI 大腦：開關 bot、錄製、存讀設定、log（不碰 tkinter）
+  gui/settings.py            #   UI 欄位 <-> 設定檔的雙向轉換
+  gui/app.py                 #   tkinter 視窗（只有畫面）
   dataset.py                 # YOLO 資料集：模板自動預標註、train/val 打包
 tools/
   calibrate.py               # 框選 ROI 產生 config
