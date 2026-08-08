@@ -215,7 +215,8 @@ python main.py --profile config/profiles/mymap.yaml
 |---|---|
 | 抓不到怪 / 框到背景 | 調 `outline_black_level`（8→15 抓更多、8→4 抓更少）與 `outline_min_area` |
 | 大視窗很卡 | `config/local.yaml` 加 `vision: { mob_search_box: [700, 400] }`，只搜角色周圍 |
-| 按鍵沒反應 | 終端機用**系統管理員**開；確認遊戲視窗在前景 |
+| **按鍵沒反應（log 有顯示按鍵）** | 跑 `python tools/test_keys.py` 一次診斷完：它會檢查權限、前景視窗，並實際送鍵看有沒有被作業系統擋掉。最常見是遊戲用系統管理員執行而終端機沒有 |
+| 忘了關 --dry-run | dry-run 會照常印出所有按鍵動作但**不會真的送出**。啟動時第一行有標示 |
 | `找不到標題含「...」的視窗` | `window.title` 打錯；要用視窗模式 |
 | 畫面像無限鏡像一直放大 | 擷取方式退回 `screen` 且偵錯視窗蓋住遊戲。用 `--snapshot` 就不會 |
 | 玩家綠圈不見/亂跳 | 小地圖框太大含到雜物 → 重框；或調 `vision.color_tolerance` |

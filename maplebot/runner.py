@@ -48,6 +48,7 @@ class Runner:
         self._last_frame: Optional[np.ndarray] = None
         self._last_summary = time.monotonic()
         self._prev_others = 0
+        self._input_warned = False
 
     # ---- 小地圖自動定位（auto-maple corner-template 法）----
 
@@ -98,6 +99,21 @@ class Runner:
         self.log.warning("連續 %.0fs 找不到玩家位置，自動暫停（按 %s 繼續）",
                          self.cfg.safety.lost_player_timeout, self.cfg.safety.pause_key)
         self.safety.paused = True
+
+    def _check_input_delivered(self) -> None:
+        """SendInput 被擋掉時，log 會照常顯示「已送出按鍵」但遊戲毫無反應。
+        只吵一次就好，但一定要吵——這是最常見也最難自己看出來的失敗。"""
+        if self._input_warned or self.kb.failures == 0:
+            return
+        self._input_warned = True
+        err = self.kb.last_error()
+        self.log.error(
+            "按鍵送不進去！SendInput 失敗 %d 次（錯誤碼 %d）。"
+            "%s按鍵動作會照常出現在 log，但遊戲收不到。",
+            self.kb.failures, err,
+            "遊戲是用系統管理員執行的，這個終端機也必須用系統管理員開啟。"
+            if err == 5 else "")
+        self.alerts.ping("warn")
 
     def _on_exp_stalled(self, frame: np.ndarray, now: float) -> None:
         mins = self.cfg.safety.exp_stall_minutes
@@ -186,6 +202,7 @@ class Runner:
                     self._panic(frame, action.reason, action.return_home)
                     break
                 self.executor.execute(action, now)
+                self._check_input_delivered()
 
                 if time.monotonic() - self._last_summary >= 60:
                     self.log.info("狀態：%s", self.stats.summary())
