@@ -51,10 +51,32 @@ def test_vision_failure_waits(cfg, profile):
     assert isinstance(fsm.decide(st, cfg, profile, _rt(), NOW, CENTER), fsm.Wait)
 
 
-def test_critical_hp_panics(cfg, profile):
-    action = fsm.decide(_state(hp=0.2), cfg, profile, _rt(), NOW, CENTER)
+def test_critical_hp_panics_after_confirming(cfg, profile):
+    rt = _rt()
+    for _ in range(cfg.safety.critical_hp_frames - 1):
+        assert not isinstance(fsm.decide(_state(hp=0.2), cfg, profile, rt, NOW, CENTER),
+                              fsm.Panic)
+    action = fsm.decide(_state(hp=0.2), cfg, profile, rt, NOW, CENTER)
     assert isinstance(action, fsm.Panic)
     assert action.return_home is True   # 人可能回不來，該按回城卷
+
+
+def test_single_bad_hp_reading_does_not_stop_the_bot(cfg, profile):
+    """血條被特效蓋住、擷取抖一下都會讀成 0——一幀就停機等於整晚白掛。"""
+    rt = _rt()
+    assert not isinstance(fsm.decide(_state(hp=0.0), cfg, profile, rt, NOW, CENTER),
+                          fsm.Panic)
+    # 下一幀讀回正常值就該當作沒事發生
+    fsm.decide(_state(hp=0.99), cfg, profile, rt, NOW, CENTER)
+    assert rt.low_hp_streak == 0
+    assert not isinstance(fsm.decide(_state(hp=0.0), cfg, profile, rt, NOW, CENTER),
+                          fsm.Panic)
+
+
+def test_hp_frames_configurable(cfg, profile):
+    cfg.safety.critical_hp_frames = 1        # 想要一幀就停也可以
+    assert isinstance(fsm.decide(_state(hp=0.2), cfg, profile, _rt(), NOW, CENTER),
+                      fsm.Panic)
 
 
 def test_low_hp_drinks_potion_before_anything(cfg, profile):

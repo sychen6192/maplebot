@@ -74,6 +74,7 @@ class SafetyCfg:
     stop_key: str = "f12"
     pause_key: str = "f9"
     critical_hp_ratio: float = 0.25
+    critical_hp_frames: int = 3       # 連續幾幀都讀到低血才停機（防辨識誤判）
     pause_when_players: bool = True
     lost_player_timeout: float = 5.0
     sound_alerts: bool = True         # 危險事件用 winsound 嗶聲提醒
@@ -325,6 +326,8 @@ def load_config(path: str, local_path: Optional[str] = None) -> AppCfg:
     sc.stop_key = str(s.get("stop_key", sc.stop_key)).lower()
     sc.pause_key = str(s.get("pause_key", sc.pause_key)).lower()
     sc.critical_hp_ratio = float(s.get("critical_hp_ratio", sc.critical_hp_ratio))
+    sc.critical_hp_frames = max(int(s.get("critical_hp_frames",
+                                          sc.critical_hp_frames)), 1)
     sc.pause_when_players = bool(s.get("pause_when_players", sc.pause_when_players))
     sc.lost_player_timeout = float(s.get("lost_player_timeout", sc.lost_player_timeout))
     sc.sound_alerts = bool(s.get("sound_alerts", sc.sound_alerts))

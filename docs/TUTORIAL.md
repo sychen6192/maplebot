@@ -222,7 +222,7 @@ python main.py --profile config/profiles/mymap.yaml
 | **每個 tick 都是 Wait、角色不動** | 不是當掉，是某條規則擋著。dry-run 的 tick 行括號裡就是原因；正式跑則會在閒置 20 秒後警告。最常見是小地圖紅點誤判成「有其他玩家」 |
 | 誤判有其他玩家 | 用 `--snapshot` 看紅圈畫在哪。縮小 minimap ROI（別框到紅色 UI）、調低 `vision.color_tolerance`，或先設 `safety.pause_when_players: false` |
 | 玩家綠圈不見/亂跳 | 小地圖框太大含到雜物 → 重框；或調 `vision.color_tolerance` |
-| HP/MP % 不對 | 條的框含到文字/外框 → 重框，只框色條本體 |
+| HP/MP % 不對、**莫名說 HP 不夠就停機** | 血條 ROI 有問題。跑 `python tools/debug_view.py --track` 正常玩幾分鐘，看「突降」次數——大於 0 就是誤讀。重跑 `calibrate.py` 只框紅色條本體（不含數字、外框、旁邊 UI）。撐著先用的話把 `safety.critical_hp_frames` 調大 |
 | 自動巡邏報「校正失敗」 | 會自動重試 2 次才放棄。仍失敗代表方向鍵沒送進遊戲（跑 `tools/test_keys.py`）或小地圖 ROI 錯了。怪太多一直被打斷的話，可改用手動 `waypoints: [左x, 右x]` |
 | 一直說沒賺到經驗 | 技能鍵對嗎？怪打得到嗎？先用 `--dry-run` 看決策是不是一直 `Move` |
 | 走路一頓一頓的 | 已修正為持續按住方向鍵。還是頓的話多半是 `loop.fps` 太低（預設 8），或大視窗導致辨識太慢——加 `vision: { mob_search_box: [700, 400] }` |
