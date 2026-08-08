@@ -81,6 +81,10 @@ playfield ROI: [8, 60, 790, 520]
 3. 場上的怪有**黃框**
 4. 沒有把樹、雲、UI 框成怪
 
+> 寵物一開始也會被框成怪（牠一樣有黑色描邊）——這是正常的。
+> 正式跑之後角色走個幾步，程式就會發現「牠一直跟著我」而自動排除，
+> 即時視窗裡會變成灰框標 `follower`。
+
 **抓不到怪或框錯**，只要調兩個旋鈕（`config/local.yaml`）：
 
 ```yaml
@@ -214,6 +218,9 @@ python main.py --profile config/profiles/mymap.yaml
 | 症狀 | 解法 |
 |---|---|
 | 抓不到怪 / 框到背景 | 調 `outline_black_level`（8→15 抓更多、8→4 抓更少）與 `outline_min_area` |
+| **一直打自己的寵物** | 內建就會濾掉（走幾步後看到「已排除跟隨物」就是生效了）。還是打的話把 `vision.follower_hits` 從 3 調到 2，或 `vision.outline_player_box` 調大到 `[220, 200]` 直接把寵物一起挖掉 |
+| **一直攻擊、完全不走路** | 同上，多半就是在打寵物。連續打 12 秒沒移動會自動讓路去巡邏並在 log 說明；那條警告會告訴你該看哪裡 |
+| 真的怪被當成寵物排除 | `vision: { filter_followers: false }`，或把 `follower_hits` 調大 |
 | 大視窗很卡 | `config/local.yaml` 加 `vision: { mob_search_box: [700, 400] }`，只搜角色周圍 |
 | **按鍵沒反應（log 有顯示按鍵）** | 跑 `python tools/test_keys.py` 一次診斷完：它會檢查權限、前景視窗，並實際送鍵看有沒有被作業系統擋掉。最常見是遊戲用系統管理員執行而終端機沒有 |
 | 忘了關 --dry-run | dry-run 會照常印出所有按鍵動作但**不會真的送出**。啟動時第一行有標示 |

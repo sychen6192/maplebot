@@ -10,7 +10,8 @@ decide() 不碰鍵盤、不碰螢幕、不看時鐘（now 由外部傳入），
   4. 小地圖出現其他玩家  -> Wait（禮貌暫停，pause_when_players 可關）
   5. Buff 到期          -> CastBuff（垂直移動途中跳過）
   6. 攻擊範圍內有怪      -> Attack（多技能時依序挑第一個放得出來又划算的；
-                          directional 先轉向 / aoe 原地放；垂直移動途中跳過）
+                          directional 先轉向 / aoe 原地放；垂直移動途中跳過。
+                          打很久位置卻沒變會強制讓路給巡邏，見 _attack_stalled）
   7. 自動巡邏未校正      -> Probe（waypoints: auto 時左右撞牆量出可走範圍）
   8. 巡邏中卡住          -> Escape（跳躍 + 換方向，參考 MapleStoryAutoLevelUp）
   9. x 到位但 y 沒到     -> Climb（爬繩上樓 / 下繩或下跳平台）
@@ -144,6 +145,10 @@ class Runtime:
     stuck_pos: Optional[Tuple[int, int]] = None
     stuck_since: float = 0.0
     escape_direction: int = 1
+    attack_pos: Optional[Tuple[int, int]] = None   # 這一串連續攻擊的起點
+    attack_since: float = 0.0
+    attack_break_until: float = 0.0     # 強制讓路給巡邏到這個時間
+    attack_breaks: int = 0              # 觸發過幾次（runner 用來提示使用者）
     auto: AutoPatrol = field(default_factory=AutoPatrol)
     climbing: bool = False              # 正在垂直移動 -> 讓路給攻擊與 buff
     climb_prev_y: Optional[int] = None
@@ -298,6 +303,26 @@ def _climb(rt: Runtime, player: Tuple[int, int], pat: PatrolCfg, wp: Waypoint,
     return Climb(1, pat.climb_down_key, pat.climb_seconds, jump_key=jump_key)
 
 
+def _attack_stalled(rt: Runtime, player: Tuple[int, int], now: float,
+                    stuck_px: int, limit: float) -> bool:
+    """一直在打、角色卻一步都沒移動。
+
+    正常打怪會有進展：怪死了就沒目標、角色就往下一個巡邏點走。打了很久位置
+    完全沒變，代表這個目標打不死也不會離開攻擊範圍——最常見就是寵物被當成
+    怪（牠永遠跟在旁邊），其次是隔著地形打不到的怪。再打下去只會永遠攻擊、
+    永遠不巡邏、永遠沒經驗，所以先強制讓路給巡邏。走一段路也剛好讓
+    vision/follower.py 拿到判別寵物需要的移動樣本。
+    """
+    if limit <= 0:
+        return False
+    if rt.attack_pos is None or \
+            abs(player[0] - rt.attack_pos[0]) + abs(player[1] - rt.attack_pos[1]) > stuck_px:
+        rt.attack_pos = player
+        rt.attack_since = now
+        return False
+    return now - rt.attack_since >= limit
+
+
 def _check_stuck(rt: Runtime, player: Tuple[int, int], now: float,
                  stuck_px: int, stuck_seconds: float) -> bool:
     """巡邏移動中位置長時間沒變就視為卡住（地形卡死、被彈回）。"""
@@ -319,6 +344,7 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
 
     assert state.hp is not None and state.player is not None
     center_x, center_y = playfield_center
+    pat = profile.patrol
 
     # 單一幀讀到低血就停機太危險——血條被特效蓋住、擷取抖一下都會誤判。
     # 真實血量不會一幀掉到底，所以要求連續幾幀都讀到才算數。
@@ -355,6 +381,7 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
         # 冷卻好了、MP 夠、而且範圍內的怪數達到 min_mobs
         #（大絕設 min_mobs=3 就不會浪費在單隻怪身上）。
         mobs_near = False        # 任一技能範圍內有怪 -> 先打完再撿東西
+        may_attack = now >= rt.attack_break_until
         for i, sk in enumerate(profile.active_skills()):
             in_range = [
                 m for m in state.mobs
@@ -363,6 +390,8 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
             ]
             if in_range:
                 mobs_near = True
+            if not may_attack:
+                continue          # 打太久沒進展，這幾秒先讓路給巡邏
             if len(in_range) < max(sk.min_mobs, 1):
                 continue
             if now - rt.last_skill.get(i, 0.0) < sk.cooldown:
@@ -370,10 +399,19 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
             # MP 不夠就換下一個技能；都放不出來就繼續巡邏等回魔，不站著空揮
             if _mp_below(state, sk.min_mp):
                 continue
+            if _attack_stalled(rt, state.player, now, pat.stuck_px,
+                               cfg.safety.attack_stall_seconds):
+                rt.attack_break_until = now + cfg.safety.attack_break_seconds
+                rt.attack_breaks += 1
+                rt.attack_pos = None
+                break             # 跳出攻擊，往下走巡邏
             nearest = min(in_range, key=lambda m: abs(m.cx - center_x))
             direction = 1 if nearest.cx >= center_x else -1
             return Attack(direction, sk.key, sk.cast_seconds, sk.repeat,
                           aoe=(sk.type == "aoe"), index=i)
+
+        if not mobs_near:
+            rt.attack_pos = None   # 沒目標了，連續攻擊的計時重來
 
         # 清完場才撿：範圍內還有怪就先打，撿東西時被圍毆不划算
         loot = profile.loot
@@ -383,7 +421,6 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
             rt.last_loot = now
             return Loot(loot.key, max(loot.taps, 1))
 
-    pat = profile.patrol
     waypoints = pat.waypoints
     if pat.auto:
         probing = _auto_patrol(rt, state.player, pat, now)

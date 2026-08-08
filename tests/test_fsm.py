@@ -538,3 +538,54 @@ def test_climbing_still_drinks_potion(cfg, profile):
     rt.climbing = True
     action = fsm.decide(_state(hp=0.4, player=(41, 50)), cfg, profile, rt, NOW, CENTER)
     assert isinstance(action, fsm.DrinkPotion)
+
+
+def test_endless_attack_on_something_that_never_dies_yields_to_patrol(cfg, profile):
+    """寵物被當成怪最典型的症狀：牠不會死也不會離開攻擊範圍，
+    於是每個 tick 都是 Attack，角色一步都不走、經驗也不會動。"""
+    rt = _rt()
+    st = _state(mobs=[_mob(400)])
+    t = NOW
+    while t < NOW + cfg.safety.attack_stall_seconds:
+        assert isinstance(fsm.decide(st, cfg, profile, rt, t, CENTER), fsm.Attack)
+        t += 0.5
+
+    assert isinstance(fsm.decide(st, cfg, profile, rt, t, CENTER), fsm.Move)
+    assert rt.attack_breaks == 1
+
+    # 讓路只是暫時的，時間到就恢復攻擊
+    t += cfg.safety.attack_break_seconds + 0.1
+    assert isinstance(fsm.decide(st, cfg, profile, rt, t, CENTER), fsm.Attack)
+
+
+def test_attacking_while_the_character_moves_is_never_interrupted(cfg, profile):
+    """正常打怪本來就會邊打邊移動，不能被當成卡住。"""
+    rt = _rt()
+    t = NOW
+    for i in range(60):
+        st = _state(player=(60 + i, 30), mobs=[_mob(400)])
+        assert isinstance(fsm.decide(st, cfg, profile, rt, t, CENTER), fsm.Attack)
+        t += 0.5
+    assert rt.attack_breaks == 0
+
+
+def test_attack_stall_check_can_be_disabled(cfg, profile):
+    cfg.safety.attack_stall_seconds = 0
+    rt = _rt()
+    st = _state(mobs=[_mob(400)])
+    t = NOW
+    for _ in range(120):
+        assert isinstance(fsm.decide(st, cfg, profile, rt, t, CENTER), fsm.Attack)
+        t += 0.5
+
+
+def test_gap_without_targets_restarts_the_attack_timer(cfg, profile):
+    """打一下、怪死了、隔很久又有新怪出現，不該把中間的空檔算成連續攻擊。"""
+    rt = _rt()
+    t = NOW
+    fsm.decide(_state(mobs=[_mob(400)]), cfg, profile, rt, t, CENTER)
+    t += cfg.safety.attack_stall_seconds * 2
+    fsm.decide(_state(mobs=[]), cfg, profile, rt, t, CENTER)      # 沒怪，計時重來
+    assert isinstance(fsm.decide(_state(mobs=[_mob(400)]), cfg, profile, rt, t, CENTER),
+                      fsm.Attack)
+    assert rt.attack_breaks == 0

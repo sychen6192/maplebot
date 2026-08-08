@@ -181,3 +181,23 @@ patrol:
     assert pt.probe_margin_px == 10
     assert pt.climb_retries == 5
     assert pt.climb_up_key == "up"
+
+
+def test_follower_and_attack_stall_knobs_load(tmp_path):
+    base = _write(tmp_path / "default.yaml", BASE_CFG + """
+vision:
+  filter_followers: false
+  follower_drift_px: 25
+  follower_hits: 5
+  player_move_px: 3
+safety:
+  attack_stall_seconds: 20
+  attack_break_seconds: 1.5
+""")
+    cfg = load_config(base)
+    assert cfg.vision.filter_followers is False
+    assert cfg.vision.follower_drift_px == 25
+    assert cfg.vision.follower_hits == 5
+    assert cfg.vision.player_move_px == 3
+    assert cfg.safety.attack_stall_seconds == 20
+    assert cfg.safety.attack_break_seconds == 1.5

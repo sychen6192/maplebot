@@ -67,6 +67,11 @@ class VisionCfg:
     # 只在角色周圍這個大小的框內找怪（None=整個 playfield）。
     # 角色永遠在畫面中央，打不到的地方本來就不用看——省時間也少誤判。
     mob_search_box: Optional[Tuple[int, int]] = None
+    # 濾掉跟著角色跑的東西（寵物）。角色移動時，怪會在畫面上滑動，寵物不會。
+    filter_followers: bool = True
+    follower_drift_px: int = 40       # 畫面位移小於此值視為沒跟著滑動
+    follower_hits: int = 3            # 累積幾次才判定為跟隨物
+    player_move_px: int = 2           # 小地圖 x 變化超過此值才算「角色有移動」
 
 
 @dataclass
@@ -80,6 +85,8 @@ class SafetyCfg:
     sound_alerts: bool = True         # 危險事件用 winsound 嗶聲提醒
     black_screen_pause: bool = True   # 黑屏（斷線/讀圖）自動暫停
     exp_stall_minutes: float = 10.0   # 幾分鐘沒賺到經驗就暫停（0=不檢查）
+    attack_stall_seconds: float = 12.0  # 連續攻擊這麼久位置還沒變就先去巡邏（0=不檢查）
+    attack_break_seconds: float = 3.0   # 讓路給巡邏幾秒
 
 
 @dataclass
@@ -315,6 +322,10 @@ def load_config(path: str, local_path: Optional[str] = None) -> AppCfg:
     vc.remote_jpeg_quality = int(v.get("remote_jpeg_quality", vc.remote_jpeg_quality))
     vc.remote_max_width = int(v.get("remote_max_width", vc.remote_max_width))
     vc.mob_interval = float(v.get("mob_interval", vc.mob_interval))
+    vc.filter_followers = bool(v.get("filter_followers", vc.filter_followers))
+    vc.follower_drift_px = int(v.get("follower_drift_px", vc.follower_drift_px))
+    vc.follower_hits = int(v.get("follower_hits", vc.follower_hits))
+    vc.player_move_px = int(v.get("player_move_px", vc.player_move_px))
     if v.get("mob_search_box"):
         sb = v["mob_search_box"]
         vc.mob_search_box = (int(sb[0]), int(sb[1]))
@@ -333,6 +344,9 @@ def load_config(path: str, local_path: Optional[str] = None) -> AppCfg:
     sc.sound_alerts = bool(s.get("sound_alerts", sc.sound_alerts))
     sc.black_screen_pause = bool(s.get("black_screen_pause", sc.black_screen_pause))
     sc.exp_stall_minutes = float(s.get("exp_stall_minutes", sc.exp_stall_minutes))
+    sc.attack_stall_seconds = float(s.get("attack_stall_seconds", sc.attack_stall_seconds))
+    sc.attack_break_seconds = max(
+        float(s.get("attack_break_seconds", sc.attack_break_seconds)), 0.0)
 
     a = data.get("advisor", {})
     ac = cfg.advisor
