@@ -11,6 +11,9 @@ from random import random
 from .brain import fsm
 from .control.input_win import Keyboard
 
+# 估計還要走這麼久以上就持續按住方向鍵；短於此就用短按精準微調
+HOLD_MIN_SECONDS = 0.2
+
 
 @dataclass
 class Stats:
@@ -39,13 +42,48 @@ class Executor:
         self.stats = stats
         self.log = logger
         self.dry_run = dry_run
+        self._held_dir = None      # 目前持續按住的方向鍵（None = 沒按）
 
     def _dur(self, seconds: float) -> float:
         if self.dry_run:
             return 0.01
         return seconds * (0.8 + 0.4 * random())
 
+    def _move(self, action: "fsm.Move") -> None:
+        """遠距離持續按住方向鍵，快到了才短按微調。
+
+        每個 tick 都「按下→放開」會讓角色走走停停：放開時角色減速停住，
+        下一 tick 又要重新起步。除了看起來很假，位置更新也被拖慢
+        （每次 Move 睡 0.45 秒 = 每秒只剩兩次閉迴路修正）。
+        持續按住則是走一直線，主迴圈照樣每 tick 重新判斷要不要繼續。
+        """
+        arrow = "right" if action.direction > 0 else "left"
+        self.log.debug("巡邏：往%s走（目標小地圖 x=%d，估計還要 %.2fs）",
+                       "右" if action.direction > 0 else "左",
+                       action.target_x, action.seconds)
+        if action.seconds >= HOLD_MIN_SECONDS:
+            if self._held_dir != arrow:
+                self.stop_movement()
+                self.kb.press(arrow)
+                self._held_dir = arrow
+            # 不放開；由主迴圈控制節奏，每 tick 重新確認方向
+            return
+        # 剩最後一小段：短按精準微調，免得持續按住會衝過頭
+        self.stop_movement()
+        self.kb.tap(arrow, self._dur(action.seconds))
+
+    def stop_movement(self) -> None:
+        """放開持續按住的方向鍵。暫停、停機、切換動作前都要呼叫。"""
+        if self._held_dir is not None:
+            self.kb.release(self._held_dir)
+            self._held_dir = None
+
     def execute(self, action: fsm.Action, now: float) -> None:
+        # 除了繼續走路以外的任何動作，都要先放開方向鍵——
+        # 按著方向鍵放技能會讓角色邊走邊打，也會在繩子上掉下來
+        if not isinstance(action, fsm.Move):
+            self.stop_movement()
+
         if isinstance(action, fsm.Wait):
             self.log.debug("等待: %s", action.reason)
             time.sleep(self._dur(action.seconds))
@@ -86,11 +124,7 @@ class Executor:
             return
 
         if isinstance(action, fsm.Move):
-            arrow = "right" if action.direction > 0 else "left"
-            self.log.debug("巡邏：往%s走 %.2fs（目標小地圖 x=%d）",
-                           "右" if action.direction > 0 else "左",
-                           action.seconds, action.target_x)
-            self.kb.tap(arrow, self._dur(action.seconds))
+            self._move(action)
             return
 
         if isinstance(action, fsm.Probe):
