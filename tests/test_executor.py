@@ -56,10 +56,62 @@ def test_aoe_attack_skips_facing(ex):
     assert _taps(backend) == [SCANCODES["x"][0]]  # 沒有方向鍵
 
 
-def test_move_taps_direction(ex):
+RIGHT, LEFT = SCANCODES["right"][0], SCANCODES["left"][0]
+
+
+def test_long_move_holds_direction_without_releasing(ex):
+    """走走停停既慢又明顯是機器人——遠距離要一直按著。"""
     executor, backend = ex
-    executor.execute(fsm.Move(direction=1, seconds=0.3, target_x=95), NOW)
-    assert _taps(backend) == [SCANCODES["right"][0]]
+    executor.execute(fsm.Move(direction=1, seconds=0.4, target_x=95), NOW)
+    assert backend.history == [("down", RIGHT)]        # 按下就好，沒有放開
+
+
+def test_consecutive_moves_keep_key_held(ex):
+    executor, backend = ex
+    for _ in range(3):
+        executor.execute(fsm.Move(direction=1, seconds=0.4, target_x=95), NOW)
+    assert backend.history == [("down", RIGHT)]        # 三個 tick 只按一次
+
+
+def test_direction_change_releases_old_key(ex):
+    executor, backend = ex
+    executor.execute(fsm.Move(direction=1, seconds=0.4, target_x=95), NOW)
+    executor.execute(fsm.Move(direction=-1, seconds=0.4, target_x=10), NOW)
+    assert backend.history == [("down", RIGHT), ("up", RIGHT), ("down", LEFT)]
+
+
+def test_short_move_uses_precise_tap(ex):
+    """剩最後一小段用短按，持續按住會衝過頭。"""
+    executor, backend = ex
+    executor.execute(fsm.Move(direction=1, seconds=0.05, target_x=95), NOW)
+    assert backend.history == [("down", RIGHT), ("up", RIGHT)]
+
+
+def test_other_actions_release_held_direction(ex):
+    """按著方向鍵放技能會邊走邊打，在繩子上還會掉下來。"""
+    executor, backend = ex
+    executor.execute(fsm.Move(direction=1, seconds=0.4, target_x=95), NOW)
+    backend.history.clear()
+    executor.execute(fsm.Attack(direction=1, key="x", cast_seconds=0.1, repeat=1), NOW)
+    assert backend.history[0] == ("up", RIGHT)         # 先放開才攻擊
+
+
+def test_stop_movement_is_idempotent(ex):
+    executor, backend = ex
+    executor.execute(fsm.Move(direction=1, seconds=0.4, target_x=95), NOW)
+    executor.stop_movement()
+    executor.stop_movement()
+    assert backend.history == [("down", RIGHT), ("up", RIGHT)]
+
+
+def test_move_again_after_stop_presses_again(ex):
+    """暫停後恢復：持有狀態要清乾淨，否則同方向不會重新按下。"""
+    executor, backend = ex
+    executor.execute(fsm.Move(direction=1, seconds=0.4, target_x=95), NOW)
+    executor.stop_movement()
+    backend.history.clear()
+    executor.execute(fsm.Move(direction=1, seconds=0.4, target_x=95), NOW)
+    assert backend.history == [("down", RIGHT)]
 
 
 def test_run_keys_taps_in_order(ex):

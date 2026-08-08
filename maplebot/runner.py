@@ -156,6 +156,7 @@ class Runner:
         save_anomaly(frame, reason, self.log)
         self.alerts.ping("panic")
         self.log.error("PANIC: %s", reason)
+        self.executor.stop_movement()
         self.kb.release_all()
         if self.profile.panic_return_key and return_home and not self.dry_run:
             self.log.warning("按下回城卷（%s 鍵）後停止", self.profile.panic_return_key)
@@ -180,6 +181,7 @@ class Runner:
                 loop_start = time.monotonic()
                 self.safety.poll()
                 if self.safety.paused:
+                    self.executor.stop_movement()
                     self.kb.release_all()
                     time.sleep(0.2)
                     continue
@@ -249,6 +251,7 @@ class Runner:
                     time.sleep(tick_interval - elapsed)
         finally:
             self.advisor.stop()
+            self.executor.stop_movement()
             self.kb.release_all()
             self.log.info("已結束。%s", self.stats.summary())
             self.log.info("進度：%s", self.exp.summary(time.monotonic()))

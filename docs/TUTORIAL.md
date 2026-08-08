@@ -225,4 +225,6 @@ python main.py --profile config/profiles/mymap.yaml
 | HP/MP % 不對 | 條的框含到文字/外框 → 重框，只框色條本體 |
 | 自動巡邏報「校正失敗」 | 方向鍵沒送進遊戲（權限問題），或小地圖 ROI 錯了 |
 | 一直說沒賺到經驗 | 技能鍵對嗎？怪打得到嗎？先用 `--dry-run` 看決策是不是一直 `Move` |
+| 走路一頓一頓的 | 已修正為持續按住方向鍵。還是頓的話多半是 `loop.fps` 太低（預設 8），或大視窗導致辨識太慢——加 `vision: { mob_search_box: [700, 400] }` |
+| 走過頭來回震盪 | `patrol.tolerance` 調大（預設 4），或 `step_seconds_per_px` 調小 |
 | 座標整組偏移 | Windows 顯示縮放改過 → 重跑第 2 步校正 |
