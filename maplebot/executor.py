@@ -21,12 +21,13 @@ class Stats:
     potions_hp: int = 0
     potions_mp: int = 0
     escapes: int = 0
+    climbs: int = 0
 
     def summary(self) -> str:
         mins = (time.monotonic() - self.started) / 60
         return (f"運行 {mins:.1f} 分鐘 | tick {self.ticks} | 攻擊 {self.attacks} 次 | "
                 f"buff {self.buffs} 次 | HP 藥 {self.potions_hp} | MP 藥 {self.potions_mp} | "
-                f"脫困 {self.escapes} 次")
+                f"垂直移動 {self.climbs} 次 | 脫困 {self.escapes} 次")
 
 
 class Executor:
@@ -89,6 +90,31 @@ class Executor:
                            "右" if action.direction > 0 else "左",
                            action.seconds, action.target_x)
             self.kb.tap(arrow, self._dur(action.seconds))
+            return
+
+        if isinstance(action, fsm.Probe):
+            arrow = "right" if action.direction > 0 else "left"
+            self.log.info("自動巡邏校正：往%s試探邊界",
+                          "右" if action.direction > 0 else "左")
+            self.kb.tap(arrow, self._dur(action.seconds))
+            return
+
+        if isinstance(action, fsm.Climb):
+            if action.jump_key:
+                self.log.info("下跳平台：按住 %s 再跳（%s）", action.key, action.jump_key)
+                self.kb.press(action.key)
+                try:
+                    time.sleep(self._dur(0.1))
+                    self.kb.tap(action.jump_key, self._dur(0.12))
+                    time.sleep(self._dur(0.25))
+                finally:
+                    self.kb.release(action.key)
+            else:
+                self.log.info("垂直移動：往%s（%s 鍵 %.2fs）",
+                              "上" if action.direction < 0 else "下",
+                              action.key, action.seconds)
+                self.kb.tap(action.key, self._dur(action.seconds))
+            self.stats.climbs += 1
             return
 
         if isinstance(action, fsm.RunKeys):

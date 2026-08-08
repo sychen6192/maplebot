@@ -19,7 +19,8 @@
 | 點狀色塊面積上限，排除同色地形（自由市場黃地板誤判） | auto-maple 用模板迴避此問題；面積過濾是我們對色彩路線的等效解 | `vision.max_dot_pixels` + 連通元件過濾 |
 | 卡住偵測 → 跳躍脫困 | MapleStoryAutoLevelUp `is_player_stuck()`（位移門檻 + 逾時） | `fsm._check_stuck()` → `Escape` 動作，換方向跳一下 |
 | 相對座標巡邏點（0~1 佔小地圖寬度比例） | auto-maple `convert_to_relative` | `Waypoint.x <= 1.0` 視為比例 |
-| 巡邏點附掛按鍵動作（跳上平台等） | auto-maple routine 的 Point+commands（簡化版） | `waypoints: [{x: 95, keys: [alt]}]` → `RunKeys` |
+| 巡邏點附掛按鍵動作（放置技能等） | auto-maple routine 的 Point+commands（簡化版） | `waypoints: [{x: 95, keys: [alt]}]` → `RunKeys` |
+| 多層地圖的垂直移動（爬繩、下跳平台） | auto-maple 的 `Move` 指令會自動爬繩；MapleStoryAutoLevelUp 靠路徑圖顏色標註 | `waypoints: [{x: 68, y: 20}]` → `Climb`。**閉迴路**：每步比對小地圖 y，沒抓到繩子會重試再放棄該點（兩個參考專案都是開迴路按鍵） |
 | directional / AoE 兩種攻擊模式 | MapleStoryAutoLevelUp `attack: directional/aoe_skill` | `attack.type: aoe` 時不轉向直接施放 |
 | 黑屏偵測（斷線/換頻道/讀圖） | auto-maple notifier 的 room-change 偵測（>90% 全黑） | `safety.is_black_screen()` → 自動暫停 + 截圖 |
 | 危險事件聲音警報 | auto-maple notifier（pygame 音檔） | `alerts.py` 用 winsound 免音檔：Panic 長響、有人出現短響 |
@@ -31,7 +32,7 @@
 
 | 功能 | 來源 | 不採用原因 |
 |---|---|---|
-| 四叉樹地圖 + A* 尋路 | auto-maple `layout.py` | 需要預先錄製每張地圖的平台資料；我們的左右巡邏 + 脫困已覆蓋單平台練功場景，複雜地圖再議 |
+| 四叉樹地圖 + A* 尋路 | auto-maple `layout.py` | 需要預先錄製每張地圖的平台資料。我們改用「人工指定的多層 waypoint + 閉迴路驗證」：表達力較弱（不會自己繞路），但零錄製成本、失敗行為可預測。**繩子位置仍必須人工填**——自動找繩子誤判一次就會讓整條路線錯亂，代價不划算 |
 | 符文（rune）自動破解 | 兩者皆有（TensorFlow 箭頭辨識） | 符文是 GMS/Artale 的反外掛機制；自動破解反偵測意味太強，超出研究範圍。本專案遇到異常畫面的策略一律是「暫停 + 警報 + 截圖」，交還給人 |
 | tkinter GUI | auto-maple `gui/` | `tools/debug_view.py` 已涵蓋觀測需求；GUI 維護成本高、與研究目的無關 |
 | 路線錄製成彩色路徑圖 | MapleStoryAutoLevelUp `maps/` | 表達力強但工具鏈重；YAML waypoint 對單平台場景足夠、可讀可 diff |
@@ -40,7 +41,7 @@
 
 ## 比對後確認我們已領先的部分
 
-- **可測試性**：兩個參考專案都沒有單元測試；本專案 67 個 pytest + CI + 真實截圖 ground truth
+- **可測試性**：兩個參考專案都沒有單元測試；本專案 156 個 pytest + CI + 真實截圖 ground truth
 - **離線開發**：`--source 截圖` 可跑完整 pipeline，參考專案都必須開遊戲才能調
 - **決策層純函式**：auto-maple 的決策散在 bot/routine/命令簿多處，狀態耦合全域 config；我們的 `fsm.decide()` 可以直接窮舉測試
 - **ML 升級路徑**：YOLO 訓練管線（自動預標註）與 VLM 督導層是兩個參考專案都沒有的

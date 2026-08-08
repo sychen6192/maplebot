@@ -107,18 +107,35 @@ class AppCfg:
 @dataclass
 class Waypoint:
     x: float                          # >1 = 小地圖絕對 px；<=1 = 佔小地圖寬度比例
+    y: Optional[float] = None         # 同上（比例是佔小地圖高度）；None = 只對 x（單層地圖）
+    descend: str = "rope"             # 往下的方式：rope（抓繩下降）| jump（下跳平台）
     keys: List[str] = field(default_factory=list)  # 抵達時依序敲的鍵（跳躍/技能等）
 
 
 @dataclass
 class PatrolCfg:
     waypoints: List[Waypoint] = field(default_factory=list)
+    auto: bool = False                # waypoints: auto -> 開場撞牆量出可走範圍自動生成
     tolerance: int = 4
     step_seconds_per_px: float = 0.02
     max_step_seconds: float = 0.45
     stuck_seconds: float = 4.0        # 走了這麼久位置都沒變 -> 判定卡住
     stuck_px: int = 3
     jump_key: str = "alt"             # 卡住脫困用的跳躍鍵
+    # --- waypoints: auto 的探邊參數 ---
+    probe_seconds: float = 0.35       # 每次往同方向試探走多久
+    probe_stall_px: int = 2           # x 變化在此之內視為沒動
+    probe_stalls: int = 3             # 連續幾次沒動判定撞牆
+    probe_margin_px: int = 6          # 量到的邊界往內縮多少當巡邏點
+    probe_min_span_px: int = 12       # 可走範圍小於此值視為校正失敗（按鍵沒生效等）
+    # --- 垂直移動（爬繩／下平台）---
+    y_tolerance: int = 3              # 小地圖 y 差多少內算到位
+    climb_seconds: float = 0.45       # 每步按住上/下鍵多久
+    climb_stall_px: int = 2           # y 變化在此之內視為沒爬動
+    climb_stalls: int = 3             # 連續幾步沒爬動 -> 判定沒抓到繩子
+    climb_retries: int = 2            # 重新對位幾次後放棄這個巡邏點
+    climb_up_key: str = "up"
+    climb_down_key: str = "down"
 
 
 @dataclass
@@ -177,7 +194,16 @@ def _parse_waypoint(raw) -> Waypoint:
         keys = raw.get("keys", [])
         if not isinstance(keys, list):
             raise ConfigError(f"waypoint keys 必須是清單: {raw!r}")
-        return Waypoint(x=float(raw["x"]), keys=[str(k).lower() for k in keys])
+        descend = str(raw.get("descend", "rope")).lower()
+        if descend not in ("rope", "jump"):
+            raise ConfigError(
+                f"waypoint descend 只能是 rope（抓繩下降）或 jump（下跳平台），"
+                f"拿到: {descend!r}")
+        y = raw.get("y")
+        return Waypoint(x=float(raw["x"]),
+                        y=None if y is None else float(y),
+                        descend=descend,
+                        keys=[str(k).lower() for k in keys])
     if isinstance(raw, (int, float)):
         return Waypoint(x=float(raw))
     raise ConfigError(f"看不懂的 waypoint 格式: {raw!r}")
@@ -269,13 +295,32 @@ def load_profile(path: str) -> Profile:
 
     pa = data.get("patrol", {})
     raw_wps = pa.get("waypoints", pa.get("waypoints_x", []))
-    p.patrol.waypoints = [_parse_waypoint(w) for w in raw_wps]
-    p.patrol.tolerance = int(pa.get("tolerance", p.patrol.tolerance))
-    p.patrol.step_seconds_per_px = float(pa.get("step_seconds_per_px", p.patrol.step_seconds_per_px))
-    p.patrol.max_step_seconds = float(pa.get("max_step_seconds", p.patrol.max_step_seconds))
-    p.patrol.stuck_seconds = float(pa.get("stuck_seconds", p.patrol.stuck_seconds))
-    p.patrol.stuck_px = int(pa.get("stuck_px", p.patrol.stuck_px))
-    p.patrol.jump_key = str(pa.get("jump_key", p.patrol.jump_key)).lower()
+    if isinstance(raw_wps, str):
+        if raw_wps.strip().lower() != "auto":
+            raise ConfigError(
+                f"patrol.waypoints 是字串時只能是 auto（開場自動量測），拿到: {raw_wps!r}")
+        p.patrol.auto = True
+    else:
+        p.patrol.waypoints = [_parse_waypoint(w) for w in raw_wps]
+    pt = p.patrol
+    pt.tolerance = int(pa.get("tolerance", pt.tolerance))
+    pt.step_seconds_per_px = float(pa.get("step_seconds_per_px", pt.step_seconds_per_px))
+    pt.max_step_seconds = float(pa.get("max_step_seconds", pt.max_step_seconds))
+    pt.stuck_seconds = float(pa.get("stuck_seconds", pt.stuck_seconds))
+    pt.stuck_px = int(pa.get("stuck_px", pt.stuck_px))
+    pt.jump_key = str(pa.get("jump_key", pt.jump_key)).lower()
+    pt.probe_seconds = float(pa.get("probe_seconds", pt.probe_seconds))
+    pt.probe_stall_px = int(pa.get("probe_stall_px", pt.probe_stall_px))
+    pt.probe_stalls = int(pa.get("probe_stalls", pt.probe_stalls))
+    pt.probe_margin_px = int(pa.get("probe_margin_px", pt.probe_margin_px))
+    pt.probe_min_span_px = int(pa.get("probe_min_span_px", pt.probe_min_span_px))
+    pt.y_tolerance = int(pa.get("y_tolerance", pt.y_tolerance))
+    pt.climb_seconds = float(pa.get("climb_seconds", pt.climb_seconds))
+    pt.climb_stall_px = int(pa.get("climb_stall_px", pt.climb_stall_px))
+    pt.climb_stalls = int(pa.get("climb_stalls", pt.climb_stalls))
+    pt.climb_retries = int(pa.get("climb_retries", pt.climb_retries))
+    pt.climb_up_key = str(pa.get("climb_up_key", pt.climb_up_key)).lower()
+    pt.climb_down_key = str(pa.get("climb_down_key", pt.climb_down_key)).lower()
 
     at = data.get("attack", {})
     p.attack.key = str(at.get("key", p.attack.key)).lower()
@@ -301,6 +346,8 @@ def load_profile(path: str) -> Profile:
             below_ratio=float(pot.get("below_ratio", 0.0)),
             cooldown=float(pot.get("cooldown", 1.0)),
         )
-    if not p.patrol.waypoints:
-        raise ConfigError("profile 至少要有一個 patrol.waypoints 巡邏點")
+    if not p.patrol.auto and not p.patrol.waypoints:
+        raise ConfigError(
+            "profile 至少要有一個 patrol.waypoints 巡邏點，"
+            "或設 patrol.waypoints: auto 讓程式開場自己量")
     return p

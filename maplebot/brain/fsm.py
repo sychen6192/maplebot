@@ -8,18 +8,25 @@ decide() 不碰鍵盤、不碰螢幕、不看時鐘（now 由外部傳入），
   2. HP 低於危險線      -> Panic（停止程式並截圖；可設定先按回城卷）
   3. HP/MP 低於補藥線   -> DrinkPotion
   4. 小地圖出現其他玩家  -> Wait（禮貌暫停，pause_when_players 可關）
-  5. Buff 到期          -> CastBuff
-  6. 攻擊範圍內有怪      -> Attack（directional 先轉向 / aoe 原地放）
-  7. 巡邏中卡住          -> Escape（跳躍 + 換方向，參考 MapleStoryAutoLevelUp）
-  8. 其他               -> Move 往下一個巡邏點；抵達時執行該點的 keys
+  5. Buff 到期          -> CastBuff（垂直移動途中跳過）
+  6. 攻擊範圍內有怪      -> Attack（directional 先轉向 / aoe 原地放；垂直移動途中跳過）
+  7. 自動巡邏未校正      -> Probe（waypoints: auto 時左右撞牆量出可走範圍）
+  8. 巡邏中卡住          -> Escape（跳躍 + 換方向，參考 MapleStoryAutoLevelUp）
+  9. x 到位但 y 沒到     -> Climb（爬繩上樓 / 下繩或下跳平台）
+ 10. 其他               -> Move 往下一個巡邏點；抵達時執行該點的 keys
+
+在繩子上按方向鍵或技能鍵會掉下來，所以第 5、6 項在垂直移動途中會讓路——
+補血補魔不受影響（那是保命）。
 
 楓谷的鏡頭永遠跟著角色，所以「角色在 playfield 的位置」直接用
 playfield 中心近似，怪物距離就是與中心的距離。
+
+小地圖座標的 y 是往下增加的，所以「往上爬」是 y 變小。
 """
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Union
 
-from ..config import AppCfg, Profile, Waypoint
+from ..config import AppCfg, PatrolCfg, Profile, Waypoint
 from .state import GameState
 
 
@@ -32,6 +39,9 @@ class Wait:
 @dataclass
 class Panic:
     reason: str
+    # 停機前是否按 profile.panic_return_key 回城。HP 見底要（人可能回不來），
+    # 但設定/校正錯誤不要——那只是燒掉一張回城卷。
+    return_home: bool = True
 
 
 @dataclass
@@ -76,12 +86,43 @@ class Escape:
     jump_key: str
 
 
-Action = Union[Wait, Panic, DrinkPotion, CastBuff, Attack, Move, RunKeys, Escape]
+@dataclass
+class Probe:
+    """自動巡邏校正：往 direction 走一小步，試探地圖邊界在哪。"""
+    direction: int
+    seconds: float
+
+
+@dataclass
+class Climb:
+    """垂直移動：direction=-1 爬繩上樓、direction=1 下降。
+
+    jump_key 非空 = 按住方向鍵再跳（下跳平台）；空的話就是抓著繩子上下。
+    """
+    direction: int
+    key: str
+    seconds: float
+    jump_key: str = ""
+
+
+Action = Union[Wait, Panic, DrinkPotion, CastBuff, Attack, Move, RunKeys, Escape,
+               Probe, Climb]
+
+
+@dataclass
+class AutoPatrol:
+    """waypoints: auto 的探邊進度（撞到左右兩邊的牆就能算出巡邏點）。"""
+    direction: int = 1
+    prev_x: Optional[int] = None
+    stalls: int = 0
+    left: Optional[int] = None
+    right: Optional[int] = None
+    waypoints: Optional[List[Waypoint]] = None
 
 
 @dataclass
 class Runtime:
-    """跨 tick 的決策記憶：冷卻時間、巡邏進度、卡住偵測。"""
+    """跨 tick 的決策記憶：冷卻時間、巡邏進度、卡住偵測、垂直移動進度。"""
     wp_index: int = 0
     last_buff: Dict[int, float] = field(default_factory=dict)
     last_potion: Dict[str, float] = field(default_factory=dict)
@@ -89,12 +130,30 @@ class Runtime:
     stuck_pos: Optional[Tuple[int, int]] = None
     stuck_since: float = 0.0
     escape_direction: int = 1
+    auto: AutoPatrol = field(default_factory=AutoPatrol)
+    climbing: bool = False              # 正在垂直移動 -> 讓路給攻擊與 buff
+    climb_prev_y: Optional[int] = None
+    climb_stalls: int = 0
+    climb_retries: int = 0
 
     def note_buff(self, index: int, now: float) -> None:
         self.last_buff[index] = now
 
     def note_potion(self, kind: str, now: float) -> None:
         self.last_potion[kind] = now
+
+    def pause_climb(self) -> None:
+        """離開繩子去重新對位：清掉這一趟的 y 觀測，但保留重試次數，
+        免得「爬不動 -> 脫困 -> 位置跑掉 -> 重新對位」把計數歸零變成無限迴圈。"""
+        self.climbing = False
+        self.climb_prev_y = None
+        self.climb_stalls = 0
+
+    def next_waypoint(self, total: int) -> None:
+        self.wp_index = (self.wp_index + 1) % max(total, 1)
+        self.stuck_pos = None
+        self.pause_climb()
+        self.climb_retries = 0
 
 
 def _potion_due(rt: Runtime, kind: str, cooldown: float, now: float) -> bool:
@@ -107,6 +166,97 @@ def resolve_waypoint_x(wp: Waypoint, minimap_size: Optional[Tuple[int, int]]) ->
     if wp.x <= 1.0 and minimap_size:
         return int(round(wp.x * minimap_size[0]))
     return int(round(wp.x))
+
+
+def resolve_waypoint_y(wp: Waypoint, minimap_size: Optional[Tuple[int, int]]) -> Optional[int]:
+    """同 resolve_waypoint_x，但比例是佔小地圖**高度**。None = 這個點不管 y。"""
+    if wp.y is None:
+        return None
+    if wp.y <= 1.0 and minimap_size:
+        return int(round(wp.y * minimap_size[1]))
+    return int(round(wp.y))
+
+
+def _bounds_to_waypoints(left: int, right: int, margin: int) -> List[Waypoint]:
+    """把量到的左右邊界往內縮，避免巡邏點正好貼在牆上一直判定卡住。"""
+    span = right - left
+    inset = min(margin, max(span // 4, 0))
+    return [Waypoint(x=float(left + inset)), Waypoint(x=float(right - inset))]
+
+
+def _auto_patrol(rt: Runtime, player: Tuple[int, int], pat: PatrolCfg) -> Optional[Action]:
+    """waypoints: auto —— 往一個方向一直試探到位置不再變化（撞牆），兩邊都量到
+    後生成巡邏點。回傳 None 代表校正已完成，可以照正常巡邏走。
+
+    只在真的送出 Probe 的 tick 才比對位置，所以中途插隊去打怪不會被誤判成撞牆。
+    """
+    ap = rt.auto
+    if ap.waypoints is not None:
+        return None
+
+    x = player[0]
+    if ap.prev_x is not None and abs(x - ap.prev_x) <= pat.probe_stall_px:
+        ap.stalls += 1
+    else:
+        ap.stalls = 0
+    ap.prev_x = x
+
+    if ap.stalls < pat.probe_stalls:
+        return Probe(ap.direction, pat.probe_seconds)
+
+    # 連續走了幾步都沒動 -> 這一側到底了
+    if ap.direction > 0:
+        ap.right = x
+    else:
+        ap.left = x
+    ap.stalls = 0
+    ap.prev_x = None
+
+    if ap.left is None or ap.right is None:
+        ap.direction *= -1
+        return Probe(ap.direction, pat.probe_seconds)
+
+    span = ap.right - ap.left
+    if span < pat.probe_min_span_px:
+        return Panic(
+            f"自動巡邏校正失敗：量到的可走範圍只有 {span}px，"
+            f"低於 patrol.probe_min_span_px={pat.probe_min_span_px}。"
+            "請確認方向鍵有送進遊戲（遊戲用系統管理員跑的話終端機也要）、"
+            "小地圖 ROI 是否正確，或改用手動 patrol.waypoints",
+            return_home=False)
+    ap.waypoints = _bounds_to_waypoints(ap.left, ap.right, pat.probe_margin_px)
+    return None
+
+
+def _climb(rt: Runtime, player: Tuple[int, int], pat: PatrolCfg, wp: Waypoint,
+           dy: int, total_waypoints: int) -> Action:
+    """閉迴路垂直移動：每一步都回頭看小地圖 y 有沒有真的變。
+
+    沒抓到繩子、爬一半被怪打掉，y 就會停住 —— 這時先脫困微調位置重新對繩，
+    連續失敗超過 climb_retries 就放棄這個巡邏點，免得永遠卡在繩子前面。
+    """
+    y = player[1]
+    if rt.climb_prev_y is not None and abs(y - rt.climb_prev_y) <= pat.climb_stall_px:
+        rt.climb_stalls += 1
+    else:
+        rt.climb_stalls = 0
+    rt.climb_prev_y = y
+
+    if rt.climb_stalls >= pat.climb_stalls:
+        rt.pause_climb()
+        rt.climb_retries += 1
+        if rt.climb_retries > pat.climb_retries:
+            rt.next_waypoint(total_waypoints)
+            return Wait(f"垂直移動連續失敗（已重試 {pat.climb_retries} 次），"
+                        "放棄這個巡邏點", seconds=0.3)
+        rt.escape_direction *= -1
+        return Escape(rt.escape_direction, pat.jump_key)
+
+    rt.climbing = True
+    if dy < 0:                       # 小地圖 y 變小 = 往上，只能靠繩子
+        return Climb(-1, pat.climb_up_key, pat.climb_seconds)
+    jump_key = pat.jump_key if wp.descend == "jump" else ""
+    return Climb(1, pat.climb_down_key, pat.climb_seconds, jump_key=jump_key)
 
 
 def _check_stuck(rt: Runtime, player: Tuple[int, int], now: float,
@@ -146,36 +296,54 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
     if cfg.safety.pause_when_players and state.others:
         return Wait(f"小地圖出現 {len(state.others)} 位其他玩家，暫停動作", seconds=1.0)
 
-    for i, buff in enumerate(profile.buffs):
-        if buff.key and now - rt.last_buff.get(i, 0.0) >= buff.every:
-            return CastBuff(i, buff.key, buff.cast_seconds)
+    # 掛在繩子上時方向鍵和技能鍵都會讓角色掉下來，所以垂直移動途中不 buff 不打怪
+    if not rt.climbing:
+        for i, buff in enumerate(profile.buffs):
+            if buff.key and now - rt.last_buff.get(i, 0.0) >= buff.every:
+                return CastBuff(i, buff.key, buff.cast_seconds)
 
-    atk = profile.attack
-    in_range = [
-        m for m in state.mobs
-        if abs(m.cx - center_x) <= atk.range_px
-        and abs(m.cy - center_y) <= atk.vertical_range_px
-    ]
-    if in_range and now - rt.last_attack >= atk.cooldown:
-        nearest = min(in_range, key=lambda m: abs(m.cx - center_x))
-        direction = 1 if nearest.cx >= center_x else -1
-        return Attack(direction, atk.key, atk.cast_seconds, atk.repeat,
-                      aoe=(atk.type == "aoe"))
+        atk = profile.attack
+        in_range = [
+            m for m in state.mobs
+            if abs(m.cx - center_x) <= atk.range_px
+            and abs(m.cy - center_y) <= atk.vertical_range_px
+        ]
+        if in_range and now - rt.last_attack >= atk.cooldown:
+            nearest = min(in_range, key=lambda m: abs(m.cx - center_x))
+            direction = 1 if nearest.cx >= center_x else -1
+            return Attack(direction, atk.key, atk.cast_seconds, atk.repeat,
+                          aoe=(atk.type == "aoe"))
 
     pat = profile.patrol
-    wp = pat.waypoints[rt.wp_index % len(pat.waypoints)]
+    waypoints = pat.waypoints
+    if pat.auto:
+        probing = _auto_patrol(rt, state.player, pat)
+        if probing is not None:
+            return probing
+        waypoints = rt.auto.waypoints or []
+    if not waypoints:
+        return Wait("沒有可用的巡邏點")
+
+    wp = waypoints[rt.wp_index % len(waypoints)]
     target = resolve_waypoint_x(wp, state.minimap_size)
     dist = target - state.player[0]
-    if abs(dist) <= pat.tolerance:
-        rt.wp_index = (rt.wp_index + 1) % len(pat.waypoints)
-        rt.stuck_pos = None
-        if wp.keys:
-            return RunKeys(list(wp.keys))
-        return Wait("抵達巡邏點，切換下一個", seconds=0.2)
 
-    if _check_stuck(rt, state.player, now, pat.stuck_px, pat.stuck_seconds):
-        rt.escape_direction *= -1
-        return Escape(rt.escape_direction, pat.jump_key)
+    if abs(dist) > pat.tolerance:
+        # x 還沒對準（也可能是爬繩途中被打掉、位置跑掉了）-> 先走回去
+        rt.pause_climb()
+        if _check_stuck(rt, state.player, now, pat.stuck_px, pat.stuck_seconds):
+            rt.escape_direction *= -1
+            return Escape(rt.escape_direction, pat.jump_key)
+        seconds = max(min(abs(dist) * pat.step_seconds_per_px, pat.max_step_seconds), 0.08)
+        return Move(1 if dist > 0 else -1, seconds, target)
 
-    seconds = max(min(abs(dist) * pat.step_seconds_per_px, pat.max_step_seconds), 0.08)
-    return Move(1 if dist > 0 else -1, seconds, target)
+    target_y = resolve_waypoint_y(wp, state.minimap_size)
+    if target_y is not None:
+        dy = target_y - state.player[1]
+        if abs(dy) > pat.y_tolerance:
+            return _climb(rt, state.player, pat, wp, dy, len(waypoints))
+
+    rt.next_waypoint(len(waypoints))
+    if wp.keys:
+        return RunKeys(list(wp.keys))
+    return Wait("抵達巡邏點，切換下一個", seconds=0.2)

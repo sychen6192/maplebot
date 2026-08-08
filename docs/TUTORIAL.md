@@ -110,6 +110,13 @@ Step 5 的 `waypoints: [左x, 右x]`。按 `Ctrl+C` 結束。
 > 其他兩種模式也看得到同一個座標：即時視窗是綠圈旁的 `(x,y)`；
 > `--snapshot` 是終端機印的「玩家小地圖座標: (x, y)」。
 
+**單層地圖可以整步跳過**：profile 寫 `waypoints: auto`，開場程式會自己左右走到
+撞牆量出範圍。想省事就先用 `auto`，覺得它走的範圍不合意再回來手動量。
+
+**多層地圖要多抄兩種座標**：
+1. 每一層樓的 `y`（站在那層樓上看 `y=` 那一欄）
+2. **繩子的 `x`**——站到繩子前面記下 `x`。程式不會自己找繩子在哪。
+
 ## 第 5 步：寫你的地圖 profile
 
 ```powershell
@@ -120,7 +127,7 @@ copy config\profiles\example.yaml config\profiles\mymap.yaml
 
 ```yaml
 patrol:
-  waypoints: [35, 90]       # 第 4 步記下的左右端點 x
+  waypoints: [35, 90]       # 第 4 步記下的左右端點 x（或寫 auto 讓程式自己量）
 attack:
   key: x                    # 你的攻擊技能鍵
   type: directional         # 需要面向的技能；祭司 Heal 這類原地放的改 aoe
@@ -130,6 +137,25 @@ potions:
 buffs:
   - { key: "8", every: 120, cast_seconds: 1.5 }   # 沒有 buff 就整段刪掉
 ```
+
+### 多層地圖（要爬繩子的話）
+
+改抄 `config/profiles/multilevel.yaml`，巡邏點加上 `y`：
+
+```yaml
+patrol:
+  waypoints:
+    - { x: 30 }                        # 下層左端
+    - { x: 100 }                       # 下層右端
+    - { x: 68, y: 20 }                 # 走到繩子(x=68) -> 爬到上層(y=20)
+    - { x: 40, y: 20 }                 # 上層走位
+    - { x: 40, y: 45, descend: jump }  # 下跳回下層（要抓繩下降就寫 rope）
+```
+
+順序就是它走的順序，最後一個點走完會回到第一個點。爬繩是閉迴路的：每爬一步
+都回頭看小地圖 y 有沒有真的變，沒抓到繩子會先脫困重新對位，連續失敗兩次就
+放棄這個點繼續走下一個。所以**繩子 x 抄錯的後果是少走上層，不是整隻卡死**——
+發現它老是不上樓，就回第 4 步重新抄繩子座標。
 
 ## 第 6 步：先預演（不會按任何鍵）
 
