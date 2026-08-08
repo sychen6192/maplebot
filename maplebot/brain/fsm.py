@@ -9,7 +9,8 @@ decide() 不碰鍵盤、不碰螢幕、不看時鐘（now 由外部傳入），
   3. HP/MP 低於補藥線   -> DrinkPotion
   4. 小地圖出現其他玩家  -> Wait（禮貌暫停，pause_when_players 可關）
   5. Buff 到期          -> CastBuff（垂直移動途中跳過）
-  6. 攻擊範圍內有怪      -> Attack（directional 先轉向 / aoe 原地放；垂直移動途中跳過）
+  6. 攻擊範圍內有怪      -> Attack（多技能時依序挑第一個放得出來又划算的；
+                          directional 先轉向 / aoe 原地放；垂直移動途中跳過）
   7. 自動巡邏未校正      -> Probe（waypoints: auto 時左右撞牆量出可走範圍）
   8. 巡邏中卡住          -> Escape（跳躍 + 換方向，參考 MapleStoryAutoLevelUp）
   9. x 到位但 y 沒到     -> Climb（爬繩上樓 / 下繩或下跳平台）
@@ -64,6 +65,7 @@ class Attack:
     cast_seconds: float
     repeat: int
     aoe: bool = False
+    index: int = 0        # profile.active_skills() 裡的序號，用來記各自的冷卻
 
 
 @dataclass
@@ -134,6 +136,7 @@ class Runtime:
     last_buff: Dict[int, float] = field(default_factory=dict)
     last_potion: Dict[str, float] = field(default_factory=dict)
     last_attack: float = 0.0
+    last_skill: Dict[int, float] = field(default_factory=dict)   # 每個技能各自的冷卻
     last_loot: float = 0.0
     stuck_pos: Optional[Tuple[int, int]] = None
     stuck_since: float = 0.0
@@ -149,6 +152,10 @@ class Runtime:
 
     def note_potion(self, kind: str, now: float) -> None:
         self.last_potion[kind] = now
+
+    def note_skill(self, index: int, now: float) -> None:
+        self.last_skill[index] = now
+        self.last_attack = now
 
     def pause_climb(self) -> None:
         """離開繩子去重新對位：清掉這一趟的 y 觀測，但保留重試次數，
@@ -319,23 +326,33 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
                 continue      # MP 不夠，等回魔再補，別空按
             return CastBuff(i, buff.key, buff.cast_seconds)
 
-        atk = profile.attack
-        in_range = [
-            m for m in state.mobs
-            if abs(m.cx - center_x) <= atk.range_px
-            and abs(m.cy - center_y) <= atk.vertical_range_px
-        ]
-        # MP 不夠時技能放不出來，與其站著空揮不如繼續巡邏（讓 MP 藥/回魔跟上）
-        if in_range and not _mp_below(state, atk.min_mp) \
-                and now - rt.last_attack >= atk.cooldown:
+        # 依 profile 的順序挑第一個「放得出來又划算」的技能：
+        # 冷卻好了、MP 夠、而且範圍內的怪數達到 min_mobs
+        #（大絕設 min_mobs=3 就不會浪費在單隻怪身上）。
+        mobs_near = False        # 任一技能範圍內有怪 -> 先打完再撿東西
+        for i, sk in enumerate(profile.active_skills()):
+            in_range = [
+                m for m in state.mobs
+                if abs(m.cx - center_x) <= sk.range_px
+                and abs(m.cy - center_y) <= sk.vertical_range_px
+            ]
+            if in_range:
+                mobs_near = True
+            if len(in_range) < max(sk.min_mobs, 1):
+                continue
+            if now - rt.last_skill.get(i, 0.0) < sk.cooldown:
+                continue
+            # MP 不夠就換下一個技能；都放不出來就繼續巡邏等回魔，不站著空揮
+            if _mp_below(state, sk.min_mp):
+                continue
             nearest = min(in_range, key=lambda m: abs(m.cx - center_x))
             direction = 1 if nearest.cx >= center_x else -1
-            return Attack(direction, atk.key, atk.cast_seconds, atk.repeat,
-                          aoe=(atk.type == "aoe"))
+            return Attack(direction, sk.key, sk.cast_seconds, sk.repeat,
+                          aoe=(sk.type == "aoe"), index=i)
 
         # 清完場才撿：範圍內還有怪就先打，撿東西時被圍毆不划算
         loot = profile.loot
-        if loot.key and not in_range and now - rt.last_loot >= loot.every \
+        if loot.key and not mobs_near and now - rt.last_loot >= loot.every \
                 and (loot.after_combat <= 0
                      or now - rt.last_attack <= loot.after_combat):
             rt.last_loot = now

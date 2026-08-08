@@ -77,6 +77,42 @@ def test_profile_requires_waypoints(tmp_path):
         load_profile(path)
 
 
+def test_profile_skills_list(tmp_path):
+    path = _write(tmp_path / "p.yaml", """
+patrol: { waypoints: [10] }
+skills:
+  - { key: V, type: aoe, cooldown: 30, min_mobs: 3, min_mp: 0.2, range_px: 400 }
+  - { key: X, cooldown: 0.2 }
+""")
+    p = load_profile(path)
+    assert [s.key for s in p.skills] == ["v", "x"]
+    assert p.skills[0].type == "aoe" and p.skills[0].min_mobs == 3
+    assert p.skills[1].min_mobs == 1          # 預設值
+    assert p.active_skills() is p.skills
+
+
+def test_profile_without_skills_falls_back_to_attack(tmp_path):
+    path = _write(tmp_path / "p.yaml",
+                  "patrol: { waypoints: [10] }\nattack: { key: c }\n")
+    p = load_profile(path)
+    assert p.skills == []
+    assert [s.key for s in p.active_skills()] == ["c"]
+
+
+def test_profile_skill_requires_key(tmp_path):
+    path = _write(tmp_path / "p.yaml",
+                  "patrol: { waypoints: [10] }\nskills: [{ cooldown: 5, key: '' }]\n")
+    with pytest.raises(ConfigError):
+        load_profile(path)
+
+
+def test_profile_skill_bad_type(tmp_path):
+    path = _write(tmp_path / "p.yaml",
+                  "patrol: { waypoints: [10] }\nskills: [{ key: v, type: beam }]\n")
+    with pytest.raises(ConfigError):
+        load_profile(path)
+
+
 def test_profile_waypoints_auto(tmp_path):
     path = _write(tmp_path / "p.yaml", "patrol: { waypoints: auto }\n")
     p = load_profile(path)

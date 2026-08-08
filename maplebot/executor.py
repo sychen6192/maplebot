@@ -81,7 +81,7 @@ class Executor:
             for _ in range(max(action.repeat, 1)):
                 self.kb.tap(action.key, self._dur(action.cast_seconds))
                 time.sleep(self._dur(0.1))
-            self.rt.last_attack = now
+            self.rt.note_skill(action.index, now)
             self.stats.attacks += 1
             return
 
