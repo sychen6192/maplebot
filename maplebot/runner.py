@@ -3,7 +3,8 @@
 職責只剩調度與安全：實際辨識在 Perceiver、按鍵在 Executor。
 """
 import time
-from typing import Optional
+from dataclasses import dataclass
+from typing import Optional, Tuple
 
 import numpy as np
 
@@ -20,6 +21,23 @@ from .vision.locate import BR_NAME, TL_NAME, find_minimap, load_ui_template
 from .vision.mobs import MobDetector
 
 IDLE_WARN_SECONDS = 20.0   # 連續閒置這麼久就把 Wait 的理由升級成警告
+
+
+@dataclass
+class Status:
+    """每個 tick 更新的即時狀態，給 UI 讀（純量欄位，跨執行緒讀取夠安全）。"""
+    running: bool = False
+    paused: bool = False
+    ticks: int = 0
+    hp: Optional[float] = None
+    mp: Optional[float] = None
+    exp: Optional[float] = None
+    player: Optional[Tuple[int, int]] = None
+    mobs: int = 0
+    others: int = 0
+    followers: int = 0
+    action: str = "-"
+    reason: str = ""
 
 
 class Runner:
@@ -39,6 +57,7 @@ class Runner:
         self.alerts = Alerts(cfg.safety.sound_alerts)
         self.rt = fsm.Runtime()
         self.stats = Stats()
+        self.status = Status()
         self.exp = ExpTracker(stall_seconds=cfg.safety.exp_stall_minutes * 60)
         self.perceiver = Perceiver(cfg, detector)
         self.executor = Executor(keyboard, self.rt, self.stats, logger, dry_run)
@@ -194,6 +213,16 @@ class Runner:
             self.cfg.safety.attack_stall_seconds,
             self.cfg.safety.attack_break_seconds, self.rt.attack_breaks)
 
+    def _publish(self, state, action) -> None:
+        st = self.status
+        st.ticks = self.stats.ticks
+        st.hp, st.mp, st.exp = state.hp, state.mp, state.exp
+        st.player, st.mobs, st.others = state.player, len(state.mobs), len(state.others)
+        st.followers = len(self.perceiver.last_followers)
+        st.action = type(action).__name__
+        st.reason = getattr(action, "reason", "")
+        st.paused = self.safety.paused
+
     def _check_input_delivered(self) -> None:
         """SendInput 被擋掉時，log 會照常顯示「已送出按鍵」但遊戲毫無反應。
         只吵一次就好，但一定要吵——這是最常見也最難自己看出來的失敗。"""
@@ -247,10 +276,14 @@ class Runner:
         self.log.info("熱鍵：%s 暫停/繼續，%s 停止",
                       self.cfg.safety.pause_key, self.cfg.safety.stop_key)
         self.advisor.start()
+        self.status.running = True
         try:
             while not self.safety.stop:
                 loop_start = time.monotonic()
                 self.safety.poll()
+                # 暫停時整個 tick 都會跳過，狀態也要在這裡更新——不然 UI 上的
+                # 燈號會一直停在「執行中」，看起來像按了沒反應
+                self.status.paused = self.safety.paused
                 if self.safety.paused:
                     self.executor.stop_movement()
                     self.kb.release_all()
@@ -303,6 +336,7 @@ class Runner:
                 self._check_idle(action, now)
                 self._notice_followers()
                 self._notice_attack_break()
+                self._publish(state, action)
 
                 if isinstance(action, fsm.Panic):
                     self._panic(frame, action.reason, action.return_home)
@@ -323,6 +357,7 @@ class Runner:
                 if elapsed < tick_interval:
                     time.sleep(tick_interval - elapsed)
         finally:
+            self.status.running = False
             self.advisor.stop()
             self.executor.stop_movement()
             self.kb.release_all()

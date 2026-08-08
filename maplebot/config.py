@@ -296,7 +296,10 @@ def load_config(path: str, local_path: Optional[str] = None) -> AppCfg:
         cfg.calibrated_for = (int(size[0]), int(size[1]))
     cfg.fps = float(data.get("loop", {}).get("fps", cfg.fps))
 
-    for name, raw in (data.get("regions") or {}).items():
+    regions = data.get("regions") or {}
+    if not isinstance(regions, dict):
+        raise ConfigError(f"regions 要是 mapping（區域名: [x, y, w, h]），拿到: {regions!r}")
+    for name, raw in regions.items():
         if name == "minimap" and raw == "auto":
             cfg.minimap_auto = True
             continue

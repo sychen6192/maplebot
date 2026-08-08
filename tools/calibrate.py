@@ -12,6 +12,7 @@ import os
 import sys
 
 import cv2
+import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -31,6 +32,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="config/default.yaml")
     ap.add_argument("--source", default="", help="用靜態截圖代替遊戲視窗")
+    ap.add_argument("--write", nargs="?", const="auto", default="",
+                    help="直接寫進 config/local.yaml（不用手動複製貼上）")
     args = ap.parse_args()
 
     if args.source:
@@ -52,14 +55,21 @@ def main() -> int:
         else:
             print(f"  {name}: 跳過")
 
-    print("\n=== 把下面貼進 config/local.yaml（建議）或 default.yaml ===\n")
-    print("window:")
     # 記下校正當下的視窗大小：之後視窗尺寸變了，主程式會直接告訴你要重校正，
     # 而不是把 HP 讀成 0% 然後判定瀕死停機
-    print(f"  calibrated_for: [{cap.size[0]}, {cap.size[1]}]")
-    print("regions:")
-    for name, rect in results.items():
-        print(f"  {name}: {rect}")
+    patch = {"window": {"calibrated_for": [cap.size[0], cap.size[1]]},
+             "regions": results}
+    if args.write:
+        from maplebot.config import resolve_local_path
+        from maplebot.gui.settings import merge_into
+        path = resolve_local_path(args.config) if args.write == "auto" else args.write
+        merge_into(path, patch)
+        print(f"\n已寫入 {path}（原有的其他設定都保留）")
+        return 0
+
+    print("\n=== 把下面貼進 config/local.yaml（建議）或 default.yaml ===\n")
+    print(yaml.safe_dump(patch, allow_unicode=True, sort_keys=False).rstrip())
+    print("\n（下次可以加 --write 直接寫檔，不用複製貼上）")
     return 0
 
 
