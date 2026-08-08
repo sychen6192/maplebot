@@ -58,6 +58,7 @@ def main() -> int:
         return 2
 
     cfg = load_config(args.config)
+    print(f"設定檔: {' + '.join(cfg.sources)}")
     print("=== 環境檢查 ===")
     print(f"Python 以系統管理員執行: {'是' if _is_admin() else '否'}")
 

@@ -56,6 +56,7 @@ def main() -> int:
     args = ap.parse_args()
 
     cfg = load_config(args.config)
+    print(f"設定檔: {' + '.join(cfg.sources)}")
     endpoint = args.endpoint or cfg.vision.remote_endpoint
     if not endpoint:
         print("沒有指定端點：用 --endpoint，或在 config 設 vision.remote_endpoint")
