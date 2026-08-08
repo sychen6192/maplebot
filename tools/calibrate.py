@@ -53,6 +53,10 @@ def main() -> int:
             print(f"  {name}: 跳過")
 
     print("\n=== 把下面貼進 config/local.yaml（建議）或 default.yaml ===\n")
+    print("window:")
+    # 記下校正當下的視窗大小：之後視窗尺寸變了，主程式會直接告訴你要重校正，
+    # 而不是把 HP 讀成 0% 然後判定瀕死停機
+    print(f"  calibrated_for: [{cap.size[0]}, {cap.size[1]}]")
     print("regions:")
     for name, rect in results.items():
         print(f"  {name}: {rect}")

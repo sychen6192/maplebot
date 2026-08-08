@@ -29,8 +29,11 @@ class Perceiver:
         self._mobs_cache: list = []
         self._mobs_ts: Optional[float] = None
         self._followers = FollowerFilter(
-            drift_px=cfg.vision.follower_drift_px,
-            hits_needed=cfg.vision.follower_hits) if cfg.vision.filter_followers else None
+            min_shift_px=cfg.vision.follower_min_shift_px,
+            hits_needed=cfg.vision.follower_hits,
+            tol_px=cfg.vision.follower_tol_px,
+            max_followers=cfg.vision.follower_max,
+        ) if cfg.vision.filter_followers else None
         self._prev_player: Optional[tuple] = None
         self.last_followers: list = []      # 給 debug_view 畫出來用
 
@@ -75,8 +78,9 @@ class Perceiver:
                 if ox or oy:      # 換算回 playfield 座標
                     mobs = [replace(m, cx=m.cx + ox, cy=m.cy + oy) for m in mobs]
                 if self._followers is not None:
+                    # 傳整個 playfield（不是搜尋框）給它量鏡頭位移：背景紋理越多越準
                     mobs, self.last_followers = self._followers.filter(
-                        mobs, self._player_moved(st.player))
+                        mobs, pf, self._player_moved(st.player))
                 self._mobs_cache = mobs
                 self._mobs_ts = now
             st.mobs = self._mobs_cache

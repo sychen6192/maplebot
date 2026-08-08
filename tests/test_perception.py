@@ -159,11 +159,20 @@ def test_region_out_of_bounds_gives_none(cfg, frame, tmp_path):
     assert not st.vision_ok
 
 
-def _move_player(frame, dx):
-    """把小地圖上的玩家黃點往右挪 dx px（模擬角色走路）。"""
+# --- 跟隨物過濾（寵物）整合 ---
+# 判別靠的是鏡頭捲動，所以測試畫面的 playfield 必須真的跟著角色捲動。
+
+_BG = cv2.GaussianBlur(
+    np.random.default_rng(11).integers(0, 255, (200, 300, 3), dtype=np.uint8), (5, 5), 0)
+PAN_PER_MINIMAP_PX = 40        # 小地圖走一格 = 畫面捲 40px
+
+
+def _walking_frame(frame, steps):
+    """角色往右走 steps 格：小地圖黃點右移，playfield 背景左移。"""
     f = frame.copy()
-    f[28:31, 38:41] = (150, 190, 205)              # 擦掉原本的點
-    f[28:31, 38 + dx:41 + dx] = (0, 255, 255)
+    f[28:31, 38:41] = (150, 190, 205)                    # 擦掉原本的黃點
+    f[28:31, 38 + steps:41 + steps] = (0, 255, 255)
+    f[80:280, 0:300] = np.roll(_BG, -steps * PAN_PER_MINIMAP_PX, axis=1)
     return f
 
 
@@ -176,7 +185,7 @@ class _FixedDetector:
 
 
 class _SlidingDetector:
-    """角色往右走時，站著不動的怪會在畫面上往左滑。"""
+    """角色往右走時，站在原地的怪會在畫面上往左滑。"""
 
     def __init__(self):
         self.step = 0
@@ -184,40 +193,40 @@ class _SlidingDetector:
     def detect(self, playfield):
         from maplebot.vision.mobs import Mob
         self.step += 1
-        return [Mob(cx=250 - self.step * 45, cy=100, w=20, h=20, score=1.0, name="m")]
+        # 跟背景一樣繞回來（測試用的背景是循環捲動的）
+        return [Mob(cx=(280 - self.step * PAN_PER_MINIMAP_PX) % 300, cy=100,
+                    w=20, h=20, score=1.0, name="m")]
+
+
+def test_follower_filter_is_off_by_default(cfg):
+    """判別需要鏡頭捲動，窄地圖鏡頭不捲——所以預設不開，避免把怪當寵物。"""
+    assert cfg.vision.filter_followers is False
 
 
 def test_pet_following_the_player_is_filtered_out(cfg, frame):
-    """角色走了 4 步，牠在畫面上完全沒動 -> 判定成寵物，不列入怪物清單。"""
-    cfg.vision.follower_hits = 3
+    cfg.vision.filter_followers = True
+    cfg.vision.player_move_px = 1
     p = Perceiver(cfg, _FixedDetector())
-    for i in range(5):
-        st = p.perceive(_move_player(frame, i * 3), now=float(i))
+    for i in range(14):
+        st = p.perceive(_walking_frame(frame, i), now=float(i))
     assert st.mobs == []
     assert len(p.last_followers) == 1
 
 
 def test_mob_that_slides_past_is_still_attacked(cfg, frame):
-    cfg.vision.follower_hits = 3
+    cfg.vision.filter_followers = True
+    cfg.vision.player_move_px = 1
     p = Perceiver(cfg, _SlidingDetector())
-    for i in range(5):
-        st = p.perceive(_move_player(frame, i * 3), now=float(i))
+    for i in range(14):
+        st = p.perceive(_walking_frame(frame, i), now=float(i))
     assert len(st.mobs) == 1
     assert not p.last_followers
 
 
 def test_standing_still_never_filters_anything(cfg, frame):
-    """角色沒移動就無從判別，這時不能亂排除。"""
-    cfg.vision.follower_hits = 3
+    """角色沒移動、鏡頭沒捲，就無從判別——這時不能亂排除。"""
+    cfg.vision.filter_followers = True
     p = Perceiver(cfg, _FixedDetector())
     for i in range(20):
         st = p.perceive(frame, now=float(i))
-    assert len(st.mobs) == 1
-
-
-def test_follower_filter_can_be_turned_off(cfg, frame):
-    cfg.vision.filter_followers = False
-    p = Perceiver(cfg, _FixedDetector())
-    for i in range(5):
-        st = p.perceive(_move_player(frame, i * 3), now=float(i))
     assert len(st.mobs) == 1

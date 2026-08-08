@@ -9,6 +9,7 @@
 所以 FSM 的「打很久卻沒移動就強制去巡邏」是解開它的那一手。
 這裡把感知→決策→移動的迴圈整個跑一遍，確認真的會解開。
 """
+import cv2
 import numpy as np
 import pytest
 
@@ -30,12 +31,18 @@ class _PetDetector:
         return [Mob(cx=190, cy=100, w=24, h=24, score=1.0, name="m")]
 
 
+_BG = cv2.GaussianBlur(
+    np.random.default_rng(5).integers(0, 255, (200, 300, 3), dtype=np.uint8), (5, 5), 0)
+PAN = 40           # 小地圖走一格 = 畫面捲 40px（跟隨物過濾要靠鏡頭捲動才判得出來）
+
+
 def _frame(player_x: int) -> np.ndarray:
     img = np.zeros((300, 300, 3), dtype=np.uint8)
     img[10:50, 10:130] = (150, 190, 205)                     # 小地圖底
     x = 10 + int(np.clip(player_x, 2, 117))
     img[28:31, x:x + 3] = (0, 255, 255)                      # 玩家黃點
     img[60:68, 10:60] = (0, 0, 230)                          # HP 滿
+    img[80:280, 0:300] = np.roll(_BG, -player_x * PAN, axis=1)   # 鏡頭跟著角色捲
     return img
 
 
@@ -43,6 +50,8 @@ def _frame(player_x: int) -> np.ndarray:
 def cfg():
     c = AppCfg()
     c.regions = {"minimap": MINIMAP, "hp_bar": (10, 60, 50, 8), "playfield": PLAYFIELD}
+    c.vision.filter_followers = True      # 預設關閉，這裡就是要測它
+    c.vision.player_move_px = 1
     return c
 
 
