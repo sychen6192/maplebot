@@ -28,8 +28,16 @@ patrol:
   # probe_margin_px: 6      # 量到的邊界往內縮多少當巡邏點
   # probe_min_span_px: 12   # 量到的範圍小於此值 -> 判定校正失敗並停機
 
+# 打完怪自動撿掉落物（留空 key = 不撿）
+loot:
+  key: z                    # 撿取鍵（楓谷預設 Z）
+  every: 2.0                # 兩次撿取的最短間隔
+  taps: 4                   # 一次按幾下（掉落物會散成一排）
+  after_combat: 6.0         # 只在最後一次攻擊後這麼多秒內撿（0=隨時撿）
+
 attack:
   key: x                    # 攻擊/技能鍵
+  min_mp: 0.0               # MP 低於此比例就不放技能，改成繼續巡邏等回魔（0=不檢查）
   type: directional         # directional = 先轉向再打；aoe = 原地放（祭司/主教的技能）
   range_px: 320             # 怪物離畫面中心（≈角色）多少 px 內才攻擊
   vertical_range_px: 90     # 垂直容許範圍（避免打不到樓上樓下的怪）
@@ -41,6 +49,7 @@ buffs:
   - key: "8"                # buff 鍵
     every: 120              # 每幾秒補一次
     cast_seconds: 1.5
+    min_mp: 0.0             # MP 不夠時延後補，等回魔（0=不檢查）
 
 potions:
   hp: { key: pageup,   below_ratio: 0.50, cooldown: 1.0 }

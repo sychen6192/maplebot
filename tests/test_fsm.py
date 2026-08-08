@@ -165,6 +165,92 @@ def test_moving_player_never_escapes(cfg, profile):
         assert isinstance(action, fsm.Move)
 
 
+# ---- MP 門檻與自動撿物（參考「楓之谷達人」的功能表）----
+
+
+def test_attack_skipped_when_mp_too_low(cfg, profile):
+    """MP 不夠時技能放不出來，站著空揮不如繼續巡邏。
+
+    mp=0.35 高於補魔線 0.3（所以不會先去喝水），但低於技能門檻 0.5。
+    """
+    profile.attack.min_mp = 0.5
+    st = _state(mp=0.35, mobs=[_mob(420)])
+    action = fsm.decide(st, cfg, profile, _rt(), NOW, CENTER)
+    assert isinstance(action, fsm.Move)
+
+
+def test_low_mp_drinks_before_gating_attack(cfg, profile):
+    """MP 低到補魔線以下時，喝水優先於「跳過攻擊」。"""
+    profile.attack.min_mp = 0.5
+    action = fsm.decide(_state(mp=0.1, mobs=[_mob(420)]), cfg, profile,
+                        _rt(), NOW, CENTER)
+    assert isinstance(action, fsm.DrinkPotion) and action.kind == "mp"
+
+
+def test_attack_proceeds_when_mp_sufficient(cfg, profile):
+    profile.attack.min_mp = 0.2
+    st = _state(mp=0.5, mobs=[_mob(420)])
+    assert isinstance(fsm.decide(st, cfg, profile, _rt(), NOW, CENTER), fsm.Attack)
+
+
+def test_mp_gate_ignored_when_mp_unreadable(cfg, profile):
+    """MP 讀不到時照常施放——辨識失敗不該讓整隻 bot 停擺。"""
+    profile.attack.min_mp = 0.2
+    st = _state(mp=None, mobs=[_mob(420)])
+    assert isinstance(fsm.decide(st, cfg, profile, _rt(), NOW, CENTER), fsm.Attack)
+
+
+def test_buff_deferred_when_mp_too_low(cfg, profile):
+    profile.buffs[0].min_mp = 0.5
+    action = fsm.decide(_state(mp=0.1), cfg, profile, fsm.Runtime(), NOW, CENTER)
+    assert not isinstance(action, fsm.CastBuff)
+
+
+def test_loot_after_combat_when_no_mobs_left(cfg, profile):
+    profile.loot.key = "z"
+    rt = _rt()
+    rt.last_attack = NOW - 1.0          # 剛打完
+    action = fsm.decide(_state(), cfg, profile, rt, NOW, CENTER)
+    assert isinstance(action, fsm.Loot)
+    assert action.key == "z"
+
+
+def test_loot_waits_until_mobs_cleared(cfg, profile):
+    """範圍內還有怪就先打，撿東西時被圍毆不划算。"""
+    profile.loot.key = "z"
+    rt = _rt()
+    rt.last_attack = NOW - 1.0
+    action = fsm.decide(_state(mobs=[_mob(420)]), cfg, profile, rt, NOW, CENTER)
+    assert isinstance(action, fsm.Attack)
+
+
+def test_no_loot_long_after_combat(cfg, profile):
+    """只是路過空地不要一直按撿取鍵。"""
+    profile.loot.key = "z"
+    profile.loot.after_combat = 6.0
+    rt = _rt()
+    rt.last_attack = NOW - 60.0
+    assert isinstance(fsm.decide(_state(), cfg, profile, rt, NOW, CENTER), fsm.Move)
+
+
+def test_loot_respects_interval(cfg, profile):
+    profile.loot.key = "z"
+    rt = _rt()
+    rt.last_attack = NOW - 1.0
+    first = fsm.decide(_state(), cfg, profile, rt, NOW, CENTER)
+    assert isinstance(first, fsm.Loot)
+    second = fsm.decide(_state(), cfg, profile, rt, NOW + 0.5, CENTER)
+    assert not isinstance(second, fsm.Loot)      # 間隔沒到
+    third = fsm.decide(_state(), cfg, profile, rt, NOW + 3.0, CENTER)
+    assert isinstance(third, fsm.Loot)
+
+
+def test_loot_disabled_without_key(cfg, profile):
+    rt = _rt()
+    rt.last_attack = NOW - 1.0
+    assert isinstance(fsm.decide(_state(), cfg, profile, rt, NOW, CENTER), fsm.Move)
+
+
 # ---- 自動巡邏（patrol.waypoints: auto）----
 
 

@@ -147,6 +147,7 @@ class AttackCfg:
     cast_seconds: float = 0.6
     repeat: int = 1
     cooldown: float = 0.2
+    min_mp: float = 0.0               # MP 低於此比例就不放技能（0=不檢查）
 
 
 @dataclass
@@ -154,6 +155,16 @@ class BuffCfg:
     key: str = ""
     every: float = 120.0
     cast_seconds: float = 1.2
+    min_mp: float = 0.0               # MP 不夠時延後補 buff，等回魔
+
+
+@dataclass
+class LootCfg:
+    """打完怪自動撿物。"""
+    key: str = ""                     # 撿取鍵（楓谷預設 Z）
+    every: float = 2.0                # 兩次撿取的最短間隔
+    taps: int = 4                     # 一次按幾下（掉落物散落成一排）
+    after_combat: float = 6.0         # 只在最後一次攻擊後這麼多秒內撿（0=隨時）
 
 
 @dataclass
@@ -171,6 +182,7 @@ class Profile:
     attack: AttackCfg = field(default_factory=AttackCfg)
     buffs: List[BuffCfg] = field(default_factory=list)
     potions: Dict[str, PotionCfg] = field(default_factory=dict)
+    loot: LootCfg = field(default_factory=LootCfg)
     panic_return_key: str = ""        # 設定後，Panic 時會先按回城卷再停止
 
 
@@ -332,13 +344,21 @@ def load_profile(path: str) -> Profile:
     p.attack.cast_seconds = float(at.get("cast_seconds", p.attack.cast_seconds))
     p.attack.repeat = int(at.get("repeat", p.attack.repeat))
     p.attack.cooldown = float(at.get("cooldown", p.attack.cooldown))
+    p.attack.min_mp = float(at.get("min_mp", p.attack.min_mp))
 
     for b in data.get("buffs", []) or []:
         p.buffs.append(BuffCfg(
             key=str(b.get("key", "")).lower(),
             every=float(b.get("every", 120.0)),
             cast_seconds=float(b.get("cast_seconds", 1.2)),
+            min_mp=float(b.get("min_mp", 0.0)),
         ))
+
+    lt = data.get("loot", {}) or {}
+    p.loot.key = str(lt.get("key", p.loot.key)).lower()
+    p.loot.every = float(lt.get("every", p.loot.every))
+    p.loot.taps = int(lt.get("taps", p.loot.taps))
+    p.loot.after_combat = float(lt.get("after_combat", p.loot.after_combat))
 
     for kind, pot in (data.get("potions") or {}).items():
         p.potions[kind] = PotionCfg(
