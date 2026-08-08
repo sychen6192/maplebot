@@ -50,8 +50,9 @@ class VisionCfg:
     bar_colors: Dict[str, str] = field(default_factory=lambda: {"hp": "red", "mp": "blue", "exp": "yellow"})
     mob_detector: str = "outline"   # outline | template | yolo | remote
     outline_black_level: int = 8       # 判定為描邊的最大亮度（JPEG 測試時調高到 12~20）
-    outline_min_area: int = 800        # 太小的黑塊當雜訊
-    outline_max_area: int = 40000      # 太大的當背景/UI
+    outline_min_area: int = 300        # 太小的黑塊當雜訊（790px 寬為基準）
+    outline_max_area: int = 20000      # 太大的當背景/UI（790px 寬為基準）
+    outline_auto_scale: bool = True    # 依實際畫面寬度等比例縮放上面的門檻
     outline_close_kernel: int = 20     # 把斷續描邊連成整塊
     outline_player_box: Tuple[int, int] = (100, 140)   # 畫面中央挖掉的自己
     mob_match_threshold: float = 0.72
@@ -76,6 +77,7 @@ class SafetyCfg:
     lost_player_timeout: float = 5.0
     sound_alerts: bool = True         # 危險事件用 winsound 嗶聲提醒
     black_screen_pause: bool = True   # 黑屏（斷線/讀圖）自動暫停
+    exp_stall_minutes: float = 10.0   # 幾分鐘沒賺到經驗就暫停（0=不檢查）
 
 
 @dataclass
@@ -261,6 +263,7 @@ def load_config(path: str, local_path: str = LOCAL_OVERRIDE) -> AppCfg:
     vc.outline_min_area = int(v.get("outline_min_area", vc.outline_min_area))
     vc.outline_max_area = int(v.get("outline_max_area", vc.outline_max_area))
     vc.outline_close_kernel = int(v.get("outline_close_kernel", vc.outline_close_kernel))
+    vc.outline_auto_scale = bool(v.get("outline_auto_scale", vc.outline_auto_scale))
     if "outline_player_box" in v:
         pb = v["outline_player_box"]
         vc.outline_player_box = (int(pb[0]), int(pb[1]))
@@ -287,6 +290,7 @@ def load_config(path: str, local_path: str = LOCAL_OVERRIDE) -> AppCfg:
     sc.lost_player_timeout = float(s.get("lost_player_timeout", sc.lost_player_timeout))
     sc.sound_alerts = bool(s.get("sound_alerts", sc.sound_alerts))
     sc.black_screen_pause = bool(s.get("black_screen_pause", sc.black_screen_pause))
+    sc.exp_stall_minutes = float(s.get("exp_stall_minutes", sc.exp_stall_minutes))
 
     a = data.get("advisor", {})
     ac = cfg.advisor
