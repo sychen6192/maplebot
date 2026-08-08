@@ -219,6 +219,8 @@ python main.py --profile config/profiles/mymap.yaml
 | 忘了關 --dry-run | dry-run 會照常印出所有按鍵動作但**不會真的送出**。啟動時第一行有標示 |
 | `找不到標題含「...」的視窗` | `window.title` 打錯；要用視窗模式 |
 | 畫面像無限鏡像一直放大 | 擷取方式退回 `screen` 且偵錯視窗蓋住遊戲。用 `--snapshot` 就不會 |
+| **每個 tick 都是 Wait、角色不動** | 不是當掉，是某條規則擋著。dry-run 的 tick 行括號裡就是原因；正式跑則會在閒置 20 秒後警告。最常見是小地圖紅點誤判成「有其他玩家」 |
+| 誤判有其他玩家 | 用 `--snapshot` 看紅圈畫在哪。縮小 minimap ROI（別框到紅色 UI）、調低 `vision.color_tolerance`，或先設 `safety.pause_when_players: false` |
 | 玩家綠圈不見/亂跳 | 小地圖框太大含到雜物 → 重框；或調 `vision.color_tolerance` |
 | HP/MP % 不對 | 條的框含到文字/外框 → 重框，只框色條本體 |
 | 自動巡邏報「校正失敗」 | 方向鍵沒送進遊戲（權限問題），或小地圖 ROI 錯了 |
