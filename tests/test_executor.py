@@ -105,6 +105,13 @@ def test_climb_jump_down_jumps_while_holding_down(ex):
     assert executor.stats.climbs == 1
 
 
+def test_loot_taps_pickup_key(ex):
+    executor, backend = ex
+    executor.execute(fsm.Loot(key="z", taps=3), NOW)
+    assert _taps(backend) == [SCANCODES["z"][0]] * 3
+    assert executor.stats.loots == 1
+
+
 def test_wait_sends_nothing(ex):
     executor, backend = ex
     executor.execute(fsm.Wait("test"), NOW)

@@ -74,6 +74,13 @@ class Move:
 
 
 @dataclass
+class Loot:
+    """打完怪撿掉落物。"""
+    key: str
+    taps: int
+
+
+@dataclass
 class RunKeys:
     """抵達巡邏點時要敲的按鍵序列（跳上平台、放置型技能等）。"""
     keys: List[str]
@@ -105,7 +112,7 @@ class Climb:
     jump_key: str = ""
 
 
-Action = Union[Wait, Panic, DrinkPotion, CastBuff, Attack, Move, RunKeys, Escape,
+Action = Union[Wait, Panic, DrinkPotion, CastBuff, Attack, Move, RunKeys, Escape, Loot,
                Probe, Climb]
 
 
@@ -127,6 +134,7 @@ class Runtime:
     last_buff: Dict[int, float] = field(default_factory=dict)
     last_potion: Dict[str, float] = field(default_factory=dict)
     last_attack: float = 0.0
+    last_loot: float = 0.0
     stuck_pos: Optional[Tuple[int, int]] = None
     stuck_since: float = 0.0
     escape_direction: int = 1
@@ -154,6 +162,12 @@ class Runtime:
         self.stuck_pos = None
         self.pause_climb()
         self.climb_retries = 0
+
+
+def _mp_below(state: GameState, threshold: float) -> bool:
+    """MP 低於門檻。讀不到 MP 時回 False——寧可照常施放，也不要因為辨識
+    失敗就整個停擺。"""
+    return threshold > 0 and state.mp is not None and state.mp < threshold
 
 
 def _potion_due(rt: Runtime, kind: str, cooldown: float, now: float) -> bool:
@@ -299,8 +313,11 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
     # 掛在繩子上時方向鍵和技能鍵都會讓角色掉下來，所以垂直移動途中不 buff 不打怪
     if not rt.climbing:
         for i, buff in enumerate(profile.buffs):
-            if buff.key and now - rt.last_buff.get(i, 0.0) >= buff.every:
-                return CastBuff(i, buff.key, buff.cast_seconds)
+            if not buff.key or now - rt.last_buff.get(i, 0.0) < buff.every:
+                continue
+            if _mp_below(state, buff.min_mp):
+                continue      # MP 不夠，等回魔再補，別空按
+            return CastBuff(i, buff.key, buff.cast_seconds)
 
         atk = profile.attack
         in_range = [
@@ -308,11 +325,21 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
             if abs(m.cx - center_x) <= atk.range_px
             and abs(m.cy - center_y) <= atk.vertical_range_px
         ]
-        if in_range and now - rt.last_attack >= atk.cooldown:
+        # MP 不夠時技能放不出來，與其站著空揮不如繼續巡邏（讓 MP 藥/回魔跟上）
+        if in_range and not _mp_below(state, atk.min_mp) \
+                and now - rt.last_attack >= atk.cooldown:
             nearest = min(in_range, key=lambda m: abs(m.cx - center_x))
             direction = 1 if nearest.cx >= center_x else -1
             return Attack(direction, atk.key, atk.cast_seconds, atk.repeat,
                           aoe=(atk.type == "aoe"))
+
+        # 清完場才撿：範圍內還有怪就先打，撿東西時被圍毆不划算
+        loot = profile.loot
+        if loot.key and not in_range and now - rt.last_loot >= loot.every \
+                and (loot.after_combat <= 0
+                     or now - rt.last_attack <= loot.after_combat):
+            rt.last_loot = now
+            return Loot(loot.key, max(loot.taps, 1))
 
     pat = profile.patrol
     waypoints = pat.waypoints

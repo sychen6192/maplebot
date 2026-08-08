@@ -6,6 +6,7 @@
 |---|---|---|
 | [tanjeffreyz/auto-maple](https://github.com/tanjeffreyz/auto-maple) | 684★ | GMS 全功能 bot：CV + TensorFlow 符文破解 + GUI + routine 系統，此類專案中星數最高 |
 | [KenYu910645/MapleStoryAutoLevelUp](https://github.com/KenYu910645/MapleStoryAutoLevelUp) | 356★ | 楓之谷 Artale（經典版）專用：純視覺、狀態機、路線錄製 |
+| [楓之谷達人](https://gamebox365wg.pixnet.net/blog/post/118048) | 商業閉源 | 台灣早期的自動掛機程式。無法讀原始碼，只能從公開功能表比對缺口 |
 
 兩者都是「螢幕視覺 + 模擬按鍵」路線，驗證了本專案的基本架構選擇。
 以下是逐項比對後**採用**與**不採用**的清單。
@@ -27,6 +28,8 @@
 | 按鍵時間 ±20% 抖動 | auto-maple `vkeys.press` 的 `0.8 + 0.4*random()` | `Executor._dur()` 全動作套用 |
 | Panic 先按回城卷再停止 | MapleStoryAutoLevelUp `return_home_if_no_potion` | `profile.panic_return_key` |
 | default + local 兩層設定 | MapleStoryAutoLevelUp `config_default` + `config_custom` | `config/local.yaml` 深度合併覆寫 |
+| **自動撿取掉落物** | 楓之谷達人「自動撿拾物品」 | `profile.loot` → `Loot` 動作。**清完場才撿**（範圍內還有怪就先打），且只在最後一次攻擊後 `after_combat` 秒內撿，避免路過空地一直按 |
+| **依 MP 決定要不要施放** | 楓之谷達人「根據 MP 狀態施放技能」 | `attack.min_mp` / `buffs[].min_mp`。MP 不夠就繼續巡邏等回魔，不站著空揮；MP 讀不到時照常施放（辨識失敗不該讓 bot 停擺） |
 
 ## 評估後不採用
 
@@ -38,6 +41,9 @@
 | 路線錄製成彩色路徑圖 | MapleStoryAutoLevelUp `maps/` | 表達力強但工具鏈重；YAML waypoint 對單平台場景足夠、可讀可 diff |
 | 自動登入 / 換頻道 | 兩者皆有 | 涉及帳號憑證自動化，超出打怪研究範圍 |
 | 玩家全域定位（畫面對整張大地圖配準） | MapleStoryAutoLevelUp `minimaps/` | 我們用小地圖座標已滿足巡邏需求，配準的成本收益不划算 |
+| **防測謊機、防 GM** | 楓之谷達人 | 這是反偵測，不是自動化。本專案的原則一直是「遇到看不懂的畫面就暫停 + 警報 + 截圖，交還給人」——測謊機正是那種畫面。實作它等於把專案從「自動化研究」變成「規避偵測工具」，法律風險也完全不同（見 README 用途聲明） |
+| **定時換頻** | 楓之谷達人 | 需要操作遊戲選單，且動機通常是躲人。我們已有更保守的版本：`pause_when_players` 偵測到其他玩家就停手，人走了自動繼續 |
+| 記憶體外掛（無敵／瞬移／無延遲） | 台灣商業外掛常見功能 | 需要讀寫遊戲行程記憶體。本專案架構明確排除（README：不讀寫記憶體、不碰封包），這也是 MDY v. Blizzard 那類判決的核心爭點 |
 
 ## 比對後確認我們已領先的部分
 
