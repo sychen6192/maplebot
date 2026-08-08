@@ -97,12 +97,12 @@ class Runner:
                          self.cfg.safety.lost_player_timeout, self.cfg.safety.pause_key)
         self.safety.paused = True
 
-    def _panic(self, frame: np.ndarray, reason: str) -> None:
+    def _panic(self, frame: np.ndarray, reason: str, return_home: bool = True) -> None:
         save_anomaly(frame, reason, self.log)
         self.alerts.ping("panic")
         self.log.error("PANIC: %s", reason)
         self.kb.release_all()
-        if self.profile.panic_return_key and not self.dry_run:
+        if self.profile.panic_return_key and return_home and not self.dry_run:
             self.log.warning("按下回城卷（%s 鍵）後停止", self.profile.panic_return_key)
             self.kb.tap(self.profile.panic_return_key, 0.1)
             time.sleep(2.0)
@@ -165,7 +165,7 @@ class Runner:
                                   type(action).__name__)
 
                 if isinstance(action, fsm.Panic):
-                    self._panic(frame, action.reason)
+                    self._panic(frame, action.reason, action.return_home)
                     break
                 self.executor.execute(action, now)
 

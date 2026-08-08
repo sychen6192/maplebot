@@ -7,10 +7,14 @@ templates_dir: "data/templates/mobs"   # 用 tools/grab_template.py 蒐集怪物
 panic_return_key: ""
 
 patrol:
-  # 巡邏點三種寫法可混用：
+  # 巡邏點四種寫法可混用：
   #   40            -> 小地圖絕對 x（px）
   #   0.75          -> 佔小地圖寬度比例（小地圖大小改變也不用重寫）
-  #   {x: 95, keys: [alt]} -> 抵達時依序敲鍵（跳上平台、放置技能等）
+  #   {x: 95, keys: [alt]} -> 抵達時依序敲鍵（放置技能等）
+  #   {x: 68, y: 20}       -> 多層地圖：x 對準後爬繩到 y（見 multilevel.yaml）
+  #
+  # 懶人寫法：整行換成 `waypoints: auto`，開場會左右各走到撞牆量出可走範圍，
+  # 自動生成兩個巡邏點——單層練功地圖不用先量座標。
   waypoints: [40, 95]
   tolerance: 4              # 距離巡邏點多少 px 內算抵達
   step_seconds_per_px: 0.02 # 每差 1px 走多久（依角色移速微調）
@@ -18,6 +22,11 @@ patrol:
   stuck_seconds: 4.0        # 移動中位置卡住超過幾秒就跳一下脫困
   stuck_px: 3
   jump_key: alt             # 脫困用跳躍鍵
+  # waypoints: auto 的探邊參數（用預設就好，走不出來再調）
+  # probe_seconds: 0.35     # 每次往同方向試探走多久
+  # probe_stalls: 3         # 連續幾次位置沒變判定撞牆
+  # probe_margin_px: 6      # 量到的邊界往內縮多少當巡邏點
+  # probe_min_span_px: 12   # 量到的範圍小於此值 -> 判定校正失敗並停機
 
 attack:
   key: x                    # 攻擊/技能鍵

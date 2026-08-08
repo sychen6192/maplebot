@@ -80,6 +80,31 @@ def test_escape_jumps_while_holding_direction(ex):
     assert executor.stats.escapes == 1
 
 
+def test_probe_taps_direction(ex):
+    executor, backend = ex
+    executor.execute(fsm.Probe(direction=-1, seconds=0.3), NOW)
+    assert _taps(backend) == [SCANCODES["left"][0]]
+
+
+def test_climb_up_holds_up_key(ex):
+    executor, backend = ex
+    executor.execute(fsm.Climb(direction=-1, key="up", seconds=0.4), NOW)
+    assert _taps(backend) == [SCANCODES["up"][0]]
+    assert executor.stats.climbs == 1
+
+
+def test_climb_jump_down_jumps_while_holding_down(ex):
+    executor, backend = ex
+    executor.execute(fsm.Climb(direction=1, key="down", seconds=0.4, jump_key="alt"), NOW)
+    assert backend.history == [
+        ("down", SCANCODES["down"][0]),
+        ("down", SCANCODES["alt"][0]),
+        ("up", SCANCODES["alt"][0]),
+        ("up", SCANCODES["down"][0]),
+    ]
+    assert executor.stats.climbs == 1
+
+
 def test_wait_sends_nothing(ex):
     executor, backend = ex
     executor.execute(fsm.Wait("test"), NOW)

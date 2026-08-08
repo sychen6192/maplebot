@@ -1,0 +1,55 @@
+# 多層地圖 profile 範例：下層左右巡邏 -> 爬繩上樓 -> 上層走位 -> 下跳回下層
+#
+# 前置作業只有一件：用 `python tools/debug_view.py --track` 站到各個位置，
+# 把小地圖 (x, y) 抄下來——**包含繩子的 x**。程式不會自己找繩子在哪。
+#
+# 小地圖的 y 是往下增加的，所以上層樓的 y 比下層小。
+name: "範例：兩層樓 + 繩子"
+
+templates_dir: "data/templates/mobs"
+
+panic_return_key: ""
+
+patrol:
+  waypoints:
+    # --- 下層 ---
+    - { x: 30 }                          # 下層左端
+    - { x: 100 }                         # 下層右端
+    # --- 爬繩上樓：先把 x 對到繩子，再往上爬到指定 y ---
+    - { x: 68, y: 20 }                   # 68 = 繩子的小地圖 x；20 = 上層的 y
+    # --- 上層 ---
+    - { x: 40, y: 20 }                   # 上層走位（y 一樣就只是平走）
+    # --- 回下層：descend 決定往下的方式 ---
+    - { x: 40, y: 45, descend: jump }    # jump = 按住↓再跳（下跳平台）
+                                         # rope = 抓著繩子往下（預設值）
+  tolerance: 4
+  y_tolerance: 3            # 小地圖 y 差多少內算到位
+  jump_key: alt
+
+  # 垂直移動是閉迴路的：每爬一步都回頭看小地圖 y 有沒有真的變。
+  # 沒抓到繩子（x 沒對準、被怪打掉）y 就會停住，這時先脫困微調位置重新對繩，
+  # 連續失敗超過 climb_retries 次就放棄這個巡邏點，繼續走下一個——
+  # 所以繩子座標寫錯只會少走上層，不會整隻卡死在繩子前面。
+  climb_seconds: 0.45       # 每步按住上/下鍵多久
+  climb_stalls: 3           # 連續幾步 y 沒變 -> 判定沒抓到繩子
+  climb_retries: 2          # 重新對位幾次後放棄這個點
+  climb_up_key: up
+  climb_down_key: down
+
+attack:
+  key: x
+  type: directional
+  range_px: 320
+  vertical_range_px: 90     # 別開太大，否則會一直想打樓上樓下打不到的怪
+  cast_seconds: 0.6
+  repeat: 2
+  cooldown: 0.2
+
+buffs:
+  - key: "8"
+    every: 120
+    cast_seconds: 1.5
+
+potions:
+  hp: { key: pageup,   below_ratio: 0.50, cooldown: 1.0 }
+  mp: { key: pagedown, below_ratio: 0.30, cooldown: 1.0 }

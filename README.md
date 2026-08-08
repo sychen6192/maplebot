@@ -13,10 +13,13 @@
   也可切換模板匹配或自訓 YOLO
 - **決策**：純函式優先權狀態機——保命 > 補給 > 禮讓 > buff > 打怪 > 巡邏，
   含卡住偵測自動脫困，單元測試完整涵蓋
+- **走位**：單層地圖巡邏點**可自動量測**（`waypoints: auto` 開場左右撞牆抓範圍）；
+  多層地圖支援爬繩／下跳平台，**每一步都回頭確認小地圖 y 真的變了**，
+  爬不上去會重試再放棄該點而不是卡死
 - **控制**：SendInput scancode（DirectInput 遊戲吃得到），按鍵時間帶 ±20% 抖動
 - **安全**：HP 危險線自動停機（可先回城）、其他玩家出現先暫停、黑屏/找不到角色
   自動暫停 + 截圖存證 + 聲音警報
-- **可測性**：67 個 pytest（合成影像 + 真實截圖真值），整條主迴圈可用一張截圖 dry-run
+- **可測性**：156 個 pytest（合成影像 + 真實截圖真值），整條主迴圈可用一張截圖 dry-run
 - **ML 擴充**：YOLO 訓練管線（蒐集→自動預標註→校對→訓練→部署）與本地 VLM 督導層
 
 設計對照過同類最高星的開源專案（684★ auto-maple、356★ MapleStoryAutoLevelUp），
@@ -45,9 +48,15 @@
 2. **HP 低於危險線 → 直接停機**（`safety.critical_hp_ratio`）
 3. HP/MP 低於門檻 → 喝藥
 4. 小地圖出現其他玩家 → 暫停動作（`safety.pause_when_players`）
-5. Buff 到期 → 補 buff
-6. 攻擊範圍內有怪 → 面向最近的怪施放技能
-7. 都沒有 → 沿小地圖巡邏點走位（閉迴路：走一步→重新定位）
+5. Buff 到期 → 補 buff（垂直移動途中跳過）
+6. 攻擊範圍內有怪 → 面向最近的怪施放技能（垂直移動途中跳過）
+7. `waypoints: auto` 還沒校正 → 左右試探地圖邊界
+8. 巡邏中卡住 → 跳一下脫困
+9. x 到位但樓層不對 → 爬繩上樓／下繩或下跳平台
+10. 都沒有 → 沿小地圖巡邏點走位（閉迴路：走一步→重新定位）
+
+第 5、6 項在垂直移動途中會讓路：掛在繩子上按方向鍵或技能鍵會掉下來。
+補血補魔不讓路——那是保命。
 
 ## 安裝
 
@@ -79,11 +88,11 @@ uv venv && .venv\Scripts\activate && uv pip install -r requirements.txt
 # 2. 校正區域：框選 小地圖 / HP / MP / EXP / 主畫面，把輸出貼回 config/default.yaml
 python tools/calibrate.py
 
-# 3. 蒐集怪物模板：對著要打的怪框 2~3 張（會自動含左右翻轉）
+# 3.（選配）怪物偵測預設就是零設定的 outline，要用模板路線才需要這步
 python tools/grab_template.py --name snail
 
 # 4. 驗證辨識：即時疊框顯示玩家黃點/其他人紅點/血魔比例/怪物框
-#    順便從畫面讀玩家的小地圖 x 座標，填進 profile 的巡邏點
+#    多層地圖要用 --track 抄下各樓層與繩子的小地圖 (x, y)
 python tools/debug_view.py
 
 # 5. 編輯 config/profiles/example.yaml（技能鍵/巡邏點/藥水門檻/buff）
@@ -94,6 +103,45 @@ python main.py --profile config/profiles/example.yaml
 ```
 
 **熱鍵**：`F9` 暫停/繼續、`F12` 緊急停止（可在 config 改）。
+
+### 單層地圖：巡邏點可以不用自己量
+
+profile 裡把 `patrol.waypoints` 整行換成 `auto`，開場會左右各走到撞牆量出可走
+範圍，內縮幾 px 自動生成兩個巡邏點。配上預設的零設定怪物偵測，單層練功地圖
+只要校正一次 ROI（第 2 步）+ 填技能鍵藥水鍵就能掛。
+
+```yaml
+patrol:
+  waypoints: auto
+```
+
+量到的範圍小於 `probe_min_span_px`（預設 12px）會直接停機並說明原因——
+最常見的是方向鍵沒送進遊戲（遊戲用系統管理員跑的話終端機也要），
+這種情況要吵出來，不能默默站在原地打空氣。
+
+### 多層地圖：爬繩與下跳平台
+
+巡邏點加上 `y` 就會處理樓層。完整範例見
+[`config/profiles/multilevel.yaml`](config/profiles/multilevel.yaml)：
+
+```yaml
+patrol:
+  waypoints:
+    - { x: 30 }                        # 下層左端
+    - { x: 100 }                       # 下層右端
+    - { x: 68, y: 20 }                 # x 對到繩子(68) -> 爬到上層(y=20)
+    - { x: 40, y: 20 }                 # 上層走位
+    - { x: 40, y: 45, descend: jump }  # 下跳回下層（descend: rope = 抓繩下降）
+```
+
+**繩子在哪必須你告訴它**——程式不會自己找繩子。用 `tools/debug_view.py --track`
+站到繩子前抄下小地圖 x 即可。
+
+垂直移動是閉迴路的：每爬一步都回頭確認小地圖 y 真的變了。沒抓到繩子或爬一半被
+怪打掉，y 會停住，這時先脫困微調位置重新對繩，連續失敗超過 `climb_retries` 次
+就放棄這個巡邏點繼續走下一個。所以繩子座標寫錯的後果是「少走上層」，
+不是整隻卡死在繩子前面。爬繩途中不會轉向打怪也不會補 buff（會掉下來），
+但補血補魔照舊。
 
 ## 離線開發與測試
 
@@ -119,12 +167,21 @@ EXP 59.89%，測試直接拿這些畫面顯示值當 ground truth 驗證辨識�
 | `window.title` | 遊戲視窗標題子字串 |
 | `regions.*` | 小地圖/HP/MP/EXP/主畫面的 ROI，用 `tools/calibrate.py` 產生 |
 | `vision.color_tolerance` | 小地圖點色容差；誤判/漏判用 `tools/debug_view.py` 邊看邊調 |
-| `vision.mob_detector` | `template`（預設）或 `yolo` |
+| `vision.mob_detector` | `outline`（預設，零設定）/ `template` / `yolo` / `remote` |
 | `safety.*` | 危險線、熱鍵、他人暫停、watchdog 秒數 |
 | `advisor.*` | 選配 VLM 督導層（見下） |
 
-`config/profiles/*.yaml`（一張地圖一份）：巡邏點、攻擊鍵/範圍/施放時間、
-buff 週期、藥水鍵與門檻。
+`config/profiles/*.yaml`（一張地圖一份）：
+
+| 欄位 | 說明 |
+|---|---|
+| `patrol.waypoints` | 巡邏點清單，或 `auto` 讓程式開場自己量（單層地圖） |
+| `patrol.probe_*` | `auto` 的探邊參數（試探步長、撞牆判定、邊界內縮、最小可走範圍） |
+| `patrol.y_tolerance` / `climb_*` | 垂直移動：到位容差、每步時間、爬不動判定與重試次數、上下鍵 |
+| `patrol.tolerance` / `step_*` / `stuck_*` / `jump_key` | 水平走位與卡住脫困 |
+| `attack.*` | 技能鍵、`directional`/`aoe`、攻擊範圍、施放時間、連發數 |
+| `buffs` / `potions` | buff 週期、藥水鍵與門檻 |
+| `panic_return_key` | 進入危險線時先按回城卷再停止（留空 = 直接停止） |
 
 ## 進階：ML 感知層（有 GPU 的路線，例如 RTX 5090）
 
@@ -173,7 +230,8 @@ VLM 判定異常時**只會把 bot 切到暫停並截圖存證**，不會執行 
 ```
 main.py                      # 進入點（--dry-run / --source / --max-ticks）
 config/default.yaml          # 全域設定（視窗、ROI、視覺參數、安全、advisor）
-config/profiles/*.yaml       # 各地圖 profile（巡邏、攻擊、buff、藥水）
+config/profiles/example.yaml    # 單層地圖 profile 範例（含 waypoints: auto 說明）
+config/profiles/multilevel.yaml # 多層地圖 profile 範例（爬繩 + 下跳平台）
 maplebot/
   capture.py                 # mss 視窗擷取 / 靜態圖片來源（離線）
   window.py                  # 找遊戲視窗、client 區座標、DPI aware
@@ -216,3 +274,9 @@ tests/                       # pytest：合成影像 + 真實截圖 ground truth
   或縮小 minimap ROI 到純地圖畫布，用 `tools/debug_view.py` 驗證。
 - **怪物偵測不穩**：多抓幾張不同動作幀的模板、微調 `mob_match_threshold`，
   或直接升級 YOLO 路線。
+- **`waypoints: auto` 一開場就停機說可走範圍太小**：角色根本沒動。先確認方向鍵
+  有送進遊戲（`--dry-run` 看得到決策但不會按鍵，要拿掉才會真的動），
+  以及小地圖 ROI 沒框到地圖畫布以外。
+- **一直不上樓 / log 都是「垂直移動連續失敗」**：waypoint 的繩子 `x` 抄錯了，
+  用 `tools/debug_view.py --track` 站到繩子前重抄。角色移速快、`tolerance` 又大的
+  話也可能停的位置離繩子太遠，把 `tolerance` 調小一點。

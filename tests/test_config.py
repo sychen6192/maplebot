@@ -75,3 +75,51 @@ def test_profile_requires_waypoints(tmp_path):
     path = _write(tmp_path / "p.yaml", "name: x\n")
     with pytest.raises(ConfigError):
         load_profile(path)
+
+
+def test_profile_waypoints_auto(tmp_path):
+    path = _write(tmp_path / "p.yaml", "patrol: { waypoints: auto }\n")
+    p = load_profile(path)
+    assert p.patrol.auto is True
+    assert p.patrol.waypoints == []   # 開場自己量，不用先寫
+
+
+def test_profile_waypoints_bad_string(tmp_path):
+    path = _write(tmp_path / "p.yaml", "patrol: { waypoints: everywhere }\n")
+    with pytest.raises(ConfigError):
+        load_profile(path)
+
+
+def test_profile_waypoint_y_and_descend(tmp_path):
+    path = _write(tmp_path / "p.yaml", """
+patrol:
+  waypoints:
+    - { x: 88, y: 0.35 }
+    - { x: 60, y: 44, descend: JUMP }
+    - 40
+""")
+    wps = load_profile(path).patrol.waypoints
+    assert wps[0].y == 0.35 and wps[0].descend == "rope"
+    assert wps[1].y == 44 and wps[1].descend == "jump"
+    assert wps[2].y is None            # 單層寫法不受影響
+
+
+def test_profile_bad_descend(tmp_path):
+    path = _write(tmp_path / "p.yaml",
+                  "patrol: { waypoints: [{ x: 10, descend: teleport }] }\n")
+    with pytest.raises(ConfigError):
+        load_profile(path)
+
+
+def test_profile_climb_and_probe_knobs(tmp_path):
+    path = _write(tmp_path / "p.yaml", """
+patrol:
+  waypoints: auto
+  probe_margin_px: 10
+  climb_retries: 5
+  climb_up_key: UP
+""")
+    pt = load_profile(path).patrol
+    assert pt.probe_margin_px == 10
+    assert pt.climb_retries == 5
+    assert pt.climb_up_key == "up"
