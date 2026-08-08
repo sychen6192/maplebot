@@ -44,8 +44,9 @@ class NullBackend:
     def __init__(self):
         self.history: List[Tuple[str, int]] = []
 
-    def send(self, scan: int, extended: bool, keyup: bool) -> None:
+    def send(self, scan: int, extended: bool, keyup: bool) -> bool:
         self.history.append(("up" if keyup else "down", scan))
+        return True
 
 
 if IS_WINDOWS:
@@ -73,8 +74,18 @@ if IS_WINDOWS:
     class _Input(ctypes.Structure):
         _fields_ = [("type", ctypes.c_ulong), ("ii", _InputUnion)]
 
+    # use_last_error 才能在 SendInput 失敗時拿到真正的錯誤碼
+    _user32 = ctypes.WinDLL("user32", use_last_error=True)
+
     class WindowsBackend:
-        def send(self, scan: int, extended: bool, keyup: bool) -> None:
+        """SendInput 被擋掉時會回傳 0（而不是拋例外）。
+
+        最常見的原因是遊戲以系統管理員執行、而 Python 沒有：Windows 的
+        UIPI 會擋掉低權限行程送給高權限視窗的輸入，錯誤碼 5（拒絕存取）。
+        不檢查回傳值的話，log 會顯示「已送出按鍵」但遊戲毫無反應。
+        """
+
+        def send(self, scan: int, extended: bool, keyup: bool) -> bool:
             flags = KEYEVENTF_SCANCODE
             if extended:
                 flags |= KEYEVENTF_EXTENDEDKEY
@@ -84,7 +95,13 @@ if IS_WINDOWS:
             union = _InputUnion()
             union.ki = _KeyBdInput(0, scan, flags, 0, ctypes.pointer(extra))
             inp = _Input(ctypes.c_ulong(1), union)
-            ctypes.windll.user32.SendInput(1, ctypes.pointer(inp), ctypes.sizeof(inp))
+            sent = _user32.SendInput(1, ctypes.pointer(inp), ctypes.sizeof(inp))
+            if sent != 1:
+                self.last_error = ctypes.get_last_error()
+                return False
+            return True
+
+        last_error: int = 0
 
 
 class Keyboard:
@@ -96,6 +113,8 @@ class Keyboard:
         self.backend = backend
         self.tap_seconds = tap_seconds
         self._held: Set[str] = set()
+        self.sent = 0
+        self.failures = 0       # SendInput 回傳 0 的次數（被 UIPI 擋掉等）
 
     def _lookup(self, key: str) -> Tuple[int, bool]:
         k = key.lower()
@@ -103,15 +122,23 @@ class Keyboard:
             raise KeyError(f"不支援的按鍵名稱: {key!r}（可用: {sorted(SCANCODES)}）")
         return SCANCODES[k]
 
+    def _send(self, scan: int, ext: bool, keyup: bool) -> None:
+        self.sent += 1
+        if self.backend.send(scan, ext, keyup=keyup) is False:
+            self.failures += 1
+
     def press(self, key: str) -> None:
         scan, ext = self._lookup(key)
-        self.backend.send(scan, ext, keyup=False)
+        self._send(scan, ext, keyup=False)
         self._held.add(key.lower())
 
     def release(self, key: str) -> None:
         scan, ext = self._lookup(key)
-        self.backend.send(scan, ext, keyup=True)
+        self._send(scan, ext, keyup=True)
         self._held.discard(key.lower())
+
+    def last_error(self) -> int:
+        return getattr(self.backend, "last_error", 0)
 
     def tap(self, key: str, seconds: Optional[float] = None) -> None:
         if seconds is None:
