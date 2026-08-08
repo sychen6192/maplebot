@@ -12,7 +12,8 @@ import yaml
 
 Region = Tuple[int, int, int, int]  # x, y, w, h（遊戲視窗 client 區座標）
 
-LOCAL_OVERRIDE = os.path.join("config", "local.yaml")
+LOCAL_NAME = "local.yaml"
+LOCAL_OVERRIDE = os.path.join("config", LOCAL_NAME)   # 僅供顯示訊息用
 
 
 class ConfigError(Exception):
@@ -99,6 +100,7 @@ class AppCfg:
     vision: VisionCfg = field(default_factory=VisionCfg)
     safety: SafetyCfg = field(default_factory=SafetyCfg)
     advisor: AdvisorCfg = field(default_factory=AdvisorCfg)
+    sources: List[str] = field(default_factory=list)   # 實際載入了哪些檔案
 
     def region(self, name: str) -> Region:
         if name not in self.regions:
@@ -246,11 +248,24 @@ def _parse_waypoint(raw) -> Waypoint:
     raise ConfigError(f"看不懂的 waypoint 格式: {raw!r}")
 
 
-def load_config(path: str, local_path: str = LOCAL_OVERRIDE) -> AppCfg:
+def resolve_local_path(config_path: str) -> str:
+    """local.yaml 找的是**設定檔旁邊**那一個，不是當前目錄底下的。
+
+    用相對於 CWD 的路徑會讓「從別的目錄執行」時靜靜地讀不到個人設定。
+    """
+    return os.path.join(os.path.dirname(os.path.abspath(config_path)), LOCAL_NAME)
+
+
+def load_config(path: str, local_path: Optional[str] = None) -> AppCfg:
+    """local_path=None 自動找設定檔旁的 local.yaml；傳 "" 則完全不套用覆寫。"""
     data = _load_yaml(path)
+    cfg = AppCfg()
+    cfg.sources.append(path)
+    if local_path is None:
+        local_path = resolve_local_path(path)
     if local_path and os.path.exists(local_path):
         data = _deep_merge(data, _load_yaml(local_path))
-    cfg = AppCfg()
+        cfg.sources.append(local_path)
 
     win = data.get("window", {})
     cfg.window_title = str(win.get("title", cfg.window_title))

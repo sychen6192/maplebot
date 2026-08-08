@@ -30,6 +30,28 @@ safety: { critical_hp_ratio: 0.4 }
     assert cfg.regions["minimap"] == (1, 2, 30, 20)  # 沒覆寫的保留
 
 
+def test_local_yaml_found_next_to_config_not_cwd(tmp_path, monkeypatch):
+    """從別的目錄執行時也要讀得到個人設定——用 CWD 相對路徑會靜靜地漏掉。"""
+    cfgdir = tmp_path / "config"
+    cfgdir.mkdir()
+    _write(cfgdir / "default.yaml", BASE_CFG)
+    _write(cfgdir / "local.yaml", 'window: { title: "FromLocal" }\n')
+
+    elsewhere = tmp_path / "somewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    cfg = load_config(str(cfgdir / "default.yaml"))
+    assert cfg.window_title == "FromLocal"
+    assert len(cfg.sources) == 2
+
+
+def test_sources_records_what_was_loaded(tmp_path):
+    base = _write(tmp_path / "default.yaml", BASE_CFG)
+    cfg = load_config(base, local_path="")
+    assert cfg.sources == [base]          # 沒有覆寫檔時看得出來
+
+
 def test_minimap_auto(tmp_path):
     base = _write(tmp_path / "default.yaml", """
 regions:

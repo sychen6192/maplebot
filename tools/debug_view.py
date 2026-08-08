@@ -118,6 +118,7 @@ def main() -> int:
     args = ap.parse_args()
 
     cfg = load_config(args.config)
+    print(f"設定檔: {' + '.join(cfg.sources)}")
     profile = load_profile(args.profile)
     cap = ImageCapture(args.source) if args.source else \
         WindowCapture(cfg.window_title, cfg.capture_method)

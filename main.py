@@ -37,6 +37,12 @@ def main(argv=None) -> int:
         logger.error("設定錯誤: %s", e)
         return 2
 
+    logger.info("設定檔: %s", " + ".join(cfg.sources))
+    if len(cfg.sources) == 1:
+        from maplebot.config import resolve_local_path
+        logger.info("（沒有個人覆寫檔。要覆寫請建立 %s）",
+                    resolve_local_path(args.config))
+
     dry_run = args.dry_run
     if args.source:
         capture = ImageCapture(args.source)
