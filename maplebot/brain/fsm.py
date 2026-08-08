@@ -123,7 +123,9 @@ class AutoPatrol:
     """waypoints: auto 的探邊進度（撞到左右兩邊的牆就能算出巡邏點）。"""
     direction: int = 1
     prev_x: Optional[int] = None
-    stalls: int = 0
+    stall_time: float = 0.0             # 累積多久沒有前進（不含戰鬥中斷）
+    last_probe_at: Optional[float] = None
+    attempts: int = 0                   # 量到不合理範圍後重試了幾次
     left: Optional[int] = None
     right: Optional[int] = None
     waypoints: Optional[List[Waypoint]] = None
@@ -205,48 +207,63 @@ def _bounds_to_waypoints(left: int, right: int, margin: int) -> List[Waypoint]:
     return [Waypoint(x=float(left + inset)), Waypoint(x=float(right - inset))]
 
 
-def _auto_patrol(rt: Runtime, player: Tuple[int, int], pat: PatrolCfg) -> Optional[Action]:
-    """waypoints: auto —— 往一個方向一直試探到位置不再變化（撞牆），兩邊都量到
-    後生成巡邏點。回傳 None 代表校正已完成，可以照正常巡邏走。
+def _auto_patrol(rt: Runtime, player: Tuple[int, int], pat: PatrolCfg,
+                 now: float) -> Optional[Action]:
+    """waypoints: auto —— 往一個方向一直試探到走不動（撞牆），兩邊都量到後
+    生成巡邏點。回傳 None 代表校正已完成，可以照正常巡邏走。
 
-    只在真的送出 Probe 的 tick 才比對位置，所以中途插隊去打怪不會被誤判成撞牆。
+    撞牆判定用「累積多久沒有前進」而不是「連續幾個 tick 沒動」：校正途中
+    一定會被打怪插隊，兩次探邊之間可能隔了好幾秒，角色被怪推來推去後回到
+    原位就會被誤判成撞牆。兩次探邊的間隔會被上限截掉，所以戰鬥耗掉的時間
+    不會算進停滯計時。
     """
     ap = rt.auto
     if ap.waypoints is not None:
         return None
 
     x = player[0]
-    if ap.prev_x is not None and abs(x - ap.prev_x) <= pat.probe_stall_px:
-        ap.stalls += 1
-    else:
-        ap.stalls = 0
-    ap.prev_x = x
+    # 只計入「真的在探邊」的時間；戰鬥造成的長間隔截到單次探邊的兩倍為止
+    if ap.last_probe_at is not None:
+        ap.stall_time += min(now - ap.last_probe_at, pat.probe_seconds * 2)
+    ap.last_probe_at = now
+    if ap.prev_x is None or abs(x - ap.prev_x) > pat.probe_stall_px:
+        ap.prev_x = x            # 有前進 -> 重新計時
+        ap.stall_time = 0.0
 
-    if ap.stalls < pat.probe_stalls:
+    if ap.stall_time < pat.probe_stall_seconds:
         return Probe(ap.direction, pat.probe_seconds)
 
-    # 連續走了幾步都沒動 -> 這一側到底了
+    # 走不動了 -> 這一側到底了
     if ap.direction > 0:
         ap.right = x
     else:
         ap.left = x
-    ap.stalls = 0
+    ap.stall_time = 0.0
     ap.prev_x = None
+    ap.last_probe_at = None
 
     if ap.left is None or ap.right is None:
         ap.direction *= -1
         return Probe(ap.direction, pat.probe_seconds)
 
     span = ap.right - ap.left
-    if span < pat.probe_min_span_px:
-        return Panic(
-            f"自動巡邏校正失敗：量到的可走範圍只有 {span}px，"
-            f"低於 patrol.probe_min_span_px={pat.probe_min_span_px}。"
-            "請確認方向鍵有送進遊戲（遊戲用系統管理員跑的話終端機也要）、"
-            "小地圖 ROI 是否正確，或改用手動 patrol.waypoints",
-            return_home=False)
-    ap.waypoints = _bounds_to_waypoints(ap.left, ap.right, pat.probe_margin_px)
-    return None
+    if span >= pat.probe_min_span_px:
+        ap.waypoints = _bounds_to_waypoints(ap.left, ap.right, pat.probe_margin_px)
+        return None
+
+    # 量到的範圍不合理。多半是被打怪干擾，重來一次通常就正常了
+    ap.attempts += 1
+    ap.left = ap.right = None
+    if ap.attempts <= pat.probe_retries:
+        ap.direction *= -1
+        return Probe(ap.direction, pat.probe_seconds)
+    return Panic(
+        f"自動巡邏校正失敗：重試 {pat.probe_retries} 次，"
+        f"量到的可走範圍都只有 {span}px（低於 "
+        f"patrol.probe_min_span_px={pat.probe_min_span_px}）。"
+        "請確認方向鍵有送進遊戲（遊戲用系統管理員跑的話終端機也要）、"
+        "小地圖 ROI 是否正確，或改用手動 patrol.waypoints",
+        return_home=False)
 
 
 def _climb(rt: Runtime, player: Tuple[int, int], pat: PatrolCfg, wp: Waypoint,
@@ -361,7 +378,7 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
     pat = profile.patrol
     waypoints = pat.waypoints
     if pat.auto:
-        probing = _auto_patrol(rt, state.player, pat)
+        probing = _auto_patrol(rt, state.player, pat, now)
         if probing is not None:
             return probing
         waypoints = rt.auto.waypoints or []

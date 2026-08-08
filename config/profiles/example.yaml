@@ -24,7 +24,8 @@ patrol:
   jump_key: alt             # 脫困用跳躍鍵
   # waypoints: auto 的探邊參數（用預設就好，走不出來再調）
   # probe_seconds: 0.35     # 每次往同方向試探走多久
-  # probe_stalls: 3         # 連續幾次位置沒變判定撞牆
+  # probe_stall_seconds: 1.2 # 累積這麼久沒前進判定撞牆（戰鬥時間不計入）
+  # probe_retries: 2        # 量到不合理範圍時重試幾次再放棄
   # probe_margin_px: 6      # 量到的邊界往內縮多少當巡邏點
   # probe_min_span_px: 12   # 量到的範圍小於此值 -> 判定校正失敗並停機
 

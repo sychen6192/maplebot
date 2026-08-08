@@ -129,7 +129,8 @@ class PatrolCfg:
     # --- waypoints: auto 的探邊參數 ---
     probe_seconds: float = 0.35       # 每次往同方向試探走多久
     probe_stall_px: int = 2           # x 變化在此之內視為沒動
-    probe_stalls: int = 3             # 連續幾次沒動判定撞牆
+    probe_stall_seconds: float = 1.2  # 累積這麼久沒前進就判定撞牆（不含戰鬥時間）
+    probe_retries: int = 2            # 量到不合理範圍時重試幾次再放棄
     probe_margin_px: int = 6          # 量到的邊界往內縮多少當巡邏點
     probe_min_span_px: int = 12       # 可走範圍小於此值視為校正失敗（按鍵沒生效等）
     # --- 垂直移動（爬繩／下平台）---
@@ -365,7 +366,9 @@ def load_profile(path: str) -> Profile:
     pt.jump_key = str(pa.get("jump_key", pt.jump_key)).lower()
     pt.probe_seconds = float(pa.get("probe_seconds", pt.probe_seconds))
     pt.probe_stall_px = int(pa.get("probe_stall_px", pt.probe_stall_px))
-    pt.probe_stalls = int(pa.get("probe_stalls", pt.probe_stalls))
+    pt.probe_stall_seconds = float(
+        pa.get("probe_stall_seconds", pt.probe_stall_seconds))
+    pt.probe_retries = int(pa.get("probe_retries", pt.probe_retries))
     pt.probe_margin_px = int(pa.get("probe_margin_px", pt.probe_margin_px))
     pt.probe_min_span_px = int(pa.get("probe_min_span_px", pt.probe_min_span_px))
     pt.y_tolerance = int(pa.get("y_tolerance", pt.y_tolerance))

@@ -368,12 +368,48 @@ def test_auto_patrol_probes_both_walls_then_patrols(cfg, profile):
 
 
 def test_auto_patrol_panics_when_range_too_small(cfg, profile):
-    """按鍵沒生效時角色不會動，兩側量到同一個點——要吵出來，不能默默站樁。"""
-    actions = _drive(cfg, _auto(profile), _rt(),
-                     [50, 50, 50, 50, 50, 45, 45, 45, 45])
-    assert isinstance(actions[-1], fsm.Panic)
-    assert "probe_min_span_px" in actions[-1].reason
-    assert actions[-1].return_home is False   # 設定錯誤不該燒掉一張回城卷
+    """按鍵沒生效時角色不會動，兩側量到同一個點——重試幾次後要吵出來。"""
+    actions = _drive(cfg, _auto(profile), _rt(), [50] * 40)
+    panics = [a for a in actions if isinstance(a, fsm.Panic)]
+    assert panics, "角色完全不動卻沒有回報校正失敗"
+    assert "probe_min_span_px" in panics[0].reason
+    assert panics[0].return_home is False     # 設定錯誤不該燒掉一張回城卷
+
+
+def test_auto_patrol_retries_before_giving_up(cfg, profile):
+    """量到不合理的範圍多半是被打怪干擾，重來一次通常就正常了。"""
+    prof = _auto(profile)
+    prof.patrol.probe_retries = 2
+    actions = _drive(cfg, prof, _rt(), [50] * 40)
+    first_panic = next(i for i, a in enumerate(actions) if isinstance(a, fsm.Panic))
+    # 放棄之前應該重試過好幾輪，而不是第一次量壞就停機
+    assert first_panic > 12
+
+
+def test_combat_gap_does_not_fake_a_wall(cfg, profile):
+    """校正途中一定會被打怪插隊。兩次探邊隔了 3 秒不代表撞牆——
+    那段時間角色在打怪，本來就不會前進。"""
+    rt = _rt()
+    prof = _auto(profile)
+    st = _state(player=(50, 30))
+
+    a1 = fsm.decide(st, cfg, prof, rt, NOW, CENTER)
+    assert isinstance(a1, fsm.Probe)
+    # 中間打了 3 秒的怪，回來時位置沒變
+    a2 = fsm.decide(st, cfg, prof, rt, NOW + 3.0, CENTER)
+    assert isinstance(a2, fsm.Probe)
+    assert a2.direction == a1.direction      # 還在往同一邊探，沒有誤判撞牆
+    assert rt.auto.right is None
+
+
+def test_wall_detected_when_genuinely_stuck(cfg, profile):
+    """真的撞牆（持續探邊但位置不動）還是要判定得出來。"""
+    rt = _rt()
+    prof = _auto(profile)
+    st = _state(player=(50, 30))
+    for i in range(6):                       # 連續探邊，每 0.4 秒一次
+        fsm.decide(st, cfg, prof, rt, NOW + i * 0.4, CENTER)
+    assert rt.auto.right == 50               # 這一側量到了
 
 
 def test_auto_patrol_still_attacks_while_calibrating(cfg, profile):
