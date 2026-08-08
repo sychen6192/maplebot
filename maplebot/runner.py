@@ -14,6 +14,7 @@ from .config import AppCfg, Profile
 from .control.input_win import Keyboard
 from .executor import Executor, Stats
 from .perception import Perceiver
+from .progress import ExpTracker
 from .safety import LostPlayerWatchdog, Safety, is_black_screen, save_anomaly
 from .vision.locate import BR_NAME, TL_NAME, find_minimap, load_ui_template
 from .vision.mobs import MobDetector
@@ -36,6 +37,7 @@ class Runner:
         self.alerts = Alerts(cfg.safety.sound_alerts)
         self.rt = fsm.Runtime()
         self.stats = Stats()
+        self.exp = ExpTracker(stall_seconds=cfg.safety.exp_stall_minutes * 60)
         self.perceiver = Perceiver(cfg, detector)
         self.executor = Executor(keyboard, self.rt, self.stats, logger, dry_run)
 
@@ -97,6 +99,17 @@ class Runner:
                          self.cfg.safety.lost_player_timeout, self.cfg.safety.pause_key)
         self.safety.paused = True
 
+    def _on_exp_stalled(self, frame: np.ndarray, now: float) -> None:
+        mins = self.cfg.safety.exp_stall_minutes
+        save_anomaly(frame, f"連續 {mins:.0f} 分鐘沒有經驗進帳", self.log)
+        self.alerts.ping("warn")
+        self.log.warning(
+            "連續 %.0f 分鐘沒賺到經驗，自動暫停（按 %s 繼續）。"
+            "常見原因：技能鍵設錯、怪物偵測抓不到、角色卡在打不到怪的地方",
+            mins, self.cfg.safety.pause_key)
+        self.safety.paused = True
+        self.exp.last_gain_at = now   # 繼續後重新計時，不要一恢復就再次觸發
+
     def _panic(self, frame: np.ndarray, reason: str, return_home: bool = True) -> None:
         save_anomaly(frame, reason, self.log)
         self.alerts.ping("panic")
@@ -150,6 +163,11 @@ class Runner:
                     self.alerts.ping("ding")
                 self._prev_others = len(state.others)
 
+                self.exp.update(state.exp, now)
+                if self.exp.stalled(now):
+                    self._on_exp_stalled(frame, now)
+                    continue
+
                 if self.watchdog.update(state.player is not None, now):
                     self._on_player_lost()
                     continue
@@ -171,6 +189,7 @@ class Runner:
 
                 if time.monotonic() - self._last_summary >= 60:
                     self.log.info("狀態：%s", self.stats.summary())
+                    self.log.info("進度：%s", self.exp.summary(time.monotonic()))
                     self._last_summary = time.monotonic()
 
                 if self.max_ticks and self.stats.ticks >= self.max_ticks:
@@ -184,3 +203,4 @@ class Runner:
             self.advisor.stop()
             self.kb.release_all()
             self.log.info("已結束。%s", self.stats.summary())
+            self.log.info("進度：%s", self.exp.summary(time.monotonic()))

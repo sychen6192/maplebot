@@ -48,8 +48,10 @@ vision:
   # --- outline 模式參數（用 tools/debug_view.py 邊看邊調）---
   outline_black_level: 8      # 判定為描邊的最大亮度。即時擷取是無損的用 0~8；
                               # 拿 JPEG 截圖離線測試時要調到 12~20
-  outline_min_area: 800       # 小於此面積視為雜訊
-  outline_max_area: 40000     # 大於此面積視為背景/UI
+  outline_min_area: 300       # 小於此面積視為雜訊（以 790px 寬的畫面為基準）
+  outline_max_area: 20000     # 大於此面積視為背景/UI（同上）
+  outline_auto_scale: true    # 依實際畫面寬度自動縮放上面兩個門檻。
+                              # 關掉的話，為某一種視窗大小調的值換個解析度就失效
   outline_close_kernel: 20    # 把斷續的描邊連成一整塊
   outline_player_box: [100, 140]   # 畫面中央挖掉的範圍（你自己的角色）
 
@@ -80,6 +82,10 @@ safety:
   lost_player_timeout: 5.0  # 連續幾秒找不到玩家黃點就自動暫停
   sound_alerts: true        # 危險事件嗶聲提醒（Panic/黑屏/有人出現）
   black_screen_pause: true  # 畫面全黑（斷線/換頻道/讀圖）自動暫停
+  # 幾分鐘沒賺到經驗就暫停（0=不檢查）。這是最有效的健康檢查——它驗證
+  # 「辨識→決策→按鍵→遊戲有反應」整條鏈路，技能鍵設錯、怪抓不到、
+  # 卡在打不到怪的地方，都只有這個看得出來。
+  exp_stall_minutes: 10
 
 # 選配：本地 VLM 督導層（slow loop）。
 # 每 interval 秒看一次畫面，判斷卡死/對話框/斷線等異常，異常時只會把 bot 暫停。

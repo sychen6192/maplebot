@@ -76,5 +76,45 @@ def test_black_level_tolerance_for_compressed_images():
     assert len(tolerant.detect(jpeg)) == 1
 
 
+def _sized_scene(w, h, scale):
+    """同一個場景在不同視窗大小下：怪的像素尺寸等比例放大。"""
+    rng = np.random.default_rng(5)
+    img = rng.integers(60, 200, (h, w, 3), dtype=np.uint8)
+    mw, mh = int(20 * scale), int(18 * scale)      # 用最小的怪測，最容易漏
+    for cx, cy in [(int(w * 0.2), int(h * 0.3)), (int(w * 0.8), int(h * 0.7))]:
+        x1, y1 = cx - mw // 2, cy - mh // 2
+        cv2.rectangle(img, (x1, y1), (x1 + mw, y1 + mh), (0, 0, 0),
+                      max(2, int(2 * scale)))
+        cv2.rectangle(img, (x1 + 3, y1 + 3), (x1 + mw - 3, y1 + mh - 3),
+                      (90, 180, 220), -1)
+    return img
+
+
+@pytest.mark.parametrize("w,h,scale", [
+    (790, 520, 1.0),        # 800x600 視窗
+    (1280, 720, 1.6),
+    (2554, 1430, 3.2),      # 大視窗
+])
+def test_same_defaults_work_at_any_resolution(w, h, scale):
+    """描邊團塊面積跟解析度相關，門檻要跟著縮放，否則同一組設定只在
+    某一種視窗大小下有效。"""
+    assert len(OutlineMobDetector().detect(_sized_scene(w, h, scale))) == 2
+
+
+def test_without_auto_scale_defaults_miss_small_window():
+    """關掉縮放時，為大畫面調的門檻會把小畫面的怪全部當雜訊丟掉。"""
+    det = OutlineMobDetector(auto_scale=False, min_area=800)
+    assert det.detect(_sized_scene(790, 520, 1.0)) == []
+    assert len(det.detect(_sized_scene(2554, 1430, 3.2))) == 2
+
+
+def test_scaled_thresholds_grow_with_width():
+    det = OutlineMobDetector(min_area=300, max_area=20000, close_kernel=20)
+    min_a, max_a, kernel, player, min_sz = det._scaled(2554)
+    assert min_a > 300 and max_a > 20000
+    assert kernel > 20 and player[0] > 100 and min_sz[0] > 18
+    assert det._scaled(790)[0] == 300          # 參考寬度時不變
+
+
 def test_empty_frame():
     assert OutlineMobDetector().detect(np.zeros((0, 0, 3), dtype=np.uint8)) == []
