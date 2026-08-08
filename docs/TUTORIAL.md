@@ -1,14 +1,14 @@
 # 手把手教學：從 clone 到掛機
 
-照順序做完就能跑。每一步都寫了「預期結果」，對不上就看最後的疑難排解。
+照順序做完就能跑，**大約 15 分鐘**。每一步都寫了「預期結果」，對不上就看文末疑難排解。
 
 > 前提：Windows 10/11、遊戲用**視窗模式**。
 >
-> **強烈建議把遊戲視窗開在 800x600 左右**。大視窗（例如 2560x1440 全螢幕）
-> 會讓每一步都變麻煩：模板匹配變慢、送到遠端推理時怪物縮得太小、
-> ROI 座標也要全部重新校正。經典版在 800x600 下最單純。
-> 遊戲若以系統管理員身分執行，下面所有指令的終端機（PowerShell）也要
-> 「以系統管理員身分執行」，否則按鍵送不進遊戲。
+> **建議把遊戲視窗開在 800x600 左右**。大視窗（2560x1440 全螢幕）不是不能用，
+> 但辨識比較慢、之後每個座標都要重校正。
+
+> 好消息：怪物偵測是**零設定**的（靠 sprite 的黑色描邊找怪），
+> 不用截模板、不用訓練、不用標註。巡邏點也可以讓它自己量。
 
 ## 第 0 步：安裝
 
@@ -19,23 +19,20 @@ pip install -r requirements.txt
 pytest -q
 ```
 
-**預期結果**：最後一行是 `xx passed`。這代表環境沒問題（測試完全離線，不用開遊戲）。
+**預期結果**：最後一行是 `xxx passed`。測試完全離線，不用開遊戲。
 
-> 想用虛擬環境（推薦，不會污染系統 Python）可以改用
-> [uv](https://docs.astral.sh/uv/)：
+> 想用虛擬環境（推薦）就改用 [uv](https://docs.astral.sh/uv/)：
 > ```powershell
 > powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
-> uv venv
-> .venv\Scripts\activate
-> uv pip install -r requirements.txt
+> uv venv && .venv\Scripts\activate && uv pip install -r requirements.txt
 > ```
 > 之後每次開新終端機都要先 `.venv\Scripts\activate`。
 
 ## 第 1 步：告訴程式你的遊戲視窗叫什麼
 
-開遊戲，看視窗最上方標題列的文字（例如 `MapleSaga`、`MapleStory Worlds`）。
+開遊戲，看視窗最上方標題列的文字（例如 `MapleSaga`）。
 
-建立 **`config/local.yaml`**（個人設定放這裡，之後更新程式不會被蓋掉）：
+建立 **`config/local.yaml`**——你的個人設定都放這裡，更新程式不會被蓋掉：
 
 ```yaml
 window:
@@ -48,174 +45,181 @@ window:
 python tools/calibrate.py
 ```
 
-會依序跳出五個框選視窗，每個：**滑鼠拖出矩形 → 按 Enter 確認**（按 `c` 跳過）：
+依序跳出五個框選視窗，每個都是**滑鼠拖出矩形 → 按 Enter**（按 `c` 跳過）：
 
 | 區域 | 框什麼 |
 |---|---|
 | `minimap` | 小地圖的**地圖畫布**本體（不含標題列） |
 | `hp_bar` | 紅色 HP 條本體（不含 `HP[...]` 文字） |
 | `mp_bar` | 藍色 MP 條本體 |
-| `exp_bar` | 經驗條（可跳過） |
+| `exp_bar` | 經驗條（**建議框**，健康檢查會用到） |
 | `playfield` | 主遊戲畫面（不含底部 UI 列） |
 
 **預期結果**：終端機印出一段 `regions:`，整段貼進 `config/local.yaml`。
 
-## 第 3 步：截怪物模板
-
-站到有怪的地方：
+## 第 3 步：驗證辨識（最重要的一步）
 
 ```powershell
-python tools/grab_template.py --name snail    # 名字自取
+python tools/debug_view.py --snapshot check.png
 ```
 
-框住怪物本體按 Enter（框緊一點，不要含大片背景），同一隻怪**不同動作幀截 2~3 張**，按 `c` 結束。
+不開視窗，只存一張標註圖。終端機會印：
 
-**預期結果**：`data/templates/mobs/` 出現 `snail_01.png`、`snail_02.png`…（左右翻轉會自動處理）。
-
-## 第 4 步：驗證辨識（最重要的一步）
-
-```powershell
-python tools/debug_view.py
+```
+擷取尺寸: 800x600｜擷取方式: printwindow
+playfield ROI: [8, 60, 790, 520]
+  HP 100% | MP 100% | EXP 59%
+  玩家小地圖座標: (36, 45)｜其他玩家: 0
+  偵測到怪物: 3
+  當下決策: Attack
 ```
 
-> 如果視窗一直遞迴疊圖（擷取方式是 `screen` 且視窗擠不開），改用不開視窗的
-> 快照模式，看存出來的 PNG 即可：
-> `python tools/debug_view.py --snapshot check.png`
+打開 `check.png` 檢查四件事：
 
-檢查四件事：
-
-1. 小地圖上你的位置有**綠圈**，旁邊顯示座標 `(x,y)`
-2. 上方 `HP xx% | MP xx%` 與遊戲顯示一致
+1. 小地圖上你的位置有**綠圈**
+2. `HP xx% | MP xx% | EXP xx%` 跟遊戲畫面一致
 3. 場上的怪有**黃框**
-4. 右上角顯示目前決策（`-> Move`、`-> Attack`…）
+4. 沒有把樹、雲、UI 框成怪
 
-按 `q` 離開。有問題先跳到文末疑難排解調參數，調到四項都對再往下。
+**抓不到怪或框錯**，只要調兩個旋鈕（`config/local.yaml`）：
 
-### 4-2. 讀出巡邏點座標（Step 5 要用）
-
-```powershell
-python tools/debug_view.py --track
+```yaml
+vision:
+  outline_black_level: 8    # 抓不到 → 調高到 12~20；框到一堆背景 → 調低到 4
+  outline_min_area: 300     # 框到小碎塊 → 調高；小怪被漏掉 → 調低
 ```
 
-終端機會持續印出你角色在小地圖上的座標，一邊玩一邊看：
+> 也可以用 `python tools/debug_view.py` 開即時視窗（按 q 離開），
+> 但如果擷取方式是 `screen`，視窗蓋住遊戲會拍到自己，用 `--snapshot` 最保險。
 
-```
-  x=  36  y=  45   [──●─────────────────────────────────────]
-  x=  71  y=  45   [───────────●────────────────────────────]
-```
-
-**走到你想巡邏的左端點，記下 `x`；再走到右端點，記下 `x`。** 這兩個數字就是
-Step 5 的 `waypoints: [左x, 右x]`。按 `Ctrl+C` 結束。
-
-> 其他兩種模式也看得到同一個座標：即時視窗是綠圈旁的 `(x,y)`；
-> `--snapshot` 是終端機印的「玩家小地圖座標: (x, y)」。
-
-**單層地圖可以整步跳過**：profile 寫 `waypoints: auto`，開場程式會自己左右走到
-撞牆量出範圍。想省事就先用 `auto`，覺得它走的範圍不合意再回來手動量。
-
-**多層地圖要多抄兩種座標**：
-1. 每一層樓的 `y`（站在那層樓上看 `y=` 那一欄）
-2. **繩子的 `x`**——站到繩子前面記下 `x`。程式不會自己找繩子在哪。
-
-## 第 5 步：寫你的地圖 profile
+## 第 4 步：寫你的地圖 profile
 
 ```powershell
 copy config\profiles\example.yaml config\profiles\mymap.yaml
 ```
 
-打開 `mymap.yaml`，把這幾個欄位改成你的：
+打開 `mymap.yaml`，最少改這幾個地方：
 
 ```yaml
 patrol:
-  waypoints: [35, 90]       # 第 4 步記下的左右端點 x（或寫 auto 讓程式自己量）
+  waypoints: auto           # ← 懶人寫法：開場自己左右走到撞牆，量出巡邏範圍
+
+loot:
+  key: z                    # 撿取鍵（不想撿就留空）
+
 attack:
   key: x                    # 你的攻擊技能鍵
-  type: directional         # 需要面向的技能；祭司 Heal 這類原地放的改 aoe
+  type: directional         # 原地放的技能（祭司 Heal 之類）改成 aoe
+
 potions:
-  hp: { key: pageup,   below_ratio: 0.50 }   # 你的 HP 藥水鍵
+  hp: { key: pageup,   below_ratio: 0.50 }
   mp: { key: pagedown, below_ratio: 0.30 }
+
 buffs:
-  - { key: "8", every: 120, cast_seconds: 1.5 }   # 沒有 buff 就整段刪掉
+  - { key: "8", every: 120, cast_seconds: 1.5 }   # 沒 buff 就整段刪掉
 ```
 
-### 多層地圖（要爬繩子的話）
+**`waypoints: auto` 是關鍵**——它會在開場自己往左右走到撞牆，量出可走範圍，
+你不用先去量座標。單層練功圖用這個就夠了。
 
-改抄 `config/profiles/multilevel.yaml`，巡邏點加上 `y`：
+<details>
+<summary>想自己指定巡邏點 / 多技能 / 多層地圖（點開）</summary>
+
+**手動巡邏點**：先讀座標
+
+```powershell
+python tools/debug_view.py --track
+```
+
+一邊玩一邊看終端機印出的 `x=`，走到左端點記一次、右端點記一次：
 
 ```yaml
 patrol:
-  waypoints:
-    - { x: 30 }                        # 下層左端
-    - { x: 100 }                       # 下層右端
-    - { x: 68, y: 20 }                 # 走到繩子(x=68) -> 爬到上層(y=20)
-    - { x: 40, y: 20 }                 # 上層走位
-    - { x: 40, y: 45, descend: jump }  # 下跳回下層（要抓繩下降就寫 rope）
+  waypoints: [36, 91]
 ```
 
-順序就是它走的順序，最後一個點走完會回到第一個點。爬繩是閉迴路的：每爬一步
-都回頭看小地圖 y 有沒有真的變，沒抓到繩子會先脫困重新對位，連續失敗兩次就
-放棄這個點繼續走下一個。所以**繩子 x 抄錯的後果是少走上層，不是整隻卡死**——
-發現它老是不上樓，就回第 4 步重新抄繩子座標。
+**多技能輪替**（大絕 + 主攻）：
 
-## 第 6 步：先預演（不會按任何鍵）
+```yaml
+skills:
+  - key: v                # 範圍大絕：優先但條件嚴格
+    type: aoe
+    cooldown: 30
+    min_mobs: 3           # 至少 3 隻才放，不浪費在單隻怪身上
+    min_mp: 0.2
+    range_px: 400
+  - key: x                # 主攻：保底
+    type: directional
+    cooldown: 0.2
+    range_px: 320
+```
+
+有 `skills:` 時 `attack:` 會被忽略。
+
+**多層地圖**（要爬繩子）：見 `config/profiles/multilevel.yaml`，
+用 `{x: 68, y: 20}` 指定「x 對準後爬到 y」。繩子的座標要自己用 `--track` 量。
+</details>
+
+## 第 5 步：先預演（不會按任何鍵）
 
 ```powershell
 python main.py --profile config/profiles/mymap.yaml --dry-run
 ```
 
-**預期結果**：每行 log 像這樣，決策要合理（有怪 → Attack、沒怪 → Move、有人 → Wait）：
+**預期結果**：每行 log 的決策要合理——
 
 ```
 tick 3 | HP 100% MP 100% | 玩家 (36, 45) | 怪 2 | -> Attack
+tick 4 | HP 100% MP 100% | 玩家 (36, 45) | 怪 0 | -> Loot
+tick 5 | HP 100% MP 100% | 玩家 (40, 45) | 怪 0 | -> Move
 ```
 
-看個一分鐘沒問題就 `Ctrl+C` 結束。
+看個一分鐘沒問題就 `Ctrl+C`。
 
-## 第 7 步：正式執行
+## 第 6 步：正式執行
 
 ```powershell
 python main.py --profile config/profiles/mymap.yaml
 ```
 
-啟動後**點一下遊戲視窗**讓它保持在前景（按鍵送給前景視窗）。
+啟動後**點一下遊戲視窗**讓它保持在前景。
 
-| 情況 | 行為 |
+| 熱鍵 / 情況 | 行為 |
 |---|---|
 | `F9` | 暫停 / 繼續 |
 | `F12` | 緊急停止 |
 | HP 低於 25% | 自動停機 + 長嗶 + 截圖（可設 `panic_return_key` 先回城） |
 | 小地圖出現其他玩家 | 暫停動作 + 短嗶，人走了自動繼續 |
-| 黑屏 / 找不到角色 | 自動暫停 + 嗶聲 + 截圖存到 `logs/anomalies/` |
+| 黑屏 / 找不到角色 | 自動暫停 + 嗶聲 + 截圖到 `logs/anomalies/` |
 | 卡在地形 | 自動跳一下脫困 |
+| **10 分鐘沒賺到經驗** | 自動暫停 + 警報（代表技能鍵設錯之類的問題） |
 
-完整紀錄在 `logs/run_*.log`，每 60 秒印一次統計（攻擊/喝藥/脫困次數）。
+每 60 秒會印一次進度：
 
-## 第 8 步（選配）：接上你的 Ollama 督導層
-
-`config/local.yaml` 加：
-
-```yaml
-advisor:
-  enabled: true
-  model: "qwen3-vl:8b"      # 或你已有的 qwen3.6:35b-a3b（見 README 共存原則）
+```
+狀態：運行 12.3 分鐘 | tick 5904 | 攻擊 412 次 | 撿物 88 次 | 脫困 2 次
+進度：EXP 63.4%｜累積 +1.32 等｜約 1.18 等/小時｜升級 1 次
 ```
 
-**預期結果**：啟動時 log 出現 `VLM 督導層已啟動`。它每 20 秒看一次畫面，發現對話框/驗證視窗/斷線就暫停 + 嗶聲。
+完整紀錄在 `logs/run_*.log`。
 
-## 第 9 步（選配）：升級 YOLO 怪物偵測
+## 選配
 
-模板匹配夠用就不用急。想升級（更穩、毫秒級）照著 [YOLO_TRAINING.md](YOLO_TRAINING.md) 做，5090 上訓練只要幾分鐘。
+- **接你的 Ollama 督導層**：`config/local.yaml` 加
+  `advisor: { enabled: true, model: "qwen3-vl:8b" }`（見 README）
+- **升級 YOLO 怪物偵測**：outline 夠用就不用碰。想升級見 [YOLO_TRAINING.md](YOLO_TRAINING.md)
 
 ## 疑難排解
 
 | 症狀 | 解法 |
 |---|---|
-| 畫面像無限鏡像一直放大／視窗一層層疊 | 擷取方式是 `screen` 且偵錯視窗蓋在遊戲上，拍到自己。程式會自動挪開視窗；螢幕不夠大就用 `--snapshot out.png`（不開視窗）|
-| 按鍵沒反應 | 終端機用系統管理員開；確認遊戲視窗在前景 |
-| `找不到標題含「...」的視窗` | `window.title` 打錯；視窗模式才抓得到 |
-| 玩家綠圈不見/亂跳 | 小地圖框太大含到雜物 → 重框；或調 `vision.color_tolerance`（黃點偏色）、`max_dot_pixels`（黃色地形干擾）。最穩：截一張玩家點模板存成 `data/templates/ui/minimap_player.png` |
+| 抓不到怪 / 框到背景 | 調 `outline_black_level`（8→15 抓更多、8→4 抓更少）與 `outline_min_area` |
+| 大視窗很卡 | `config/local.yaml` 加 `vision: { mob_search_box: [700, 400] }`，只搜角色周圍 |
+| 按鍵沒反應 | 終端機用**系統管理員**開；確認遊戲視窗在前景 |
+| `找不到標題含「...」的視窗` | `window.title` 打錯；要用視窗模式 |
+| 畫面像無限鏡像一直放大 | 擷取方式退回 `screen` 且偵錯視窗蓋住遊戲。用 `--snapshot` 就不會 |
+| 玩家綠圈不見/亂跳 | 小地圖框太大含到雜物 → 重框；或調 `vision.color_tolerance` |
 | HP/MP % 不對 | 條的框含到文字/外框 → 重框，只框色條本體 |
-| 怪物黃框抓不到 | 多截幾張不同動作幀模板；`mob_match_threshold` 降到 0.65 試 |
-| 怪物誤框背景 | `mob_match_threshold` 調高到 0.78+；模板重截框緊一點 |
-| 換地圖/小地圖被拖動就失效 | 進階：截小地圖角落模板改用 `minimap: auto`（見 default.yaml 註解） |
+| 自動巡邏報「校正失敗」 | 方向鍵沒送進遊戲（權限問題），或小地圖 ROI 錯了 |
+| 一直說沒賺到經驗 | 技能鍵對嗎？怪打得到嗎？先用 `--dry-run` 看決策是不是一直 `Move` |
 | 座標整組偏移 | Windows 顯示縮放改過 → 重跑第 2 步校正 |
