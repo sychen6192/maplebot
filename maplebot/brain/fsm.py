@@ -138,6 +138,7 @@ class Runtime:
     last_buff: Dict[int, float] = field(default_factory=dict)
     last_potion: Dict[str, float] = field(default_factory=dict)
     last_attack: float = 0.0
+    low_hp_streak: int = 0              # 連續幾幀讀到低於危險線
     last_skill: Dict[int, float] = field(default_factory=dict)   # 每個技能各自的冷卻
     last_loot: float = 0.0
     stuck_pos: Optional[Tuple[int, int]] = None
@@ -319,8 +320,15 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
     assert state.hp is not None and state.player is not None
     center_x, center_y = playfield_center
 
+    # 單一幀讀到低血就停機太危險——血條被特效蓋住、擷取抖一下都會誤判。
+    # 真實血量不會一幀掉到底，所以要求連續幾幀都讀到才算數。
     if state.hp <= cfg.safety.critical_hp_ratio:
-        return Panic(f"HP 剩 {state.hp:.0%}，低於危險線 {cfg.safety.critical_hp_ratio:.0%}")
+        rt.low_hp_streak += 1
+        if rt.low_hp_streak >= cfg.safety.critical_hp_frames:
+            return Panic(f"HP 剩 {state.hp:.0%}，連續 {rt.low_hp_streak} 幀"
+                         f"低於危險線 {cfg.safety.critical_hp_ratio:.0%}")
+    else:
+        rt.low_hp_streak = 0
 
     hp_pot = profile.potions.get("hp")
     if hp_pot and state.hp < hp_pot.below_ratio and _potion_due(rt, "hp", hp_pot.cooldown, now):

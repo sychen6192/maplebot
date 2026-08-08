@@ -78,6 +78,8 @@ safety:
   stop_key: f12             # 緊急停止
   pause_key: f9             # 暫停 / 繼續
   critical_hp_ratio: 0.25   # HP 低於此比例直接停止程式並截圖
+  critical_hp_frames: 3     # 要連續幾幀都讀到低血才停機。血條被特效蓋住或
+                            # 擷取抖一下都會讀成 0，一幀就停機等於整晚白掛
   pause_when_players: true  # 小地圖出現其他玩家時暫停動作
   lost_player_timeout: 5.0  # 連續幾秒找不到玩家黃點就自動暫停
   sound_alerts: true        # 危險事件嗶聲提醒（Panic/黑屏/有人出現）

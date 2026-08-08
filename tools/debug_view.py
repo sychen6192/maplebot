@@ -146,24 +146,45 @@ def main() -> int:
 
     if args.track:
         mm_w = cfg.regions.get("minimap", (0, 0, 0, 0))[2]
-        print("\n在遊戲裡走到你要設的巡邏點，讀下面的 x 值填進 profile 的 "
-              "waypoints。Ctrl+C 結束。\n")
+        print("\n讀巡邏點座標（x 值）＋ 監看 HP/MP 有沒有亂跳。Ctrl+C 結束。")
+        print("HP 欄若在正常玩的情況下突然掉到很低，就是血條 ROI 有問題——"
+              "bot 會誤判成瀕死而停機。\n")
+        samples, lost, hp_min, hp_drops = 0, 0, 1.0, 0
+        prev_hp = None
         try:
             while True:
                 now = time.monotonic()
                 state = perceiver.perceive(cap.grab(), now)
+                samples += 1
+                if state.hp is not None:
+                    hp_min = min(hp_min, state.hp)
+                    if prev_hp is not None and state.hp < prev_hp - 0.3:
+                        hp_drops += 1      # 一幀掉超過 30% = 幾乎確定是誤讀
+                    prev_hp = state.hp
                 if state.player:
                     x, y = state.player
-                    # 畫一條位置示意條，方便肉眼確認左右端
-                    pos = int(x / mm_w * 40) if mm_w else 0
-                    bar = "".join("●" if i == pos else "─" for i in range(40))
-                    print(f"\r  x={x:4d}  y={y:4d}   [{bar}]", end="", flush=True)
+                    pos = int(x / mm_w * 30) if mm_w else 0
+                    bar = "".join("●" if i == pos else "─" for i in range(30))
+                    print(f"\r  x={x:4d} y={y:4d} [{bar}] "
+                          f"HP {_pct(state.hp)} MP {_pct(state.mp)} "
+                          f"｜最低 HP {hp_min:.0%} 突降 {hp_drops} 次",
+                          end="", flush=True)
                 else:
-                    print("\r  找不到玩家點…（小地圖 ROI 或顏色參數要調）",
+                    lost += 1
+                    print(f"\r  找不到玩家點…（{lost}/{samples} 幀）"
+                          f" HP {_pct(state.hp)} MP {_pct(state.mp)}    ",
                           end="", flush=True)
                 time.sleep(0.3)
         except KeyboardInterrupt:
-            print("\n")
+            print(f"\n\n=== {samples} 幀統計 ===")
+            print(f"找不到玩家點: {lost} 幀"
+                  f"{'（小地圖 ROI 或顏色參數要調）' if lost else ''}")
+            print(f"HP 最低讀值: {hp_min:.0%}｜單幀突降 >30%: {hp_drops} 次")
+            if hp_drops:
+                print("⚠ 血條讀值不穩：重跑 tools/calibrate.py 只框紅色條本體"
+                      "（不要含數字、外框、旁邊的 UI）。")
+                print("  暫時解法：safety.critical_hp_frames 調大（預設 3），"
+                      "或 safety.critical_hp_ratio 調低")
         return 0
 
     if args.snapshot:
