@@ -19,6 +19,8 @@ from .safety import LostPlayerWatchdog, Safety, is_black_screen, save_anomaly
 from .vision.locate import BR_NAME, TL_NAME, find_minimap, load_ui_template
 from .vision.mobs import MobDetector
 
+IDLE_WARN_SECONDS = 20.0   # 連續閒置這麼久就把 Wait 的理由升級成警告
+
 
 class Runner:
     def __init__(self, cfg: AppCfg, profile: Profile, capture, keyboard: Keyboard,
@@ -49,6 +51,8 @@ class Runner:
         self._last_summary = time.monotonic()
         self._prev_others = 0
         self._input_warned = False
+        self._idle_since: Optional[float] = None
+        self._idle_warned = False
 
     # ---- 小地圖自動定位（auto-maple corner-template 法）----
 
@@ -99,6 +103,28 @@ class Runner:
         self.log.warning("連續 %.0fs 找不到玩家位置，自動暫停（按 %s 繼續）",
                          self.cfg.safety.lost_player_timeout, self.cfg.safety.pause_key)
         self.safety.paused = True
+
+    def _check_idle(self, action, now: float) -> None:
+        """一直 Wait 代表某條規則擋著，不是程式當掉——但使用者從 log 看不出來，
+        因為 Wait 的理由是 DEBUG 層級。連續閒置太久就把理由升級成警告。"""
+        if not isinstance(action, fsm.Wait):
+            self._idle_since = None
+            self._idle_warned = False
+            return
+        if self._idle_since is None:
+            self._idle_since = now
+            return
+        if self._idle_warned or now - self._idle_since < IDLE_WARN_SECONDS:
+            return
+        self._idle_warned = True
+        self.log.warning("已連續 %.0f 秒沒有任何動作，原因：%s",
+                         now - self._idle_since, action.reason)
+        if "其他玩家" in action.reason:
+            self.log.warning(
+                "畫面上其實沒有別人的話就是小地圖紅點誤判："
+                "用 tools/debug_view.py --snapshot 看紅圈畫在哪，"
+                "縮小 minimap ROI、調低 vision.color_tolerance，"
+                "或先設 safety.pause_when_players: false")
 
     def _check_input_delivered(self) -> None:
         """SendInput 被擋掉時，log 會照常顯示「已送出按鍵」但遊戲毫無反應。
@@ -191,12 +217,17 @@ class Runner:
                 action = fsm.decide(state, self.cfg, self.profile, self.rt,
                                     now, self.playfield_center)
                 if self.dry_run:
-                    self.log.info("tick %d | HP %s MP %s | 玩家 %s | 怪 %d | -> %s",
-                                  self.stats.ticks,
-                                  f"{state.hp:.0%}" if state.hp is not None else "?",
-                                  f"{state.mp:.0%}" if state.mp is not None else "?",
-                                  state.player, len(state.mobs),
-                                  type(action).__name__)
+                    # Wait 的理由一定要印出來——否則「每 tick 都 Wait」看起來
+                    # 像卡住，實際上是某條規則一直擋著（例如誤判有其他玩家）
+                    why = f"（{action.reason}）" if isinstance(action, fsm.Wait) else ""
+                    self.log.info(
+                        "tick %d | HP %s MP %s | 玩家 %s | 怪 %d | 他人 %d | -> %s%s",
+                        self.stats.ticks,
+                        f"{state.hp:.0%}" if state.hp is not None else "?",
+                        f"{state.mp:.0%}" if state.mp is not None else "?",
+                        state.player, len(state.mobs), len(state.others),
+                        type(action).__name__, why)
+                self._check_idle(action, now)
 
                 if isinstance(action, fsm.Panic):
                     self._panic(frame, action.reason, action.return_home)
