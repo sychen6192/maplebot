@@ -81,6 +81,48 @@ class Runner:
         self.log.info("小地圖自動定位完成: [%d, %d, %d, %d]", *region)
         return True
 
+    # ---- 開場自檢 ----
+
+    def _preflight(self) -> bool:
+        """跑之前先確認辨識是對的。
+
+        ROI 錯掉時最惡劣的症狀不是「不會動」，而是**看起來在動但全是錯的**：
+        血條框錯就讀成 HP 0%，於是灌兩瓶藥再判定瀕死停機（使用者只會看到
+        「莫名其妙就停了」）。這些都能在第一幀就看出來，不必等它自爆。
+        """
+        frame = self.capture.grab()
+        size = (frame.shape[1], frame.shape[0])
+        if self.cfg.calibrated_for and tuple(self.cfg.calibrated_for) != size:
+            cw, ch = self.cfg.calibrated_for
+            self.log.error(
+                "遊戲視窗現在是 %dx%d，但 regions 是照 %dx%d 校正的——"
+                "所有 ROI 都會錯位（血條讀成 0%% 之類）。"
+                "請重跑 python tools/calibrate.py 再把新的 regions 貼進 config/local.yaml",
+                size[0], size[1], cw, ch)
+            return False
+
+        state = self.perceiver.perceive(frame, time.monotonic())
+        if state.hp is None:
+            self.log.error("讀不到 HP：regions.hp_bar 超出畫面範圍。請重跑 tools/calibrate.py")
+            return False
+        if state.hp <= 0.0:
+            save_anomaly(frame, "開場自檢：HP 讀值 0%", self.log)
+            self.log.error(
+                "開場就讀到 HP 0%%——角色真的沒血你也不會現在開 bot，"
+                "所以幾乎確定是 regions.hp_bar 框錯了（框到數字、外框或旁邊的 UI）。"
+                "先跑 python tools/debug_view.py --snapshot check.png 看框在哪，"
+                "再重跑 tools/calibrate.py 只框紅色血條本體。"
+                "已存一張畫面到 logs/anomalies/ 方便對照")
+            return False
+        if state.player is None:
+            self.log.warning("開場找不到小地圖玩家黃點——確認 regions.minimap 只框地圖畫布本體，"
+                             "或調整 vision.color_tolerance。先照跑，但巡邏可能不會動")
+        self.log.info("開場自檢通過：HP %.0f%%｜%s｜怪 %d",
+                      state.hp * 100,
+                      f"玩家 {state.player}" if state.player else "找不到玩家點",
+                      len(state.mobs))
+        return True
+
     # ---- 安全事件 ----
 
     def _on_advisor_abnormal(self, note: str) -> None:
@@ -195,6 +237,9 @@ class Runner:
 
     def run(self) -> None:
         if not self._resolve_minimap():
+            return
+        if not self._preflight():
+            self.alerts.ping("warn")
             return
         tick_interval = 1.0 / max(self.cfg.fps, 1.0)
         self.log.info("開始執行 profile「%s」%s", self.profile.name,

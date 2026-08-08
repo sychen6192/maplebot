@@ -68,10 +68,14 @@ class VisionCfg:
     # 角色永遠在畫面中央，打不到的地方本來就不用看——省時間也少誤判。
     mob_search_box: Optional[Tuple[int, int]] = None
     # 濾掉跟著角色跑的東西（寵物）。角色移動時，怪會在畫面上滑動，寵物不會。
-    filter_followers: bool = True
-    follower_drift_px: int = 40       # 畫面位移小於此值視為沒跟著滑動
+    # 預設關閉：判別得靠鏡頭捲動，而窄地圖鏡頭根本不捲，這時分不出誰是寵物。
+    # 最可靠的做法還是進遊戲把寵物收起來。詳見 vision/follower.py
+    filter_followers: bool = False
+    follower_min_shift_px: int = 90   # 鏡頭至少捲這麼多 px 才敢下判斷
     follower_hits: int = 3            # 累積幾次才判定為跟隨物
-    player_move_px: int = 2           # 小地圖 x 變化超過此值才算「角色有移動」
+    follower_tol_px: int = 45         # 兩個位置差多少內算「同一個地方」
+    follower_max: int = 2             # 一次判出超過這麼多隻就整組撤銷（判斷失準）
+    player_move_px: int = 3           # 小地圖座標變化超過此值才算「角色有移動」
 
 
 @dataclass
@@ -102,6 +106,8 @@ class AdvisorCfg:
 class AppCfg:
     window_title: str = "MapleStory"
     capture_method: str = "auto"      # auto | printwindow | screen
+    # 校正當下的 client 區大小。視窗尺寸改了 regions 就全錯，開場先擋下來
+    calibrated_for: Optional[Tuple[int, int]] = None
     fps: float = 8.0
     regions: Dict[str, Region] = field(default_factory=dict)
     minimap_auto: bool = False        # regions.minimap: auto 時用角落模板自動定位
@@ -283,6 +289,11 @@ def load_config(path: str, local_path: Optional[str] = None) -> AppCfg:
         raise ConfigError(
             f"window.capture 只能是 auto / printwindow / screen，"
             f"拿到: {cfg.capture_method!r}")
+    size = win.get("calibrated_for")
+    if size is not None:
+        if not (isinstance(size, (list, tuple)) and len(size) == 2):
+            raise ConfigError(f"window.calibrated_for 要是 [寬, 高]，拿到: {size!r}")
+        cfg.calibrated_for = (int(size[0]), int(size[1]))
     cfg.fps = float(data.get("loop", {}).get("fps", cfg.fps))
 
     for name, raw in (data.get("regions") or {}).items():
@@ -323,8 +334,11 @@ def load_config(path: str, local_path: Optional[str] = None) -> AppCfg:
     vc.remote_max_width = int(v.get("remote_max_width", vc.remote_max_width))
     vc.mob_interval = float(v.get("mob_interval", vc.mob_interval))
     vc.filter_followers = bool(v.get("filter_followers", vc.filter_followers))
-    vc.follower_drift_px = int(v.get("follower_drift_px", vc.follower_drift_px))
+    vc.follower_min_shift_px = int(v.get("follower_min_shift_px",
+                                         vc.follower_min_shift_px))
     vc.follower_hits = int(v.get("follower_hits", vc.follower_hits))
+    vc.follower_tol_px = int(v.get("follower_tol_px", vc.follower_tol_px))
+    vc.follower_max = int(v.get("follower_max", vc.follower_max))
     vc.player_move_px = int(v.get("player_move_px", vc.player_move_px))
     if v.get("mob_search_box"):
         sb = v["mob_search_box"]
