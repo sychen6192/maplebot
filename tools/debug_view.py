@@ -136,6 +136,11 @@ def _report(state, action, followers=(), detector=None):
               f"面積 {mob.w * mob.h}")
     if detector is not None and hasattr(detector, "explain"):
         print(f"    {detector.explain()}")
+    bars = sum(1 for m in state.mobs if m.name == "hpbar")
+    if bars:
+        print(f"    其中 {bars} 個來自怪物血條偵測（標 hpbar）。"
+              "框沒落在真的血條上就把 vision.detect_hp_bars 關掉——"
+              "長草的地圖很容易整片草地被誤判")
     if followers:
         print(f"  跟隨物（寵物，不攻擊）: {len(followers)}")
     print(f"  當下決策: {type(action).__name__}")

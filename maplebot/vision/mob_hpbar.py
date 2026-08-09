@@ -26,13 +26,23 @@ BODY_OFFSET_Y = 10        # 從血條往下多少 px 開始算身體（以 790px
 BODY_W = 70               # 猜測的身體寬高
 BODY_H = 60
 
+# 血條本身的形狀（790px 寬為基準）。這幾個界限就是這套方法能不能用的關鍵：
+# 草地、樹葉的綠只跟血條差十幾階，光比顏色會把整片草地判成血條。
+BAR_W = (10, 70)          # 血條寬度範圍
+BAR_H = (2, 9)            # 高度範圍（很扁）
+MIN_SOLIDITY = 0.6        # 面積 / 外框面積：血條是實心矩形，草地是碎的
 
-def find_hp_bars(playfield_bgr: np.ndarray, tolerance: int = 25,
-                 min_pixels: int = 6, scale: float = 1.0) -> List[Mob]:
+
+def find_hp_bars(playfield_bgr: np.ndarray, tolerance: int = 0,
+                 scale: float = 1.0) -> List[Mob]:
     """回傳每個怪物血條底下推測出來的怪。
 
-    tolerance 是各通道容許誤差：擷取方式不同（PrintWindow / 螢幕擷取 / 縮放）
-    顏色會有一兩階誤差，完全精確比對太脆。
+    **tolerance 預設 0（精確比色）**。這個訊號的全部價值就在於「那個綠只有
+    血條會出現」，放寬容差等於把它降級成普通的顏色偵測——實測 ±25 就會把
+    草地整片吃進去（草地綠與血條綠只差 17~24 階），一張畫面冒出三十幾隻假怪。
+    參考專案也是精確比色，是我自己加容差加壞的。
+
+    除了顏色，還要求形狀像血條：夠扁、寬度在範圍內、而且是實心矩形。
     """
     if playfield_bgr.size == 0:
         return []
@@ -45,13 +55,17 @@ def find_hp_bars(playfield_bgr: np.ndarray, tolerance: int = 25,
     body_w = max(int(BODY_W * scale), 8)
     body_h = max(int(BODY_H * scale), 8)
     offset = max(int(BODY_OFFSET_Y * scale), 1)
+    wmin, wmax = max(int(BAR_W[0] * scale), 4), int(BAR_W[1] * scale)
+    hmin, hmax = max(int(BAR_H[0] * scale), 1), max(int(BAR_H[1] * scale), 3)
 
     mobs: List[Mob] = []
     for i in range(1, n):
         x, y, bw, bh, area = stats[i]
-        if area < min_pixels:
+        if not (wmin <= bw <= wmax and hmin <= bh <= hmax):
             continue
-        if bh > bw:               # 血條是橫的；直的色塊是別的東西
+        if bh >= bw:                          # 血條一定是橫的
+            continue
+        if area < MIN_SOLIDITY * bw * bh:     # 實心矩形，不是碎色塊
             continue
         # 血條中心的正下方就是怪
         cx = int(x + bw // 2)

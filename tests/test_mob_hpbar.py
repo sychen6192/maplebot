@@ -33,10 +33,28 @@ def test_plain_scene_finds_nothing():
     assert find_hp_bars(np.full((200, 400, 3), 90, dtype=np.uint8)) == []
 
 
-def test_slightly_off_colour_still_matches():
-    """擷取方式不同會有一兩階誤差，精確比對太脆。"""
-    off = tuple(c + 12 for c in HP_BAR_BGR)
-    assert len(find_hp_bars(_scene([(200, 100)], color=off))) == 1
+def test_grass_green_is_not_a_health_bar():
+    """實際踩到的：草地綠跟血條綠只差 17~24 階，容差 25 就把整片草地判成怪。
+
+    這個訊號唯一的價值就是「那個綠只有血條會出現」，所以預設精確比色。
+    """
+    for grass in [(95, 205, 80), (88, 214, 72), (70, 180, 60)]:
+        assert find_hp_bars(_scene([(200, 100)], color=grass)) == [], grass
+
+
+def test_a_textured_green_patch_is_not_a_health_bar():
+    """草地是有紋理的，血條是實心矩形。"""
+    rng = np.random.default_rng(3)
+    img = np.full((520, 790, 3), 90, dtype=np.uint8)
+    patch = rng.integers(0, 2, (60, 300)).astype(bool)      # 半數像素剛好同色
+    region = img[300:360, 200:500]
+    region[patch] = HP_BAR_BGR
+    assert find_hp_bars(img) == []
+
+
+def test_a_long_green_strip_is_not_a_health_bar():
+    """草地邊緣是一長條，血條只有幾十 px 寬。"""
+    assert find_hp_bars(_scene([(50, 300)], bar_w=700, bar_h=5)) == []
 
 
 def test_a_completely_different_green_is_ignored():
@@ -50,6 +68,11 @@ def test_vertical_green_strips_are_ignored():
 
 def test_tiny_specks_are_ignored():
     assert find_hp_bars(_scene([(200, 100)], bar_w=1, bar_h=1)) == []
+
+
+def test_a_tall_green_block_is_ignored():
+    """血條很扁。高度超過範圍的一律不算。"""
+    assert find_hp_bars(_scene([(200, 100)], bar_w=40, bar_h=40)) == []
 
 
 def test_boxes_scale_with_the_window():
