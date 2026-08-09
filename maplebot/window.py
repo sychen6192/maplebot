@@ -122,6 +122,33 @@ def find_game_window(title_substr: str) -> Optional[GameWindow]:
     return None
 
 
+def resize_client(win: GameWindow, width: int, height: int) -> Optional[GameWindow]:
+    """把視窗調到 client 區剛好是 width x height，回傳更新後的 GameWindow。
+
+    ROI 是照某一個視窗大小校正的，尺寸一變全部錯位（血條讀成 0%、小地圖框到
+    別的地方）。與其開場報錯要使用者自己去拉視窗，不如直接把它調回校正時的
+    大小——遊戲視窗大小本來就不是使用者在意的東西。
+
+    SetWindowPos 給的是**整個視窗**的大小，client 區還要扣掉邊框與標題列，
+    所以先量出目前兩者的差額再加回去（比 AdjustWindowRectEx 可靠：不必猜
+    視窗樣式，DPI 縮放也已經反映在實測值裡）。
+    """
+    if not IS_WINDOWS:
+        return None
+    outer = wintypes.RECT()
+    if not user32.GetWindowRect(win.hwnd, ctypes.byref(outer)):
+        return None
+    inner = wintypes.RECT()
+    user32.GetClientRect(win.hwnd, ctypes.byref(inner))
+    pad_w = (outer.right - outer.left) - (inner.right - inner.left)
+    pad_h = (outer.bottom - outer.top) - (inner.bottom - inner.top)
+
+    SWP_NOMOVE, SWP_NOZORDER, SWP_NOACTIVATE = 0x0002, 0x0004, 0x0010
+    user32.SetWindowPos(win.hwnd, 0, 0, 0, width + pad_w, height + pad_h,
+                        SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE)
+    return find_game_window(win.title)
+
+
 def grab_client(win: GameWindow) -> Optional[np.ndarray]:
     """用 PrintWindow 取得 client 區畫面（BGR）。
 

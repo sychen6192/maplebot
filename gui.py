@@ -10,7 +10,7 @@ import sys
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="maplebot 控制台")
+    ap = argparse.ArgumentParser(description="mapleai 控制台")
     ap.add_argument("--config", default="config/default.yaml")
     ap.add_argument("--profile", default="config/profiles/example.yaml")
     args = ap.parse_args(argv)
