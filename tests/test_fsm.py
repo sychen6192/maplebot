@@ -862,3 +862,35 @@ def test_no_emergency_potion_configured_keeps_the_old_behaviour():
     state = GameState(ts=0.0, hp=0.30, mp=1.0, player=(70, 90))
     action = fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300))
     assert isinstance(action, fsm.DrinkPotion) and action.key == "s"
+
+
+def test_ranged_class_backs_off_when_a_mob_gets_too_close():
+    """遠程職業站樁輸出，怪貼到臉上只會挨打——先退開，下個 tick 就打得到了。"""
+    cfg, p = AppCfg(), _chase_profile()
+    p.attack.range_px = 150          # 遠程：射程長
+    p.keep_away_px = 60
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(70, 90),
+                      mobs=[_mob_at(430, 300)])          # 中心右邊 30px，太近
+    action = fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300))
+    assert isinstance(action, fsm.Chase) and action.away
+    assert action.direction == -1                        # 往反方向退
+
+
+def test_ranged_class_attacks_once_it_has_room():
+    cfg, p = AppCfg(), _chase_profile()
+    p.attack.range_px = 150
+    p.keep_away_px = 60
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(70, 90),
+                      mobs=[_mob_at(520, 300)])          # 120px 遠，夠開
+    assert isinstance(fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300)),
+                      fsm.Attack)
+
+
+def test_melee_class_never_backs_off():
+    """近戰貼臉本來就是它要的，keep_away_px 設 0 關掉。"""
+    cfg, p = AppCfg(), _chase_profile()
+    p.keep_away_px = 0
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(70, 90),
+                      mobs=[_mob_at(410, 300)])
+    assert isinstance(fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300)),
+                      fsm.Attack)

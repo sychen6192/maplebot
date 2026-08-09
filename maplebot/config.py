@@ -248,6 +248,9 @@ class Profile:
     # 跟 attack.range_px 一樣以 REFERENCE_WIDTH 為基準自動縮放。
     # 設成攻擊距離的 3~5 倍：太小等於沒開，太大會被畫面邊緣的怪一直拉走。
     chase_px: int = 0
+    # 怪靠得比這個近就先退開再打（0 = 關掉）。遠程職業站樁輸出時，怪貼上來
+    # 只會挨打；近戰不需要，貼臉本來就是它要的。同樣以 REFERENCE_WIDTH 縮放。
+    keep_away_px: int = 0
     # 攻擊距離依 playfield 寬度自動縮放（基準 REFERENCE_WIDTH）。
     # 關掉的話 range_px 就是你這個視窗大小的實際像素，換視窗要自己重調。
     attack_auto_scale: bool = True
@@ -445,6 +448,7 @@ def load_profile(path: str) -> Profile:
     p.panic_return_key = str(data.get("panic_return_key", "")).lower()
     p.attack_auto_scale = bool(data.get("attack_auto_scale", p.attack_auto_scale))
     p.chase_px = int(data.get("chase_px", p.chase_px))
+    p.keep_away_px = int(data.get("keep_away_px", p.keep_away_px))
 
     pa = data.get("patrol", {})
     raw_wps = pa.get("waypoints", pa.get("waypoints_x", []))
