@@ -16,11 +16,25 @@ import cv2
 import numpy as np
 
 from .config import Region
-from .window import GameWindow, find_game_window, grab_client
+from .window import GameWindow, find_game_window, grab_client, list_windows
+
+MAX_LISTED_WINDOWS = 12
 
 
 class CaptureError(Exception):
     pass
+
+
+def _open_windows_hint() -> str:
+    """把目前開著的視窗列出來——比叫使用者「自己去看標題列」快得多，
+    尤其客戶端標題有中英文兩種版本的時候。"""
+    titles = [t for _, t in list_windows() if t.strip()]
+    if not titles:
+        return ""
+    shown = titles[:MAX_LISTED_WINDOWS]
+    more = f"（另有 {len(titles) - len(shown)} 個）" if len(titles) > len(shown) else ""
+    listed = "、".join(f"「{t}」" for t in shown)
+    return f"\n目前開著的視窗{more}：{listed}\n把其中一段填進 window.title 即可。"
 
 
 def looks_blank(frame: Optional[np.ndarray], dark_level: int = 8,
@@ -62,7 +76,9 @@ class WindowCapture:
     def refresh(self) -> GameWindow:
         win = find_game_window(self._title)
         if win is None:
-            raise CaptureError(f"找不到標題含「{self._title}」的視窗，請先開啟遊戲")
+            raise CaptureError(
+                f"找不到標題含「{self._title}」的視窗，請先開啟遊戲。"
+                + _open_windows_hint())
         self._win = win
         return win
 

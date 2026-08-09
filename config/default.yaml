@@ -3,7 +3,9 @@
 # 你的解析度/UI 位置不同時，執行 python tools/calibrate.py 重新框選。
 
 window:
-  title: "MapleSaga"        # 遊戲視窗標題（子字串比對即可）
+  # 遊戲視窗標題，子字串比對、不分大小寫。找不到時 log 會列出目前開著的視窗，
+  # 直接照抄一段進來即可（有些客戶端標題是英文的 MapleStory）
+  title: "新楓之谷"
   # 擷取方式：
   #   auto        啟動時自動測試，優先用 printwindow（建議）
   #   printwindow 直接向視窗要畫面，被其他視窗蓋住也正確
