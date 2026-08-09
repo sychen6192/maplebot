@@ -59,6 +59,10 @@ class VisionCfg:
     outline_auto_scale: bool = True    # 依實際畫面寬度等比例縮放上面的門檻
     outline_close_kernel: int = 20     # 把斷續描邊連成整塊
     outline_player_box: Tuple[int, int] = (100, 140)   # 畫面中央挖掉的自己
+    # 怪物頭上的綠色血條：被打過的怪一定有，顏色是遊戲畫的 UI 不用調門檻。
+    # 專門補描邊偵測漏掉的（太大/太小/跟地形連在一起）
+    detect_hp_bars: bool = True
+    hp_bar_tolerance: int = 25        # 各通道容許誤差（擷取方式不同會差一兩階）
     mob_match_threshold: float = 0.72
     yolo_model: str = ""
     yolo_confidence: float = 0.5
@@ -334,6 +338,8 @@ def load_config(path: str, local_path: Optional[str] = None) -> AppCfg:
     if "outline_player_box" in v:
         pb = v["outline_player_box"]
         vc.outline_player_box = (int(pb[0]), int(pb[1]))
+    vc.detect_hp_bars = bool(v.get("detect_hp_bars", vc.detect_hp_bars))
+    vc.hp_bar_tolerance = int(v.get("hp_bar_tolerance", vc.hp_bar_tolerance))
     vc.mob_match_threshold = float(v.get("mob_match_threshold", vc.mob_match_threshold))
     vc.yolo_model = str(v.get("yolo_model", vc.yolo_model))
     vc.yolo_confidence = float(v.get("yolo_confidence", vc.yolo_confidence))

@@ -589,3 +589,39 @@ def test_gap_without_targets_restarts_the_attack_timer(cfg, profile):
     assert isinstance(fsm.decide(_state(mobs=[_mob(400)]), cfg, profile, rt, t, CENTER),
                       fsm.Attack)
     assert rt.attack_breaks == 0
+
+
+def _wide_mob(cx, cy=260, w=30, h=24):
+    return Mob(cx=cx, cy=cy, w=w, h=h, score=0.9, name="m")
+
+
+def test_a_big_mob_at_the_edge_is_attackable(cfg, profile):
+    """體型大的怪：中心在攻擊範圍外，身體壓在範圍裡——實際上打得到。
+
+    只比中心點的話會放過牠（「明明貼在臉上卻不打」）。
+    """
+    profile.attack.range_px = 100
+    edge = _wide_mob(cx=CENTER[0] + 130, w=120)      # 中心超出 30px，但半寬 60
+    action = fsm.decide(_state(mobs=[edge]), cfg, profile, _rt(), NOW, CENTER)
+    assert isinstance(action, fsm.Attack)
+
+
+def test_a_mob_fully_outside_is_still_ignored(cfg, profile):
+    profile.attack.range_px = 100
+    far = _wide_mob(cx=CENTER[0] + 400, w=40)
+    action = fsm.decide(_state(mobs=[far]), cfg, profile, _rt(), NOW, CENTER)
+    assert not isinstance(action, fsm.Attack)
+
+
+def test_vertical_range_also_counts_the_body(cfg, profile):
+    profile.attack.vertical_range_px = 40
+    tall = _wide_mob(cx=CENTER[0], cy=CENTER[1] + 60, h=80)
+    action = fsm.decide(_state(mobs=[tall]), cfg, profile, _rt(), NOW, CENTER)
+    assert isinstance(action, fsm.Attack)
+
+
+def test_a_mob_on_another_platform_is_still_ignored(cfg, profile):
+    profile.attack.vertical_range_px = 40
+    upstairs = _wide_mob(cx=CENTER[0], cy=CENTER[1] - 200, h=30)
+    action = fsm.decide(_state(mobs=[upstairs]), cfg, profile, _rt(), NOW, CENTER)
+    assert not isinstance(action, fsm.Attack)

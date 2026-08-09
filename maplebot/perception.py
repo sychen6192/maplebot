@@ -12,10 +12,11 @@ import numpy as np
 
 from .brain.state import GameState
 from .config import AppCfg
-from .vision import minimap, status
+from .vision import minimap, mob_hpbar, status
 from .vision.locate import PLAYER_NAME, load_ui_template
 from .vision.follower import FollowerFilter
 from .vision.mobs import MobDetector
+from .vision.outline_mobs import REFERENCE_WIDTH
 
 
 class Perceiver:
@@ -83,6 +84,12 @@ class Perceiver:
             if due:
                 roi, ox, oy = self._search_roi(pf)
                 mobs = self.detector.detect(roi)
+                if vc.detect_hp_bars:
+                    # 怪物頭上的血條是遊戲畫的 UI，顏色固定、不用調門檻——
+                    # 專門補描邊偵測漏掉的那幾隻（見 vision/mob_hpbar.py）
+                    mobs = mob_hpbar.merge(mobs, mob_hpbar.find_hp_bars(
+                        roi, tolerance=vc.hp_bar_tolerance,
+                        scale=roi.shape[1] / REFERENCE_WIDTH))
                 if ox or oy:      # 換算回 playfield 座標
                     mobs = [replace(m, cx=m.cx + ox, cy=m.cy + oy) for m in mobs]
                 if self._followers is not None:

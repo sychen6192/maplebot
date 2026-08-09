@@ -179,6 +179,19 @@ class Runtime:
         self.climb_retries = 0
 
 
+def _in_attack_box(mob, center_x: int, center_y: int,
+                   range_px: int, vertical_range_px: int) -> bool:
+    """怪的**身體**有沒有碰到攻擊範圍框。
+
+    原本比的是怪的中心點，體型大的怪（中心在框外、身體壓在框裡）會被當成
+    打不到而放過——實際上打得到。改成框對框相交，參考 MapleStoryAutoLevelUp
+    用交集面積判定的作法（他們比的是重疊面積，我們只要有碰到就算：
+    這裡的框本來就是「攻擊得到的範圍」，碰到就是打得到）。
+    """
+    return (abs(mob.cx - center_x) <= range_px + mob.w // 2
+            and abs(mob.cy - center_y) <= vertical_range_px + mob.h // 2)
+
+
 def _mp_below(state: GameState, threshold: float) -> bool:
     """MP 低於門檻。讀不到 MP 時回 False——寧可照常施放，也不要因為辨識
     失敗就整個停擺。"""
@@ -385,8 +398,8 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
         for i, sk in enumerate(profile.active_skills()):
             in_range = [
                 m for m in state.mobs
-                if abs(m.cx - center_x) <= sk.range_px
-                and abs(m.cy - center_y) <= sk.vertical_range_px
+                if _in_attack_box(m, center_x, center_y,
+                                  sk.range_px, sk.vertical_range_px)
             ]
             if in_range:
                 mobs_near = True

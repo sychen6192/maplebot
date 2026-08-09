@@ -251,3 +251,48 @@ def test_real_death_still_reaches_the_decision_layer(cfg, frame):
     empty[60:68, 10:45] = (60, 60, 60)
     p.perceive(empty, now=0.1)
     assert p.perceive(empty, now=0.2).hp == 0.0
+
+
+class _BlindDetector:
+    """什麼都抓不到——模擬描邊偵測漏掉的情況。"""
+
+    def detect(self, playfield):
+        return []
+
+
+def _with_hp_bar(frame, x=120, y=120):
+    from maplebot.vision.mob_hpbar import HP_BAR_BGR
+    f = frame.copy()
+    cv2.rectangle(f, (x, y), (x + 30, y + 3), HP_BAR_BGR, -1)   # playfield 內
+    return f
+
+
+def test_hp_bar_finds_a_mob_the_outline_detector_missed(cfg, frame):
+    """描邊漏掉的那幾幀，血條還在——打到一半不會跟丟。"""
+    p = Perceiver(cfg, _BlindDetector())
+    st = p.perceive(_with_hp_bar(frame), now=1.0)
+    assert len(st.mobs) == 1
+    assert st.mobs[0].name == "hpbar"
+
+
+def test_hp_bar_detection_can_be_turned_off(cfg, frame):
+    cfg.vision.detect_hp_bars = False
+    p = Perceiver(cfg, _BlindDetector())
+    assert p.perceive(_with_hp_bar(frame), now=1.0).mobs == []
+
+
+def test_hp_bar_coordinates_are_playfield_relative(cfg, frame):
+    """playfield ROI 是 (0,80,300,200)，血條畫在畫面的 y=120 -> playfield 的 y=40。"""
+    p = Perceiver(cfg, _BlindDetector())
+    mob = p.perceive(_with_hp_bar(frame, x=120, y=120), now=1.0).mobs[0]
+    assert abs(mob.cx - 135) <= 5
+    assert 40 < mob.cy < 120        # 在血條下方，且還在 playfield 裡
+
+
+def test_hp_bar_survives_the_search_box_offset(cfg, frame):
+    """只搜角色周圍時，血條的座標也要換算回 playfield。"""
+    cfg.vision.mob_search_box = (200, 120)
+    p = Perceiver(cfg, _BlindDetector())
+    mobs = p.perceive(_with_hp_bar(frame, x=120, y=170), now=1.0).mobs
+    assert len(mobs) == 1
+    assert 100 < mobs[0].cx < 200

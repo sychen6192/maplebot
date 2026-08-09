@@ -24,7 +24,7 @@
 - **控制**：SendInput scancode（DirectInput 遊戲吃得到），按鍵時間帶 ±20% 抖動
 - **安全**：HP 危險線自動停機（可先回城）、其他玩家出現先暫停、黑屏/找不到角色
   自動暫停 + 截圖存證 + 聲音警報
-- **可測性**：268 個 pytest（合成影像 + 真實截圖真值），整條主迴圈可用一張截圖 dry-run
+- **可測性**：318 個 pytest（合成影像 + 真實截圖真值），整條主迴圈可用一張截圖 dry-run
 - **ML 擴充**：YOLO 訓練管線（蒐集→自動預標註→校對→訓練→部署）與本地 VLM 督導層
 
 設計對照過同類最高星的開源專案（684★ auto-maple、356★ MapleStoryAutoLevelUp），
@@ -258,6 +258,7 @@ maplebot/
   vision/status.py           #   HP/MP/EXP 比例（逐欄色彩統計）
   vision/mobs.py             #   模板匹配偵測 + NMS（MobDetector 介面）
   vision/outline_mobs.py     #   描邊偵測（預設：零設定，不用模板/訓練）
+  vision/mob_hpbar.py        #   怪物綠血條偵測（補描邊漏掉的，不用調門檻）
   vision/follower.py         #   濾掉跟著角色跑的東西（寵物）
   vision/yolo_mobs.py        #   YOLO 偵測（選配，同介面）
   perception.py              # Perceiver：一張完整畫面 -> GameState（每 tick 只擷取一次）

@@ -236,7 +236,7 @@ python main.py --profile config/profiles/mymap.yaml
 
 | 症狀 | 解法 |
 |---|---|
-| **抓到的怪比想像中少** | 跑 `python tools/debug_view.py --snapshot check.png`，最後一行會直接告訴你原因與該調哪個旋鈕，例如「黑塊 146 個 -> 採用 3 個（太小 143、太大 0）」 |
+| **抓到的怪比想像中少** | 跑 `python tools/debug_view.py --snapshot check.png`，最後一行會直接告訴你原因與該調哪個旋鈕，例如「黑塊 146 個 -> 採用 3 個（太小 143、太大 0）」。另外打過的怪頭上會有綠色血條，那條會被獨立偵測到（框上標 `hpbar`），所以打起來之後通常就不會再跟丟 |
 | 抓不到怪 / 框到背景 | 調 `outline_black_level`（8→15 抓更多、8→4 抓更少）與 `outline_min_area` |
 | 幾隻怪被框成一大塊 | `outline_close_kernel` 調小（怪跟地形/彼此連在一起了），或 `outline_max_area` 調高 |
 | **一直打自己的寵物** | 三個辦法，由可靠到不可靠：①**進遊戲把寵物收起來**（最乾脆，撿物有 `loot.key` 可代勞）②`vision: { outline_player_box: [220, 200] }` 把角色旁邊那塊直接挖掉（連貼身的怪也會一起挖掉）③`vision: { filter_followers: true }` 讓程式自己認寵物——它靠鏡頭捲動判別，**窄地圖鏡頭不捲就認不出來**，所以預設關閉 |
