@@ -48,3 +48,27 @@ def test_image_capture_full_and_region(tmp_path):
     assert cap.size == (120, 80)
     assert cap.grab().shape == (80, 120, 3)
     assert cap.grab((10, 5, 20, 15)).shape == (15, 20, 3)
+
+
+def test_missing_window_error_lists_what_is_open(monkeypatch):
+    """標題有中英文兩種版本時，「自己去看標題列」很難照做——直接列給他看。"""
+    from maplebot import capture as cap
+    monkeypatch.setattr(cap, "list_windows",
+                        lambda: [(1, "新楓之谷"), (2, "Discord"), (3, "  ")])
+    hint = cap._open_windows_hint()
+    assert "新楓之谷" in hint and "Discord" in hint
+    assert "  " not in hint.replace("目前開著的視窗", "")
+
+
+def test_window_hint_is_empty_off_windows(monkeypatch):
+    from maplebot import capture as cap
+    monkeypatch.setattr(cap, "list_windows", list)
+    assert cap._open_windows_hint() == ""
+
+
+def test_window_hint_truncates_a_long_list(monkeypatch):
+    from maplebot import capture as cap
+    monkeypatch.setattr(cap, "list_windows",
+                        lambda: [(i, f"win{i}") for i in range(40)])
+    hint = cap._open_windows_hint()
+    assert "另有 28 個" in hint
