@@ -45,7 +45,7 @@ def test_climbing_records_the_level():
 
 def test_jumping_down_is_marked_as_descend():
     route = _walk(range(30, 50, 2), y=20) + \
-        _walk([50, 50], y=40, keys=("alt",))
+        _walk([50, 50, 50, 50], y=40, keys=("alt",))
     pts = compress(route, jump_key="alt")
     assert any(p.descend == "jump" for p in pts)
 
@@ -95,7 +95,7 @@ def test_describe_reads_like_a_route():
 
 
 def test_describe_marks_a_jump_down():
-    pts = compress(_walk(range(30, 50, 2), y=20) + _walk([50, 50], y=40, keys=("alt",)),
+    pts = compress(_walk(range(30, 50, 2), y=20) + _walk([50, 50, 50, 50], y=40, keys=("alt",)),
                    jump_key="alt")
     assert "下跳" in describe(pts)
 
@@ -109,3 +109,28 @@ def test_coverage_reports_span_and_levels():
     assert "樓層" not in coverage([RoutePoint(30), RoutePoint(90)])
     assert "2 個樓層" in coverage([RoutePoint(30, y=40), RoutePoint(60, y=20)])
     assert coverage([]) == "0 個點"
+
+
+def test_one_rope_climb_is_one_point_not_a_trail_of_them():
+    """爬繩途中 y 是一格一格變的。每一幀都當成新樓層的話，一次爬繩會錄成
+    一串中途高度（實測 y=40 爬到 20 錄出 6 個點），執行時就會傻傻地想
+    「爬到 y=36」再「爬到 y=32」，每一個都爬不到、每一個都重試。
+    """
+    route = _walk(range(30, 62, 2), y=40)
+    for y in (36, 32, 28, 24):
+        route += _walk([60], y=y)          # 還在繩子上，y 一直在動
+    route += _walk([60] * 4, y=20)         # 爬到頂、站定
+    route += _walk(range(60, 92, 2), y=20)
+
+    pts = compress(route)
+    levels = sorted({p.y for p in pts})
+    assert levels == [20, 40], describe(pts)
+    assert len(pts) == 3, describe(pts)
+
+
+def test_a_blip_in_the_minimap_reading_is_not_a_floor():
+    """小地圖 y 偶爾跳一下不代表換樓層——沒站定就不算。"""
+    route = _walk(range(30, 60, 2), y=20)
+    route[5] = Sample(t=0.6, x=40, y=44)   # 單幀誤讀
+    pts = compress(route)
+    assert {p.y for p in pts} == {20}, describe(pts)

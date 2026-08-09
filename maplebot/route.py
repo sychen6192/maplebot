@@ -47,8 +47,16 @@ class RoutePoint:
 
 
 def compress(samples: Sequence[Sample], tolerance: int = 4, y_tolerance: int = 3,
-             min_span: int = 6, jump_key: str = "") -> List[RoutePoint]:
-    """原始軌跡 -> 巡邏點。多層地圖才會帶 y。"""
+             min_span: int = 6, jump_key: str = "",
+             settle_samples: int = 3) -> List[RoutePoint]:
+    """原始軌跡 -> 巡邏點。多層地圖才會帶 y。
+
+    settle_samples：小地圖 y 要連續幾筆都停在同一個高度，才承認「到了新的
+    樓層」。爬繩子的過程中 y 是一格一格變的，每一幀都當成新樓層的話，一次
+    爬繩會錄成一串中途高度（實測 y=40 爬到 20 錄出 6 個點），執行時就會
+    傻傻地想「爬到 y=36」再「爬到 y=32」，每一個都爬不到、每一個都重試。
+    人真的站定了 y 才會停住，所以要等它停下來才算數。
+    """
     pts = [s for s in samples if s.x is not None]
     if not pts:
         return []
@@ -68,6 +76,9 @@ def compress(samples: Sequence[Sample], tolerance: int = 4, y_tolerance: int = 3
     direction = 0                          # 0 = 還沒開始走
     peak = prev_x = pts[0].x               # peak = 這一段走到最遠的位置
     jump_held = False
+    depart_x = pts[0].x                    # 離開舊樓層時的 x（＝繩子在哪）
+    cand_y: Optional[int] = None           # 正在觀察的新高度
+    cand_n = 0                             # 已經連續幾筆停在那個高度
 
     for s in pts:
         for k in s.keys:
@@ -78,13 +89,24 @@ def compress(samples: Sequence[Sample], tolerance: int = 4, y_tolerance: int = 3
 
         if multi_level and s.y is not None and level is not None \
                 and abs(s.y - level) > y_tolerance:
+            if cand_y is None:
+                depart_x = prev_x          # 剛離地那一刻，人還在繩子前面
+            if cand_y is None or abs(s.y - cand_y) > y_tolerance:
+                cand_y, cand_n = s.y, 1    # 還在往上/往下移動，重新計數
+            else:
+                cand_n += 1
+            if cand_n < settle_samples:
+                prev_x = s.x
+                continue                   # 還沒站定，先不要記成一層樓
             # 爬繩/下平台：離開舊樓層的位置和落地的位置都要記，
             # 執行時才知道要先走到繩子前面
-            emit(prev_x, level)
+            emit(depart_x, level)
             emit(s.x, s.y, "jump" if (s.y > level and jump_held) else "")
             level, direction, peak, jump_held = s.y, 0, s.x, False
+            cand_y, cand_n = None, 0
             prev_x = s.x
             continue
+        cand_y, cand_n = None, 0           # 又回到原本那層，剛剛那下不算
         prev_x = s.x
 
         if direction == 0:
