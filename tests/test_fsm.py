@@ -625,3 +625,48 @@ def test_a_mob_on_another_platform_is_still_ignored(cfg, profile):
     upstairs = _wide_mob(cx=CENTER[0], cy=CENTER[1] - 200, h=30)
     action = fsm.decide(_state(mobs=[upstairs]), cfg, profile, _rt(), NOW, CENTER)
     assert not isinstance(action, fsm.Attack)
+
+
+def test_attack_range_scales_with_the_window(cfg, profile):
+    """range_px 是畫面像素：同一個 profile 換個視窗大小，攻擊範圍不該跟著變。
+
+    1920 視窗填 320 只等於 800x600 時代的 133px——短劍剛好還算合理，
+    但那是巧合。實際世界距離必須一致。
+    """
+    profile.attack.range_px = 320
+    mob_at = 300      # 基準畫面下在範圍內
+    small = _state(mobs=[Mob(cx=mob_at, cy=260, w=10, h=10, score=1, name="m")])
+    assert isinstance(fsm.decide(small, cfg, profile, _rt(), NOW, (395, 260)),
+                      fsm.Attack)
+
+    # 同一個世界位置，在 2.4 倍寬的畫面上像素距離也是 2.4 倍
+    big_center = (int(395 * 2.4), 260)
+    far = _state(mobs=[Mob(cx=int(big_center[0] + (mob_at - 395) * 2.4), cy=260,
+                           w=10, h=10, score=1, name="m")])
+    assert isinstance(fsm.decide(far, cfg, profile, _rt(), NOW, big_center),
+                      fsm.Attack)
+
+
+def test_out_of_range_stays_out_of_range_at_any_window_size(cfg, profile):
+    profile.attack.range_px = 100
+    for center_x, scale in ((395, 1.0), (948, 2.4)):
+        beyond = int(center_x + 200 * scale)
+        st = _state(mobs=[Mob(cx=beyond, cy=260, w=10, h=10, score=1, name="m")])
+        action = fsm.decide(st, cfg, profile, _rt(), NOW, (center_x, 260))
+        assert not isinstance(action, fsm.Attack), f"scale {scale}"
+
+
+def test_auto_scale_can_be_turned_off(cfg, profile):
+    """關掉之後 range_px 就是這個視窗的實際像素。"""
+    profile.attack_auto_scale = False
+    profile.attack.range_px = 320
+    far = _state(mobs=[Mob(cx=948 + 400, cy=260, w=10, h=10, score=1, name="m")])
+    assert not isinstance(fsm.decide(far, cfg, profile, _rt(), NOW, (948, 260)),
+                          fsm.Attack)
+
+
+def test_attack_scale_helper():
+    assert fsm.attack_scale(790) == pytest.approx(1.0)
+    assert fsm.attack_scale(1580) == pytest.approx(2.0)
+    assert fsm.attack_scale(1580, enabled=False) == 1.0
+    assert fsm.attack_scale(0) == 1.0

@@ -24,7 +24,7 @@
 - **控制**：SendInput scancode（DirectInput 遊戲吃得到），按鍵時間帶 ±20% 抖動
 - **安全**：HP 危險線自動停機（可先回城）、其他玩家出現先暫停、黑屏/找不到角色
   自動暫停 + 截圖存證 + 聲音警報
-- **可測性**：318 個 pytest（合成影像 + 真實截圖真值），整條主迴圈可用一張截圖 dry-run
+- **可測性**：322 個 pytest（合成影像 + 真實截圖真值），整條主迴圈可用一張截圖 dry-run
 - **ML 擴充**：YOLO 訓練管線（蒐集→自動預標註→校對→訓練→部署）與本地 VLM 督導層
 
 設計對照過同類最高星的開源專案（684★ auto-maple、356★ MapleStoryAutoLevelUp），
@@ -196,7 +196,7 @@ EXP 59.89%，測試直接拿這些畫面顯示值當 ground truth 驗證辨識�
 | `patrol.probe_*` | `auto` 的探邊參數（試探步長、撞牆判定、邊界內縮、最小可走範圍） |
 | `patrol.y_tolerance` / `climb_*` | 垂直移動：到位容差、每步時間、爬不動判定與重試次數、上下鍵 |
 | `patrol.tolerance` / `step_*` / `stuck_*` / `jump_key` | 水平走位與卡住脫困 |
-| `attack.*` | 技能鍵、`directional`/`aoe`、攻擊範圍、施放時間、連發數 |
+| `attack.*` | 技能鍵、`directional`/`aoe`、攻擊範圍、施放時間、連發數。`range_px` 以 790px 寬畫面為基準自動縮放（短劍 120／槍 200／弓 600，用 `debug_view --snapshot` 的青色框對照） |
 | `buffs` / `potions` | buff 週期、藥水鍵與門檻 |
 | `panic_return_key` | 進入危險線時先按回城卷再停止（留空 = 直接停止） |
 

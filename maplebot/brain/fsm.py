@@ -28,7 +28,7 @@ playfield 中心近似，怪物距離就是與中心的距離。
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Union
 
-from ..config import AppCfg, PatrolCfg, Profile, Waypoint
+from ..config import REFERENCE_WIDTH, AppCfg, PatrolCfg, Profile, Waypoint
 from .state import GameState
 
 
@@ -179,8 +179,20 @@ class Runtime:
         self.climb_retries = 0
 
 
+def attack_scale(playfield_width: int, enabled: bool = True) -> float:
+    """攻擊距離的解析度倍率。
+
+    range_px 是**畫面**像素，但同一個世界距離在大視窗會佔更多像素：1920 視窗
+    的 320px 只等於 800x600 時代的 133px。不縮放的話，同一個 profile 換個
+    視窗大小攻擊範圍就整個變了（面積門檻也踩過同一個坑）。
+    """
+    if not enabled or playfield_width <= 0:
+        return 1.0
+    return playfield_width / REFERENCE_WIDTH
+
+
 def _in_attack_box(mob, center_x: int, center_y: int,
-                   range_px: int, vertical_range_px: int) -> bool:
+                   range_px: float, vertical_range_px: float) -> bool:
     """怪的**身體**有沒有碰到攻擊範圍框。
 
     原本比的是怪的中心點，體型大的怪（中心在框外、身體壓在框裡）會被當成
@@ -395,11 +407,12 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
         #（大絕設 min_mobs=3 就不會浪費在單隻怪身上）。
         mobs_near = False        # 任一技能範圍內有怪 -> 先打完再撿東西
         may_attack = now >= rt.attack_break_until
+        s = attack_scale(center_x * 2, profile.attack_auto_scale)
         for i, sk in enumerate(profile.active_skills()):
             in_range = [
                 m for m in state.mobs
                 if _in_attack_box(m, center_x, center_y,
-                                  sk.range_px, sk.vertical_range_px)
+                                  sk.range_px * s, sk.vertical_range_px * s)
             ]
             if in_range:
                 mobs_near = True

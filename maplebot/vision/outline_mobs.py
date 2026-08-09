@@ -24,8 +24,8 @@ from .mobs import Mob
 
 
 # 所有尺寸類參數都是對這個參考寬度校正的；實際畫面較大時等比例放大。
-# 楓谷經典版 800x600 視窗扣掉 UI 後的 playfield 大約就是這個寬度。
-REFERENCE_WIDTH = 790
+# 定義在 config.py，攻擊距離也用同一個基準。
+from ..config import REFERENCE_WIDTH  # noqa: E402  (放這裡讓常數的出處一目了然)
 
 
 class OutlineMobDetector:
