@@ -27,7 +27,7 @@
 - **控制**：SendInput scancode（DirectInput 遊戲吃得到），按鍵時間帶 ±20% 抖動
 - **安全**：HP 危險線自動停機（可先回城）、其他玩家出現先暫停、黑屏/找不到角色
   自動暫停 + 截圖存證 + 聲音警報
-- **可測性**：344 個 pytest（合成影像 + 真實截圖真值），整條主迴圈可用一張截圖 dry-run
+- **可測性**：418 個 pytest（合成影像 + 真實截圖真值），整條主迴圈可用一張截圖 dry-run
 - **ML 擴充**：YOLO 訓練管線（蒐集→自動預標註→校對→訓練→部署）與本地 VLM 督導層
 
 設計對照過同類最高星的開源專案（684★ auto-maple、356★ MapleStoryAutoLevelUp），
@@ -93,10 +93,18 @@ uv venv && .venv\Scripts\activate && uv pip install -r requirements.txt
 **圖形介面（最快）**
 
 ```bash
-python gui.py
+python gui.py --profile config/profiles/你的地圖.yaml
 # 視窗裡照順序按：重新校正 ROI -> 辨識自檢 -> 開始錄製（走一趟）-> 停止錄製
 #                -> 儲存設定 -> 開始打怪
 ```
+
+`--profile` 不要省：不指定的話動到的是範例檔 example.yaml，按「儲存設定」
+就會把你的設定寫進去。
+
+按鍵欄位（攻擊鍵、藥水鍵、buff 鍵…）**點一下再按下那個鍵就綁定**，不用自己
+打 `pageup`、`ctrl` 這種名字——打錯了不會有人告訴你，要等 bot 跑起來按鍵沒
+反應才發現。Esc 取消、右鍵清空；送不進遊戲的鍵（數字鍵盤、Caps Lock）會當場
+擋掉並說明原因。
 
 **命令列**
 
