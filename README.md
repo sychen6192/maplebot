@@ -16,6 +16,9 @@
 - **感知**：小地圖定位（玩家/其他玩家、角落模板自動找 ROI）、HP/MP/EXP 比例讀取、
   怪物偵測**零設定即可用**（靠 sprite 黑色描邊，不用模板/訓練/標註），
   也可切換模板匹配或自訓 YOLO
+- **角色定位**：認腳下的**角色名牌**找出自己在畫面上的位置（名牌上是你的角色名，
+  別人的比不中）。不這樣做的話，鏡頭跟隨延遲會讓角色偏離畫面中央兩百多 px，
+  結果是「把自己當成一隻怪，站在原地打自己打整晚」
 - **決策**：純函式優先權狀態機——保命 > 補給 > 禮讓 > buff > 打怪 > 巡邏，
   含卡住偵測自動脫困，單元測試完整涵蓋
 - **走位**：單層地圖巡邏點**可自動量測**（`waypoints: auto` 開場左右撞牆抓範圍）；
@@ -103,7 +106,11 @@ python gui.py
 # 2. 校正區域：框選 小地圖 / HP / MP / EXP / 主畫面，--write 直接寫回 config/local.yaml
 python tools/calibrate.py --write
 
-# 3.（選配）怪物偵測預設就是零設定的 outline，要用模板路線才需要這步
+# 3. 截一次角色名牌，程式才知道角色在畫面上的哪裡（框住腳下那塊深色底的名字）
+#    不做的話會把自己當成怪，站在原地打自己打整晚
+python tools/grab_template.py --dir data/templates/ui --name player_nametag
+
+# 3b.（選配）怪物偵測預設就是零設定的 outline，要用模板路線才需要這步
 python tools/grab_template.py --name snail
 
 # 4. 驗證辨識：即時疊框顯示玩家黃點/其他人紅點/血魔比例/怪物框
@@ -183,6 +190,10 @@ EXP 59.89%，測試直接拿這些畫面顯示值當 ground truth 驗證辨識�
 | `regions.*` | 小地圖/HP/MP/EXP/主畫面的 ROI，用 `tools/calibrate.py` 產生 |
 | `vision.color_tolerance` | 小地圖點色容差；誤判/漏判用 `tools/debug_view.py` 邊看邊調 |
 | `vision.mob_detector` | `outline`（預設，零設定）/ `template` / `yolo` / `remote` |
+| `vision.outline_black_level` | 判定為描邊的最大亮度。**有些客戶端的描邊不是純黑**（實測落在 16~32），預設 8 會漏抓整排小怪——`debug_view --snapshot` 看漏抓就往上調 |
+| `vision.outline_max_size` / `outline_max_aspect` | 擋掉形狀不可能是怪的黑塊（地形平台的暗邊會連成又寬又扁的長條，面積剛好落在合理區間） |
+| `vision.locate_nametag` | 認角色名牌找出角色位置（見上）。要先截一次名牌模板 |
+| `vision.mob_exclude` | 疊在主畫面上、不拿去找怪的 UI 區塊（小地圖面板、公告跑馬燈的文字都有黑描邊） |
 | `vision.filter_followers` | 把寵物從怪物清單剔除（角色移動時牠不會在畫面上滑動） |
 | `safety.*` | 危險線、熱鍵、他人暫停、watchdog 秒數 |
 | `safety.attack_stall_seconds` | 連續攻擊這麼久位置卻沒變就強制去巡邏（打不死的東西） |
@@ -259,7 +270,8 @@ maplebot/
   vision/mobs.py             #   模板匹配偵測 + NMS（MobDetector 介面）
   vision/outline_mobs.py     #   描邊偵測（預設：零設定，不用模板/訓練）
   vision/mob_hpbar.py        #   怪物綠血條偵測（補描邊漏掉的，不用調門檻）
-  vision/player_bar.py       #   組隊紅條定位角色（鏡頭會延遲，角色不在正中央）
+  vision/nametag.py          #   角色名牌定位角色（零設定，只認自己的名字）
+  vision/player_bar.py       #   組隊紅條定位角色（備援；要自己跟自己組隊）
   vision/follower.py         #   濾掉跟著角色跑的東西（寵物）
   vision/yolo_mobs.py        #   YOLO 偵測（選配，同介面）
   perception.py              # Perceiver：一張完整畫面 -> GameState（每 tick 只擷取一次）
@@ -301,6 +313,17 @@ tests/                       # pytest：合成影像 + 真實截圖 ground truth
   或縮小 minimap ROI 到純地圖畫布，用 `tools/debug_view.py` 驗證。
 - **怪物偵測不穩**：多抓幾張不同動作幀的模板、微調 `mob_match_threshold`，
   或直接升級 YOLO 路線。
+- **一直攻擊但經驗不動、`debug_view --snapshot` 上角色自己被黃框框住**：
+  角色被當成怪了。截一張名牌模板就好：
+  `python tools/grab_template.py --dir data/templates/ui --name player_nametag`，
+  再看洋紅色十字有沒有落在角色身上（沒有就調 `vision.nametag_offset`）。
+- **地上整排小怪都沒被框到**：`vision.outline_black_level` 調高（8 → 24）。
+  不是每個客戶端的 sprite 描邊都是純黑的。
+- **鍵盤動作 log 有跑、遊戲毫無反應，也沒有「按鍵送不進去」的錯誤**：
+  遊戲以系統管理員執行時，Windows 的 UIPI 會**默默**丟掉一般權限行程送出的
+  輸入——`SendInput` 回報成功，遊戲收不到，所以程式偵測不到。終端機也要用
+  系統管理員開啟。順帶一提，提權後 PrintWindow 通常就能用了，遊戲視窗
+  不必再保持在最上層。
 - **`waypoints: auto` 一開場就停機說可走範圍太小**：角色根本沒動。先確認方向鍵
   有送進遊戲（`--dry-run` 看得到決策但不會按鍵，要拿掉才會真的動），
   以及小地圖 ROI 沒框到地圖畫布以外。

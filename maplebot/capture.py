@@ -10,13 +10,15 @@ method="auto" 會在啟動時實測一次 PrintWindow，拿不到內容（部分
 
 所有 grab() 都回傳 BGR 的 numpy 陣列；region 一律是 client 區座標 [x, y, w, h]。
 """
+import time
 from typing import Optional
 
 import cv2
 import numpy as np
 
 from .config import Region
-from .window import GameWindow, find_game_window, grab_client, list_windows
+from .window import (GameWindow, find_game_window, grab_client, list_windows,
+                     resize_client)
 
 MAX_LISTED_WINDOWS = 12
 
@@ -57,14 +59,16 @@ def _crop(frame: np.ndarray, region: Optional[Region]) -> np.ndarray:
 
 
 class WindowCapture:
-    def __init__(self, title_substr: str, method: str = "auto"):
+    def __init__(self, title_substr: str, method: str = "auto", logger=None):
         import mss  # Windows 以外的環境可能沒有顯示裝置，延後 import/初始化
 
         self._title = title_substr
         self._sct = mss.mss()
         self._win: Optional[GameWindow] = None
+        self._log = logger
         self.refresh()
         self.method = method if method in ("printwindow", "screen") else self._probe()
+        self.fell_back = False    # printwindow 途中壞掉，已改用螢幕擷取
 
     def _probe(self) -> str:
         try:
@@ -72,6 +76,14 @@ class WindowCapture:
         except Exception:
             frame = None
         return "screen" if looks_blank(frame) else "printwindow"
+
+    def resize_client(self, width: int, height: int):
+        """把遊戲視窗調到 client 區剛好是指定大小；回傳調完的實際大小。"""
+        assert self._win is not None
+        win = resize_client(self._win, width, height)
+        if win is not None:
+            self._win = win
+        return self._win.size
 
     def refresh(self) -> GameWindow:
         win = find_game_window(self._title)
@@ -104,10 +116,29 @@ class WindowCapture:
         if self.method == "printwindow":
             frame = grab_client(self._win)
             if frame is None:
-                raise CaptureError("PrintWindow 擷取失敗（視窗可能已關閉）")
+                # PrintWindow 在這個客戶端不是穩定可用的：開場探測過得了關，
+                # 跑一跑卻會整個壞掉（實測連續 40 次全失敗，視窗還好好開著、
+                # 也沒有最小化）。這種時候拋例外等於讓掛了一整晚的 bot 收工，
+                # 退回螢幕擷取至少還能繼續跑——只是遊戲不能被蓋住。
+                time.sleep(0.05)
+                frame = grab_client(self._win)
+            if frame is None:
+                self._fall_back_to_screen()
+                frame = self._grab_screen()
         else:
             frame = self._grab_screen()
         return _crop(frame, region)
+
+    def _fall_back_to_screen(self) -> None:
+        self.method = "screen"
+        if self.fell_back:
+            return
+        self.fell_back = True
+        if self._log is not None:
+            self._log.warning(
+                "PrintWindow 中途失效，已改用螢幕擷取。"
+                "從現在起**不要讓任何視窗蓋住遊戲畫面**，否則會拍到別的東西"
+                "（血條讀到錯的顏色就會誤判成瀕死而停機）")
 
 
 class ImageCapture:
