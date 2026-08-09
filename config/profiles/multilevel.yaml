@@ -37,7 +37,7 @@ patrol:
   climb_down_key: down
 
 attack:
-  key: x
+  key: ctrl
   type: directional
   range_px: 320
   vertical_range_px: 90     # 別開太大，否則會一直想打樓上樓下打不到的怪

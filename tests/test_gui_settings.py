@@ -116,3 +116,37 @@ def test_garbage_waypoints_fall_back_to_auto():
 def test_empty_buff_rows_are_dropped():
     assert settings.buffs_from([("", "120"), ("8", ""), ("9", "0"), ("7", "60")]) == [
         {"key": "7", "every": 60.0, "cast_seconds": 1.2}]
+
+
+def test_fields_without_a_widget_are_never_written(tmp_path):
+    """畫面上沒有的欄位不能寫進檔案。
+
+    這正是實際踩到的 bug：UI 少了「視窗標題」輸入框，但存檔照樣寫
+    window.title，使用者按一次「儲存設定」就被改成預設值。
+    """
+    prof = _write(tmp_path / "p.yaml", PROFILE)
+    local_path = str(tmp_path / "local.yaml")
+    _write(tmp_path / "local.yaml", {"window": {"title": "我的視窗"}})
+
+    partial = {"attack_key": "v"}          # UI 只提供了這一個欄位
+    local, prof_doc = settings.to_yaml(partial, None, "m")
+    assert "window" not in local
+    assert "buffs" not in prof_doc
+    settings.merge_into(local_path, local)
+    settings.merge_into(prof, prof_doc)
+
+    cfg = load_config(_write(tmp_path / "base.yaml", BASE), local_path=local_path)
+    assert cfg.window_title == "我的視窗"          # 沒被動到
+    assert load_profile(prof).attack.key == "v"    # 有給的照樣寫進去
+
+
+def test_every_field_reaches_a_yaml_key():
+    """FIELDS 裡的每個欄位都要有去處，不然填了等於沒填。"""
+    mapped = {f for f, _ in settings.LOCAL_MAP.values()}
+    mapped |= {f for f, _ in settings.PROFILE_MAP.values()}
+    mapped |= {"hp_key", "hp_below", "mp_key", "mp_below", "panic_return_key"}
+    assert set(settings.FIELDS) - mapped == set()
+
+
+def test_attack_key_defaults_to_ctrl():
+    assert settings.FIELDS["attack_key"][0] == "ctrl"
