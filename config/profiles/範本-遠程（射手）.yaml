@@ -1,0 +1,57 @@
+name: 範本：遠程（射手）
+templates_dir: data/templates/mobs
+panic_return_key: ''
+patrol:
+  # y: 90 是地面層在小地圖上的高度。脫困跳躍常常把角色送上地圖中間那間
+  # 小木屋的屋頂（小地圖 y=80），站在上面離地面的怪 250px，只能空揮——
+  # 標了 y 之後，發現自己站太高就會直接往下跳回巡邏層。
+  waypoints:
+  - {x: 12, y: 90, descend: jump}
+  - {x: 130, y: 90, descend: jump}
+  tolerance: 4
+  # 實測小地圖高度：地面層 90、乾草堆上 87、小木屋屋頂 80。站在乾草堆上
+  # 離地面的怪 112px 也是打不到的，所以容差要小到連 3 格的差都算「站錯層」。
+  y_tolerance: 2
+  step_seconds_per_px: 0.02
+  max_step_seconds: 0.45
+  stuck_seconds: 4.0
+  stuck_px: 3
+  jump_key: alt
+  climb_up_key: up
+  climb_down_key: down
+loot:
+  key: z
+  every: 3.0
+  taps: 3          # 掉落物會散成一排，一下按不完
+  after_combat: 6.0
+attack:
+  key: ctrl
+  min_mp: 0.0
+  min_mobs: 1
+  type: directional
+  range_px: 110
+  vertical_range_px: 35
+  cast_seconds: 0.45
+  repeat: 1
+  cooldown: 0.1
+buffs: []
+potions:
+  # 一瓶只回約 44 HP（總血量 530 的 8%），而危險線是 25%。從 50% 開始喝的話
+  # 只剩 132 HP 的緩衝、每秒又只准喝一瓶——被圍住時追不上掉血速度就停機了。
+  # 提早喝、喝快一點，代價只是多幾瓶藥。
+  hp:
+    key: s
+    below_ratio: 0.7
+    cooldown: 0.5
+  mp:
+    key: a
+    below_ratio: 0.3
+    cooldown: 1.0
+attack_auto_scale: true
+
+# 遠程範本：射程長，站著打就好，不追
+# 數字改法與量法見同目錄的 職業範本.md
+chase_px: 0
+
+# 怪靠得比這麼近就先退開再打（0 = 關掉，近戰要設 0）
+keep_away_px: 0

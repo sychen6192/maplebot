@@ -132,7 +132,8 @@ class Executor:
 
         if isinstance(action, fsm.Chase):
             arrow = "right" if action.direction > 0 else "left"
-            self.log.debug("追擊：往%s走過去打",
+            self.log.debug("%s：往%s走",
+                           "拉開距離" if action.away else "追擊",
                            "右" if action.direction > 0 else "左")
             self._hold(arrow, action.seconds)
             return

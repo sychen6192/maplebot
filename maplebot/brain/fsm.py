@@ -95,13 +95,17 @@ class RunKeys:
 
 @dataclass
 class Chase:
-    """看得到怪但打不到 -> 往牠走幾步。
+    """走向怪（追擊）或走離怪（拉開距離）。
 
-    沒有這個的話，只要怪不在攻擊框裡，就會照原定巡邏路線走掉——畫面上明明
-    站著五隻卻一隻都沒打。追擊只往水平方向走、而且只追同一層的怪。
+    追擊：看得到怪但打不到就往牠走。沒有這個的話，只要怪不在攻擊框裡就會
+    照原定巡邏路線走掉——畫面上明明站著五隻卻一隻都沒打。
+
+    拉開距離：遠程職業站樁輸出，怪貼到臉上就該退開再打（近戰不需要，
+    keep_away_px 設 0 關掉）。兩者都只往水平方向走、只看同一層的怪。
     """
     direction: int
     seconds: float
+    away: bool = False
 
 
 @dataclass
@@ -457,6 +461,12 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
                 rt.attack_pos = None
                 break             # 跳出攻擊，往下走巡邏
             nearest = min(in_range, key=lambda m: abs(m.cx - center_x))
+            # 遠程職業被貼臉時先退開再打（近戰把 keep_away_px 設 0 關掉）。
+            # 退一步下個 tick 就打得到了，等於邊退邊射。
+            if profile.keep_away_px > 0 and \
+                    abs(nearest.cx - center_x) < profile.keep_away_px * s:
+                return Chase(-1 if nearest.cx >= center_x else 1,
+                             pat.max_step_seconds, away=True)
             direction = 1 if nearest.cx >= center_x else -1
             return Attack(direction, sk.key, sk.cast_seconds, sk.repeat,
                           aoe=(sk.type == "aoe"), index=i)
