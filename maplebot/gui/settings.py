@@ -5,7 +5,7 @@ config/local.yaml 與 profile 兩個檔案。分開放是因為這一層完全�
 可以直接單元測試——UI 的 bug 有一半都出在「填了沒存到」「存了讀不回來」。
 """
 import os
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
@@ -17,7 +17,7 @@ BUFF_SLOTS = 8       # 跟商業腳本一樣提供 8 組循環按鍵
 FIELDS: Dict[str, Tuple[Any, type]] = {
     "window_title": ("新楓之谷", str),
     "fps": (8.0, float),
-    "attack_key": ("x", str),
+    "attack_key": ("ctrl", str),
     "attack_type": ("directional", str),
     "attack_seconds": (0.6, float),
     "attack_range": (320, int),
@@ -172,54 +172,72 @@ def parse_waypoints(text: str):
     return data if isinstance(data, list) and data else "auto"
 
 
-def to_yaml(values: Dict[str, Any], buffs: List[Dict[str, Any]],
+# (YAML 區段, YAML 欄位) -> (UI 欄位, 轉換函式)
+_PCT = lambda n: round(n / 100.0, 4)          # noqa: E731  百分比 -> 比例
+
+LOCAL_MAP = {
+    ("window", "title"): ("window_title", None),
+    ("loop", "fps"): ("fps", None),
+    ("vision", "mob_interval"): ("mob_interval", None),
+    ("vision", "outline_black_level"): ("outline_black_level", None),
+    ("vision", "outline_min_area"): ("outline_min_area", None),
+    ("vision", "filter_followers"): ("filter_followers", None),
+    ("safety", "critical_hp_ratio"): ("critical_hp", _PCT),
+    ("safety", "critical_hp_frames"): ("critical_hp_frames", None),
+    ("safety", "exp_stall_minutes"): ("exp_stall_minutes", None),
+    ("safety", "pause_when_players"): ("pause_when_players", None),
+    ("safety", "sound_alerts"): ("sound_alerts", None),
+}
+
+PROFILE_MAP = {
+    ("patrol", "waypoints"): ("waypoints", parse_waypoints),
+    ("patrol", "jump_key"): ("jump_key", None),
+    ("patrol", "climb_up_key"): ("climb_up_key", None),
+    ("patrol", "climb_down_key"): ("climb_down_key", None),
+    ("attack", "key"): ("attack_key", None),
+    ("attack", "type"): ("attack_type", None),
+    ("attack", "range_px"): ("attack_range", None),
+    ("attack", "vertical_range_px"): ("attack_vrange", None),
+    ("attack", "cast_seconds"): ("attack_seconds", None),
+    ("attack", "repeat"): ("attack_repeat", None),
+    ("loot", "key"): ("loot_key", None),
+}
+
+
+def _build(table, v: Dict[str, Any], present) -> dict:
+    """只輸出 UI 真的有給的欄位。
+
+    畫面上沒有的欄位絕對不能寫進檔案——不然使用者按一次「儲存設定」，
+    那些他從沒看過的設定就會被悄悄改成預設值。
+    """
+    out: Dict[str, Any] = {}
+    for (section, key), (field, convert) in table.items():
+        if field not in present:
+            continue
+        value = v[field]
+        out.setdefault(section, {})[key] = convert(value) if convert else value
+    return out
+
+
+def to_yaml(values: Dict[str, Any], buffs: Optional[List[Dict[str, Any]]],
             profile_name: str) -> Tuple[dict, dict]:
     """UI 欄位 -> (local.yaml 內容, profile.yaml 內容)。"""
     v = coerce(values)
-    local = {
-        "window": {"title": v["window_title"]},
-        "loop": {"fps": v["fps"]},
-        "vision": {
-            "mob_interval": v["mob_interval"],
-            "outline_black_level": v["outline_black_level"],
-            "outline_min_area": v["outline_min_area"],
-            "filter_followers": v["filter_followers"],
-        },
-        "safety": {
-            "critical_hp_ratio": round(v["critical_hp"] / 100.0, 4),
-            "critical_hp_frames": v["critical_hp_frames"],
-            "exp_stall_minutes": v["exp_stall_minutes"],
-            "pause_when_players": v["pause_when_players"],
-            "sound_alerts": v["sound_alerts"],
-        },
-    }
-    prof: Dict[str, Any] = {
-        "name": profile_name,
-        "patrol": {
-            "waypoints": parse_waypoints(v["waypoints"]),
-            "jump_key": v["jump_key"],
-            "climb_up_key": v["climb_up_key"],
-            "climb_down_key": v["climb_down_key"],
-        },
-        "attack": {
-            "key": v["attack_key"],
-            "type": v["attack_type"],
-            "range_px": v["attack_range"],
-            "vertical_range_px": v["attack_vrange"],
-            "cast_seconds": v["attack_seconds"],
-            "repeat": v["attack_repeat"],
-        },
-        "loot": {"key": v["loot_key"]},
-        "potions": {},
-        "buffs": buffs,
-    }
-    if v["hp_key"]:
-        prof["potions"]["hp"] = {"key": v["hp_key"],
-                                 "below_ratio": round(v["hp_below"] / 100.0, 4)}
-    if v["mp_key"]:
-        prof["potions"]["mp"] = {"key": v["mp_key"],
-                                 "below_ratio": round(v["mp_below"] / 100.0, 4)}
-    if v["panic_return_key"]:
+    present = set(values)
+    local = _build(LOCAL_MAP, v, present)
+    prof = _build(PROFILE_MAP, v, present)
+    prof["name"] = profile_name
+    if buffs is not None:
+        prof["buffs"] = buffs
+
+    potions = {}
+    if "hp_key" in present and v["hp_key"]:
+        potions["hp"] = {"key": v["hp_key"], "below_ratio": _PCT(v["hp_below"])}
+    if "mp_key" in present and v["mp_key"]:
+        potions["mp"] = {"key": v["mp_key"], "below_ratio": _PCT(v["mp_below"])}
+    if potions:
+        prof["potions"] = potions
+    if "panic_return_key" in present and v["panic_return_key"]:
         prof["panic_return_key"] = v["panic_return_key"]
     return local, prof
 

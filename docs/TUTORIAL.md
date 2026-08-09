@@ -125,7 +125,7 @@ loot:
   key: z                    # 撿取鍵（不想撿就留空）
 
 attack:
-  key: x                    # 你的攻擊技能鍵
+  key: ctrl                 # 你的攻擊技能鍵（楓谷預設 Ctrl）
   type: directional         # 原地放的技能（祭司 Heal 之類）改成 aoe
 
 potions:
@@ -171,7 +171,7 @@ skills:
     min_mobs: 3           # 至少 3 隻才放，不浪費在單隻怪身上
     min_mp: 0.2
     range_px: 400
-  - key: x                # 主攻：保底
+  - key: ctrl             # 主攻：保底
     type: directional
     cooldown: 0.2
     range_px: 320

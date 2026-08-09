@@ -160,7 +160,7 @@ class PatrolCfg:
 @dataclass
 class AttackCfg:
     """一個攻擊技能。多技能輪替時 profile.skills 就是一串這個。"""
-    key: str = "x"
+    key: str = "ctrl"                 # 楓谷預設攻擊鍵
     type: str = "directional"         # directional（要面向）| aoe（原地放）
     range_px: int = 320
     vertical_range_px: int = 90

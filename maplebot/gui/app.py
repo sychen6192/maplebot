@@ -48,7 +48,7 @@ class App(tk.Tk):
         mid.grid(row=0, column=1, sticky="ns", padx=(0, PAD))
         right = ttk.Frame(root)
         right.grid(row=0, column=2, sticky="nsew")
-        right.rowconfigure(1, weight=1)
+        right.rowconfigure(2, weight=1)
         right.columnconfigure(0, weight=1)
 
         self._build_status(left)
@@ -57,6 +57,7 @@ class App(tk.Tk):
         self._build_attack(mid)
         self._build_buffs(mid)
         self._build_safety(mid)
+        self._build_window(right)
         self._build_position(right)
         self._build_log(right)
 
@@ -189,9 +190,32 @@ class App(tk.Tk):
         self._checkbox(box, 9, "危險事件嗶聲", "sound_alerts")
         self._checkbox(box, 10, "濾掉寵物（需鏡頭會捲動）", "filter_followers")
 
+    def _build_window(self, parent) -> None:
+        box = ttk.LabelFrame(parent, text="遊戲視窗與辨識", padding=PAD)
+        box.grid(row=0, column=0, sticky="we", pady=(0, PAD))
+        box.columnconfigure(1, weight=1)
+        ttk.Label(box, text="視窗標題").grid(row=0, column=0, sticky="w")
+        self.vars["window_title"] = tk.StringVar()
+        ttk.Entry(box, textvariable=self.vars["window_title"]).grid(
+            row=0, column=1, columnspan=5, sticky="we", padx=(4, 0))
+        ttk.Label(box, text="（子字串比對；找不到時系統日誌會列出開著的視窗）",
+                  foreground="#666").grid(row=1, column=0, columnspan=6, sticky="w")
+
+        for col, (text, key) in enumerate([
+            ("每秒 tick", "fps"), ("偵測間隔(秒)", "mob_interval"),
+            ("描邊門檻", "outline_black_level"), ("最小面積", "outline_min_area"),
+        ]):
+            ttk.Label(box, text=text).grid(row=2 + col // 2, column=(col % 2) * 3,
+                                           sticky="w", pady=1)
+            self.vars[key] = tk.StringVar()
+            ttk.Entry(box, textvariable=self.vars[key], width=8).grid(
+                row=2 + col // 2, column=(col % 2) * 3 + 1, sticky="w", padx=(4, 16))
+        ttk.Label(box, text="抓不到怪 → 描邊門檻調高（8→15）；框到背景 → 調低（8→4）",
+                  foreground="#666").grid(row=4, column=0, columnspan=6, sticky="w")
+
     def _build_position(self, parent) -> None:
         box = ttk.LabelFrame(parent, text="即時偵測", padding=PAD)
-        box.grid(row=0, column=0, sticky="we", pady=(0, PAD))
+        box.grid(row=1, column=0, sticky="we", pady=(0, PAD))
         self.pos_text = ttk.Label(box, text="當前位置: --", font=("", 11))
         self.pos_text.pack(anchor="w")
         self.mob_text = ttk.Label(box, text="怪物: --｜其他玩家: --｜寵物: --")
@@ -201,7 +225,7 @@ class App(tk.Tk):
 
     def _build_log(self, parent) -> None:
         box = ttk.LabelFrame(parent, text="系統日誌", padding=PAD)
-        box.grid(row=1, column=0, sticky="nsew")
+        box.grid(row=2, column=0, sticky="nsew")
         box.rowconfigure(0, weight=1)
         box.columnconfigure(0, weight=1)
         self.logbox = tk.Text(box, height=20, wrap="none", state="disabled")

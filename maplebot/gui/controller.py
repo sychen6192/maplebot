@@ -38,6 +38,24 @@ class _BufferHandler(logging.Handler):
             pass
 
 
+def _useful_stderr(text: Optional[str], keep: int = 6) -> List[str]:
+    """從 traceback 裡挑出人看得懂的部分。
+
+    整串 traceback 貼進系統日誌只會把真正的錯誤訊息推出畫面——真正有用的是
+    最後那幾行（例外類別與訊息，我們的錯誤訊息本來就寫成給人看的）。
+    """
+    lines = []
+    for line in (text or "").splitlines():
+        line = line.rstrip()
+        if not line.strip():
+            continue
+        stripped = line.strip()
+        if stripped.startswith(("File \"", "Traceback (")) or line.startswith("    "):
+            continue                       # 檔名行與程式碼行都不用看
+        lines.append(stripped)
+    return lines[-keep:]
+
+
 class Controller:
     def __init__(self, config_path: str = "config/default.yaml",
                  profile_path: str = "config/profiles/example.yaml",
@@ -244,18 +262,21 @@ class Controller:
         import subprocess
         import sys
         self.log.info("執行%s…（會另外開一個視窗，完成後回到這裡）", label)
+        # 子行程寫到 pipe 時用的是系統地區編碼（繁中 Windows 是 cp950），
+        # 這邊卻照 UTF-8 解——中文訊息就會整段變亂碼。強制兩邊都講 UTF-8。
+        env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
         try:
             proc = subprocess.run([sys.executable, *argv], capture_output=True,
-                                  text=True, encoding="utf-8", errors="replace")
+                                  text=True, encoding="utf-8", errors="replace",
+                                  env=env)
         except OSError as e:
             self.log.error("%s 啟動失敗: %s", label, e)
             return
         for line in (proc.stdout or "").splitlines():
             if line.strip():
                 self.log.info("  %s", line.rstrip())
-        for line in (proc.stderr or "").splitlines()[-5:]:
-            if line.strip():
-                self.log.warning("  %s", line.rstrip())
+        for line in _useful_stderr(proc.stderr):
+            self.log.warning("  %s", line)
         if proc.returncode != 0:
             self.log.error("%s 失敗（return code %d）", label, proc.returncode)
             return
