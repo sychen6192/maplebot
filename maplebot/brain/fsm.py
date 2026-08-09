@@ -12,10 +12,14 @@ decide() 不碰鍵盤、不碰螢幕、不看時鐘（now 由外部傳入），
   6. 攻擊範圍內有怪      -> Attack（多技能時依序挑第一個放得出來又划算的；
                           directional 先轉向 / aoe 原地放；垂直移動途中跳過。
                           打很久位置卻沒變會強制讓路給巡邏，見 _attack_stalled）
+  6b. 看得到怪但構不到   -> Chase 走過去（chase_px 設 0 = 關掉）
   7. 自動巡邏未校正      -> Probe（waypoints: auto 時左右撞牆量出可走範圍）
-  8. 巡邏中卡住          -> Escape（跳躍 + 換方向，參考 MapleStoryAutoLevelUp）
-  9. x 到位但 y 沒到     -> Climb（爬繩上樓 / 下繩或下跳平台）
- 10. 其他               -> Move 往下一個巡邏點；抵達時執行該點的 keys
+  8. 站得比巡邏層高      -> Climb 往下跳（descend: jump 時**不必**先對準 x：
+                          從哪裡跳下去都會落到下面那層，而站上小平台之後
+                          常常也走不動，等 x 對準等於永遠不會處理）
+  9. 巡邏中卡住          -> Escape（跳躍 + 換方向，參考 MapleStoryAutoLevelUp）
+ 10. x 到位但 y 沒到     -> Climb（爬繩上樓 / 下繩）
+ 11. 其他               -> Move 往下一個巡邏點；抵達時執行該點的 keys
 
 在繩子上按方向鍵或技能鍵會掉下來，所以第 5、6 項在垂直移動途中會讓路——
 補血補魔不受影響（那是保命）。
@@ -90,6 +94,17 @@ class RunKeys:
 
 
 @dataclass
+class Chase:
+    """看得到怪但打不到 -> 往牠走幾步。
+
+    沒有這個的話，只要怪不在攻擊框裡，就會照原定巡邏路線走掉——畫面上明明
+    站著五隻卻一隻都沒打。追擊只往水平方向走、而且只追同一層的怪。
+    """
+    direction: int
+    seconds: float
+
+
+@dataclass
 class Escape:
     """卡住脫困：往 direction 跳一下。"""
     direction: int
@@ -116,7 +131,7 @@ class Climb:
 
 
 Action = Union[Wait, Panic, DrinkPotion, CastBuff, Attack, Move, RunKeys, Escape, Loot,
-               Probe, Climb]
+               Probe, Climb, Chase]
 
 
 @dataclass
@@ -383,6 +398,14 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
     else:
         rt.low_hp_streak = 0
 
+    # 緊急回血：血更低的時候改按另一個鍵（大瓶／全補藥）。
+    # 一般補血一瓶只回一點點——實測 530 血的角色一瓶回 44，被圍住時
+    # 每秒一瓶追不上掉血速度，就會一路掉到危險線停機。
+    urgent = profile.potions.get("hp_emergency")
+    if urgent and urgent.key and state.hp < urgent.below_ratio \
+            and _potion_due(rt, "hp_emergency", urgent.cooldown, now):
+        return DrinkPotion("hp_emergency", urgent.key)
+
     hp_pot = profile.potions.get("hp")
     if hp_pot and state.hp < hp_pot.below_ratio and _potion_due(rt, "hp", hp_pot.cooldown, now):
         return DrinkPotion("hp", hp_pot.key)
@@ -449,6 +472,21 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
             rt.last_loot = now
             return Loot(loot.key, max(loot.taps, 1))
 
+        # 看得到怪但構不到 -> 走過去，不要照原定路線走掉。
+        # 只追同一層（用主技能的垂直範圍當判準）：樓上樓下的怪追過去也打不到，
+        # 追了反而會被拉離巡邏路線。撿東西排在前面，免得追下一隻就把掉落物丟了。
+        if not mobs_near and profile.chase_px > 0 and now >= rt.attack_break_until:
+            sk = profile.active_skills()[0]
+            reach = profile.chase_px * s
+            vertical = sk.vertical_range_px * s
+            near = [m for m in state.mobs
+                    if abs(m.cx - center_x) <= reach + m.w // 2
+                    and abs(m.cy - center_y) <= vertical + m.h // 2]
+            if near:
+                target = min(near, key=lambda m: abs(m.cx - center_x))
+                return Chase(1 if target.cx >= center_x else -1,
+                             pat.max_step_seconds)
+
     waypoints = pat.waypoints
     if pat.auto:
         probing = _auto_patrol(rt, state.player, pat, now)
@@ -461,6 +499,18 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
     wp = waypoints[rt.wp_index % len(waypoints)]
     target = resolve_waypoint_x(wp, state.minimap_size)
     dist = target - state.player[0]
+    target_y = resolve_waypoint_y(wp, state.minimap_size)
+
+    # 站得比巡邏層高的時候，**先下來再說**，不用等 x 對準。
+    # 脫困跳躍很容易把角色送上路邊的小平台（實測是地圖中間那間小木屋的屋頂），
+    # 站在上面離地面的怪 250px，打不到也撿不到，就只是在空揮。那種地方通常
+    # 也走不了幾步，等「x 對準」才處理等於永遠不會處理。
+    # 往上爬則相反：一定要先站到繩子前面，所以留在 x 對準之後。
+    # 只對 descend: jump 這樣做——抓繩下降本來就得站在繩子上。
+    if target_y is not None and wp.descend == "jump":
+        drop = target_y - state.player[1]        # 小地圖 y 往下變大
+        if drop > pat.y_tolerance:
+            return _climb(rt, state.player, pat, wp, drop, len(waypoints))
 
     if abs(dist) > pat.tolerance:
         # x 還沒對準（也可能是爬繩途中被打掉、位置跑掉了）-> 先走回去
@@ -471,7 +521,6 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
         seconds = max(min(abs(dist) * pat.step_seconds_per_px, pat.max_step_seconds), 0.08)
         return Move(1 if dist > 0 else -1, seconds, target)
 
-    target_y = resolve_waypoint_y(wp, state.minimap_size)
     if target_y is not None:
         dy = target_y - state.player[1]
         if abs(dy) > pat.y_tolerance:
