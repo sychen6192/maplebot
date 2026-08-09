@@ -49,6 +49,14 @@ def main() -> int:
         path = os.path.join(args.dir, fname)
         cv2.imwrite(path, frame[y:y + h, x:x + w])
         print(f"已存 {path}（{w}x{h}）")
+        if args.name in ("player_feature", "player_nametag"):
+            # 楓谷的 UI 跟著視窗縮放，模板換個解析度就比不中了。記下截圖當下
+            # 的 playfield 寬度，之後換解析度程式自己縮回來。
+            from maplebot.vision.nametag import save_width
+            pf_w = load_config(args.config).regions.get(
+                "playfield", (0, 0, frame.shape[1], 0))[2]
+            save_width(path, pf_w)
+            print(f"  （記下當時的 playfield 寬度 {pf_w}px，換解析度會自動換算）")
         if is_ui:
             break
     print(f"共存了 {n} 張模板")

@@ -7,7 +7,7 @@
 不是 autodistill 那包——autodistill 依賴的 `groundingdino` 套件已停止維護，
 在 transformers 5.x 會炸在 `BertModel has no attribute 'get_head_mask'`。
 
-⚠ 誠實提醒：GroundingDINO 是用真實照片訓練的，對 2D 卡通 sprite 不保證
+警告：誠實提醒：GroundingDINO 是用真實照片訓練的，對 2D 卡通 sprite 不保證
    認得。**先用 --test 在一張截圖上試**，確認它真的框到怪再批次跑：
        python tools/label_gdino.py --test shot.jpg --prompt monster
    框不到的話改用模板老師（python tools/auto_pipeline.py），楓谷 sprite
@@ -166,7 +166,7 @@ def run_test(image, keep, reject, out_path, box_threshold, text_threshold,
     cv2.imwrite(out_path, img)
     print(f"\n預覽已存到 {out_path}：**黃框=會拿去訓練，紅框=已剔除**")
     if not kept:
-        print("⚠ 沒有保留任何框。依序試：")
+        print("警告：沒有保留任何框。依序試：")
         print("  1. 降門檻: --box-threshold 0.1")
         print("  2. 換 prompt: --prompt \"blue snail\" / \"cartoon creature\"")
         print("  3. 換大模型: --model base")

@@ -120,7 +120,9 @@ vision:
   #    要自己跟自己組隊，角色頭上才會出現那條紅條。
   locate_nametag: true
   nametag_offset: [0, -24]
-  nametag_threshold: 0.85
+  # 門檻是照「跟背景的差距」訂的，不是照分數高低——半透明底會讓分數整體偏低。
+  # 實拍：自己的名牌 0.784、整張圖其他地方最高 0.545、旁邊路人的連 0.537 都不到。
+  nametag_threshold: 0.70
   locate_player_bar: true
 
   mob_match_threshold: 0.72   # template 模式用

@@ -143,7 +143,7 @@ def main() -> int:
     print("  vision:")
     print("    mob_detector: remote")
     print(f"    remote_endpoint: \"http://<這台機器的區網IP>:{args.port}/detect\"")
-    print("⚠ 沒有身分驗證，請只在自己的區網使用。Ctrl+C 結束。")
+    print("警告：沒有身分驗證，請只在自己的區網使用。Ctrl+C 結束。")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

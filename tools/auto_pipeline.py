@@ -56,7 +56,7 @@ def main() -> int:
     print(f"  -> {lab.images} 張影像，{lab.labeled} 張有框，共 {lab.boxes} 個框"
           f"｜類別 {lab.classes}")
     if lab.boxes < 50:
-        print("⚠ 框太少（建議 200 個以上）。多蒐集一些畫面，"
+        print("警告：框太少（建議 200 個以上）。多蒐集一些畫面，"
               "或把 --threshold 調低（例如 0.6）再跑一次")
 
     print("\n[2/3] 切分 train/val…")

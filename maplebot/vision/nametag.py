@@ -1,118 +1,157 @@
-"""用角色名牌找出角色在畫面上的精確位置。
+"""用你自己截的「角色特徵」找出角色在畫面上的位置。
 
 跟 vision/player_bar.py 解同一個問題（「角色永遠在畫面正中央」是錯的），
-但不需要進遊戲做任何設定：名牌本來就一直掛在角色腳下。
+但不需要進遊戲做任何設定：截什麼都行——腳下的名牌、帽子、整個角色 sprite，
+只要那塊圖是**你的角色才有**的。名牌尤其好用，因為上面是你的角色名，
+別人的名字比不中，天生只會找到自己。
 
-**為什麼要另外做一套**：組隊紅條要先自己跟自己組隊才會出現，而不是每個
-客戶端都找得到組隊的按鍵。名牌是角色一出生就有的，抓它零準備。
+**為什麼要它**：鏡頭有跟隨延遲、走到地圖邊緣還會卡住，實測角色可以偏離
+畫面中心 200px 以上。後果是挖掉「自己」挖錯地方（角色被當成一隻怪打整晚），
+以及攻擊範圍框沒對準角色。
 
-**為什麼可以只認自己**：名牌上是**你的角色名**，別人的名字不一樣，
-模板比不中——所以這招天生只會找到自己，不會抓到路人。
+**解析度會變**：楓谷的 UI 跟著視窗大小縮放，所以 1920 截的模板放到 1366 的
+畫面上會大 1.4 倍，完全比不中（實測最佳分數只有 0.506，而且還不在名牌上）。
+模板旁邊會存一個 .json 記下截圖當下的 playfield 寬度，載入時照比例縮好；
+沒有那個檔（舊模板）就自己掃一輪各種縮放找出對的比例，找到就記起來。
 
-**半透明底怎麼辦**：名牌底是半透明黑塊，背後的地形會透出來，直接比整塊
-會隨背景飄（實測 CCOEFF 從 1.00 掉到 0.86）。所以只比**文字筆畫**：
-建模板時把亮的像素挑出來當遮罩，用遮罩版的匹配，實測同一張模板在草地、
-乾草堆、天空背景下都還有 0.98 以上。
-
-**為什麼用 SQDIFF 而不是 CCORR**：OpenCV 只有 SQDIFF / SQDIFF_NORMED /
-CCORR_NORMED 吃遮罩。CCORR_NORMED 比的是原始亮度的相關性，一整片同色的
-區域跟任何模板都會算出接近 1.0 的完美分數——單元測試裡一張純色畫面就被
-它「找到」了角色。SQDIFF 比的是差值平方，純色區域差很多，不會假陽性。
+**為什麼用 CCOEFF 不用遮罩**：名牌底是半透明的，一開始以為要只比文字筆畫，
+還量到「遮罩版分數 0.98、無遮罩只有 0.86」。那個比較是錯的——只看了**最佳
+匹配點的分數**，沒看它跟背景的差距。實際量下來遮罩版的 SQDIFF 整張圖到處
+都是 0.91（差距只有 +0.02，等於認不出來），無遮罩的 CCOEFF 分數雖然低，
+但跟背景差 +0.37~+0.50，那才是真的分得出來。
 """
+import json
 import os
 from typing import Optional, Tuple
 
 import cv2
 import numpy as np
 
-# 使用者自己截的「角色特徵」。截什麼都行——名牌、帽子、整個角色 sprite；
-# 只要那塊圖是**你的角色才有**的就成立。舊檔名仍然可用。
+# 使用者自己截的角色特徵。舊檔名仍然可用。
 FEATURE_NAMES = ("player_feature.png", "player_nametag.png")
 
 # 名牌中心 -> 角色中心的位移，以 790px 寬的 playfield 為基準（往上是負的）。
 # 名牌畫在角色腳下，所以要往上找回身體中段。
 DEFAULT_OFFSET = (0, -24)
 
-MATCH_THRESHOLD = 0.85
+MATCH_THRESHOLD = 0.70
 
-# 只在畫面中央這個比例的範圍內找。楓谷的鏡頭不會把角色甩到邊邊，
-# 限制搜尋範圍同時省時間、也擋掉離譜的誤匹配。
-SEARCH_MARGIN = 0.15
+# 整個 playfield 都要找。曾經為了省時間只找中央 70%，結果**剛好把這個功能
+# 存在的理由挖掉了**：走到地圖邊緣時鏡頭會停住不再跟隨，角色就是會跑到畫面
+# 邊邊去——實測角色在 1366 寬的畫面上跑到 x=205（離左緣 15%），正好卡在
+# 邊界上找不到，於是角色又被當成一隻怪。小模板掃全畫面只要幾 ms，省不了什麼。
+SEARCH_MARGIN = 0.0
+
+# 不知道模板是多大截的時候，自己掃這些縮放比例找出對的那個
+_SCALE_SWEEP = tuple(round(0.45 + 0.05 * i, 2) for i in range(23))    # 0.45 ~ 1.55
+_RESCAN_AFTER = 15        # 連續這麼多幀都找不到就重掃（解析度中途改了）
 
 
 class NametagLocator:
-    """載入一次模板，之後每幀用遮罩模板匹配找角色。"""
-
     def __init__(self, template_bgr: np.ndarray,
                  offset: Tuple[int, int] = DEFAULT_OFFSET,
-                 threshold: float = MATCH_THRESHOLD):
+                 threshold: float = MATCH_THRESHOLD,
+                 template_width: Optional[int] = None):
         gray = cv2.cvtColor(template_bgr, cv2.COLOR_BGR2GRAY) \
             if template_bgr.ndim == 3 else template_bgr
         self.template = gray
-        self.mask = _text_mask(gray)
         self.offset = offset
         self.threshold = threshold
+        self.template_width = template_width    # 截圖當下的 playfield 寬度
         self.last_score = 0.0
+        self.scale_used: Optional[float] = None
+        self._tpl: Optional[np.ndarray] = None
+        self._misses = 0
+
+    # ---- 模板縮放 ----
+
+    def _resized(self, factor: float) -> Optional[np.ndarray]:
+        if abs(factor - 1.0) < 0.02:
+            return self.template
+        interp = cv2.INTER_AREA if factor < 1 else cv2.INTER_CUBIC
+        out = cv2.resize(self.template, None, fx=factor, fy=factor,
+                         interpolation=interp)
+        return out if out.size else None
+
+    def _pick_scale(self, roi: np.ndarray, playfield_width: int) -> None:
+        """決定模板要縮多少。知道截圖尺寸就直接算，不知道就掃一輪。
+
+        比例要拿**整個 playfield 的寬度**去算，不能用搜尋範圍的寬度——
+        搜尋範圍是 playfield 內縮 15% 之後的，拿它算會小一截。
+        """
+        if self.template_width:
+            factor = playfield_width / float(self.template_width)
+            self._tpl = self._resized(factor)
+            self.scale_used = factor
+            return
+        best = None
+        for factor in _SCALE_SWEEP:
+            tpl = self._resized(factor)
+            if tpl is None or tpl.shape[0] > roi.shape[0] or tpl.shape[1] > roi.shape[1]:
+                continue
+            score = float(cv2.matchTemplate(roi, tpl, cv2.TM_CCOEFF_NORMED).max())
+            if best is None or score > best[0]:
+                best = (score, factor, tpl)
+        if best is not None:
+            self.scale_used, self._tpl = best[1], best[2]
+
+    # ---- 定位 ----
 
     def locate(self, playfield_bgr: np.ndarray,
                scale: float = 1.0) -> Optional[Tuple[int, int]]:
         """回傳角色中心的 playfield 座標；沒把握就回 None（呼叫端退回畫面中央）。"""
-        th, tw = self.template.shape[:2]
         h, w = playfield_bgr.shape[:2]
-        if h < th or w < tw:
+        if h == 0 or w == 0:
+            return None
+        x0, y0 = int(w * SEARCH_MARGIN), int(h * SEARCH_MARGIN)
+        roi = cv2.cvtColor(playfield_bgr[y0:max(h - y0, y0 + 1),
+                                         x0:max(w - x0, x0 + 1)],
+                           cv2.COLOR_BGR2GRAY)
+
+        if self._tpl is None:
+            self._pick_scale(roi, w)
+        tpl = self._tpl
+        if tpl is None or roi.shape[0] < tpl.shape[0] or roi.shape[1] < tpl.shape[1]:
             return None
 
-        x0 = int(w * SEARCH_MARGIN)
-        y0 = int(h * SEARCH_MARGIN)
-        x1 = max(w - x0, x0 + tw)
-        y1 = max(h - y0, y0 + th)
-        roi = cv2.cvtColor(playfield_bgr[y0:y1, x0:x1], cv2.COLOR_BGR2GRAY)
-        if roi.shape[0] < th or roi.shape[1] < tw:
-            return None
-
-        res = cv2.matchTemplate(roi, self.template, cv2.TM_SQDIFF_NORMED,
-                                mask=self.mask)
-        # 遮罩匹配在退化的區塊會算出 inf/nan，不清掉會被 minMaxLoc 選中
-        res = np.nan_to_num(res, nan=1.0, posinf=1.0, neginf=1.0)
-        diff, _, loc, _ = cv2.minMaxLoc(res)      # SQDIFF：越小越像
-        score = 1.0 - float(diff)
-        self.last_score = score
+        res = cv2.matchTemplate(roi, tpl, cv2.TM_CCOEFF_NORMED)
+        _, score, _, loc = cv2.minMaxLoc(res)
+        self.last_score = float(score)
         if score < self.threshold:
+            self._misses += 1
+            if self._misses >= _RESCAN_AFTER and not self.template_width:
+                self._tpl = None        # 解析度可能中途改了，下一幀重掃
+                self._misses = 0
             return None
-        cx = x0 + loc[0] + tw // 2 + int(round(self.offset[0] * scale))
-        cy = y0 + loc[1] + th // 2 + int(round(self.offset[1] * scale))
-        return (cx, cy)
+        self._misses = 0
+        th, tw = tpl.shape[:2]
+        return (x0 + loc[0] + tw // 2 + int(round(self.offset[0] * scale)),
+                y0 + loc[1] + th // 2 + int(round(self.offset[1] * scale)))
 
 
-def _text_mask(gray: np.ndarray) -> np.ndarray:
-    """決定模板裡哪些像素可信。
+def _template_width(path: str) -> Optional[int]:
+    """讀模板旁邊那個 .json 記的「截圖當下的 playfield 寬度」。"""
+    side = os.path.splitext(path)[0] + ".json"
+    try:
+        with open(side, encoding="utf-8") as f:
+            return int(json.load(f)["playfield_width"])
+    except Exception:
+        return None
 
-    截名牌跟截角色本體要用不同策略，而使用者不該還要回來設定這個：
 
-    * **名牌**底色是半透明黑塊，背後的地形會透出來 —— 整塊比會隨背景飄
-      （實測 1.00 -> 0.86）。只比文字筆畫才穩得住。
-    * **角色 sprite**（或帽子、武器）是不透明的，整塊都是資訊。這時挑「亮的
-      部分」反而把角色深色的那半丟掉，比得更差。
-
-    兩種都取「亮的部分」就好，不用分辨是哪一種：名牌只剩文字筆畫（正是要的），
-    不透明的圖也還剩幾百個像素可比，一樣夠準。
-    （試過自動分辨「暗部是不是平的」——結果剛好相反：名牌的暗部因為背景透出來
-    反而變化很大，那個判斷會把最需要遮罩的情況判成不用遮罩。）
-    """
-    level = max(int(gray.mean()) + 25, 110)
-    mask = (gray >= level).astype(np.uint8) * 255
-    # 筆畫邊緣有抗鋸齒，膨脹一格把半亮的邊也算進來，樣本數才夠穩
-    mask = cv2.dilate(mask, np.ones((2, 2), np.uint8))
-    if int((mask > 0).sum()) < 30:      # 幾乎沒挑到東西 -> 模板多半框錯了
-        return np.full(gray.shape, 255, dtype=np.uint8)
-    return mask
+def save_width(path: str, playfield_width: int) -> None:
+    """截模板時把當下的 playfield 寬度記在旁邊，換解析度才縮得回來。"""
+    side = os.path.splitext(path)[0] + ".json"
+    with open(side, "w", encoding="utf-8") as f:
+        json.dump({"playfield_width": int(playfield_width)}, f)
 
 
 def load_locator(ui_dir: str, offset: Tuple[int, int] = DEFAULT_OFFSET,
                  threshold: float = MATCH_THRESHOLD) -> Optional[NametagLocator]:
     """載入使用者截的角色特徵模板；沒有就回 None（呼叫端退回組隊紅條）。"""
     for name in FEATURE_NAMES:
-        img = cv2.imread(os.path.join(ui_dir, name), cv2.IMREAD_COLOR)
+        path = os.path.join(ui_dir, name)
+        img = cv2.imread(path, cv2.IMREAD_COLOR)
         if img is not None:
-            return NametagLocator(img, offset, threshold)
+            return NametagLocator(img, offset, threshold, _template_width(path))
     return None

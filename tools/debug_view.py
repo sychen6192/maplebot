@@ -130,7 +130,7 @@ def _place_away_from_game(cap, disp_w, disp_h) -> None:
         cv2.moveWindow(WINDOW, spot[0], spot[1])
         print(f"已把偵錯視窗移到 {spot}，避免拍到自己造成畫面遞迴疊圖")
     else:
-        print("⚠ 螢幕空間不足以把偵錯視窗放到遊戲畫面以外。"
+        print("警告：螢幕空間不足以把偵錯視窗放到遊戲畫面以外。"
               "請改用 --snapshot out.png（不開視窗），或縮小遊戲視窗／用副螢幕")
 
 
@@ -172,7 +172,7 @@ def main() -> int:
         WindowCapture(cfg.window_title, cfg.capture_method)
     print(f"擷取尺寸: {cap.size[0]}x{cap.size[1]}｜擷取方式: {cap.method}")
     if cap.method == "screen":
-        print("⚠ 此客戶端不支援 PrintWindow，改用螢幕擷取："
+        print("警告：此客戶端不支援 PrintWindow，改用螢幕擷取："
               "任何蓋住遊戲的視窗都會被拍進去")
 
     if cfg.minimap_auto:
@@ -230,7 +230,7 @@ def main() -> int:
                   f"{'（小地圖 ROI 或顏色參數要調）' if lost else ''}")
             print(f"HP 最低讀值: {hp_min:.0%}｜單幀突降 >30%: {hp_drops} 次")
             if hp_drops:
-                print("⚠ 血條讀值不穩：重跑 tools/calibrate.py 只框紅色條本體"
+                print("警告：血條讀值不穩：重跑 tools/calibrate.py 只框紅色條本體"
                       "（不要含數字、外框、旁邊的 UI）。")
                 print("  暫時解法：safety.critical_hp_frames 調大（預設 3），"
                       "或 safety.critical_hp_ratio 調低")

@@ -90,7 +90,9 @@ class VisionCfg:
     # 進遊戲做任何設定；沒有模板檔就自動略過，退回組隊紅條再退回畫面中央。
     locate_nametag: bool = True
     nametag_offset: Tuple[int, int] = (0, -24)   # 名牌中心 -> 角色中心（790 基準）
-    nametag_threshold: float = 0.85
+    # 0.70 是照**跟背景的差距**訂的，不是照分數高低。實拍：自己的名牌 0.784、
+    # 整張圖其他地方最高 0.545、旁邊那位路人的名牌連 0.537 都不到。
+    nametag_threshold: float = 0.70
     mob_match_threshold: float = 0.72
     yolo_model: str = ""
     yolo_confidence: float = 0.5
