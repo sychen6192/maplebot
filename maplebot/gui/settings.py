@@ -15,7 +15,7 @@ BUFF_SLOTS = 8       # 跟商業腳本一樣提供 8 組循環按鍵
 
 # UI 欄位 -> (預設值, 型別)
 FIELDS: Dict[str, Tuple[Any, type]] = {
-    "window_title": ("新楓之谷", str),
+    "window_title": ("新楓之谷：經典版", str),
     "fps": (8.0, float),
     "attack_key": ("ctrl", str),
     "attack_type": ("directional", str),

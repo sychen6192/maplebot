@@ -123,6 +123,37 @@ def _dedupe(keys: Sequence[str]) -> List[str]:
     return out
 
 
+def describe(points: Sequence[RoutePoint]) -> str:
+    """一行講清楚錄到什麼。
+
+    錄完只丟一串座標回去，使用者沒辦法判斷對不對——尤其小地圖 ROI 錯了的時候，
+    錄出來的東西看起來一樣像數字。寫成「走到哪 → 爬到哪 → 按什麼」才看得出來。
+    """
+    if not points:
+        return "（沒有錄到有效座標）"
+    parts = []
+    for p in points:
+        s = f"x={p.x}"
+        if p.y is not None:
+            s += f",y={p.y}"
+        if p.descend == "jump":
+            s += "(下跳)"
+        if p.keys:
+            s += "+" + "".join(p.keys)
+        parts.append(s)
+    return " → ".join(parts)
+
+
+def coverage(points: Sequence[RoutePoint]) -> str:
+    """路線涵蓋範圍——太短就是根本沒走完，或小地圖讀錯。"""
+    if not points:
+        return "0 個點"
+    xs = [p.x for p in points]
+    levels = len({p.y for p in points if p.y is not None})
+    out = f"{len(points)} 個點、左右跨距 {max(xs) - min(xs)}px"
+    return out + (f"、{levels} 個樓層" if levels > 1 else "")
+
+
 def to_yaml_block(points: Sequence[RoutePoint], indent: str = "  ") -> str:
     """輸出可以直接貼進 profile 的 patrol.waypoints 區塊。"""
     if not points:
