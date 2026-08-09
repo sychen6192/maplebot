@@ -65,10 +65,12 @@ class VisionCfg:
     outline_auto_scale: bool = True    # 依實際畫面寬度等比例縮放上面的門檻
     outline_close_kernel: int = 20     # 把斷續描邊連成整塊
     outline_player_box: Tuple[int, int] = (100, 140)   # 畫面中央挖掉的自己
-    # 怪物頭上的綠色血條：被打過的怪一定有，顏色是遊戲畫的 UI 不用調門檻。
-    # 專門補描邊偵測漏掉的（太大/太小/跟地形連在一起）
-    detect_hp_bars: bool = True
-    hp_bar_tolerance: int = 25        # 各通道容許誤差（擷取方式不同會差一兩階）
+    # 怪物頭上的綠色血條：被打過的怪一定有，是遊戲畫的 UI。
+    # **預設關閉**：這招成立的前提是「那個綠只有血條會出現」，而草地/樹葉的綠
+    # 只差十幾階。先用 tools/debug_view.py --snapshot 確認框有落在真的血條上
+    # （框上標 hpbar）再開。詳見 vision/mob_hpbar.py
+    detect_hp_bars: bool = False
+    hp_bar_tolerance: int = 0         # 各通道容許誤差。0 = 精確比色，調大就會誤判草地
     mob_match_threshold: float = 0.72
     yolo_model: str = ""
     yolo_confidence: float = 0.5
