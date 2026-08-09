@@ -99,9 +99,9 @@ def test_hp_still_read_every_tick_while_mobs_throttled(cfg, frame):
     p = Perceiver(cfg, _CountingDetector())
     p.perceive(frame, now=0.0)
     frame2 = frame.copy()
-    frame2[60:68, 10:45] = (60, 60, 60)       # 血條清空
+    frame2[60:68, 35:45] = (60, 60, 60)       # 血條掉到 50%
     st = p.perceive(frame2, now=0.1)
-    assert st.hp == 0.0
+    assert st.hp == pytest.approx(0.5, abs=0.02)
 
 
 class _RecordingDetector:
@@ -230,3 +230,24 @@ def test_standing_still_never_filters_anything(cfg, frame):
     for i in range(20):
         st = p.perceive(frame, now=float(i))
     assert len(st.mobs) == 1
+
+
+def test_hp_flash_does_not_reach_the_decision_layer(cfg, frame):
+    """被撞到時血條會閃，那一幀讀成 0%——不能傳到下游去灌藥又停機。"""
+    p = Perceiver(cfg, _FixedDetector())
+    assert p.perceive(frame, now=0.0).hp == pytest.approx(0.7, abs=0.02)
+    flashed = frame.copy()
+    flashed[60:68, 10:45] = (60, 60, 60)        # 血條被特效蓋掉
+    assert p.perceive(flashed, now=0.1).hp == pytest.approx(0.7, abs=0.02)
+    assert p.bar_glitches == 1
+    # 恢復之後照常讀
+    assert p.perceive(frame, now=0.2).hp == pytest.approx(0.7, abs=0.02)
+
+
+def test_real_death_still_reaches_the_decision_layer(cfg, frame):
+    p = Perceiver(cfg, _FixedDetector())
+    p.perceive(frame, now=0.0)
+    empty = frame.copy()
+    empty[60:68, 10:45] = (60, 60, 60)
+    p.perceive(empty, now=0.1)
+    assert p.perceive(empty, now=0.2).hp == 0.0

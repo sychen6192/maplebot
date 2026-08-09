@@ -105,12 +105,15 @@ def _place_away_from_game(cap, disp_w, disp_h) -> None:
               "請改用 --snapshot out.png（不開視窗），或縮小遊戲視窗／用副螢幕")
 
 
-def _report(state, action, followers=()):
+def _report(state, action, followers=(), detector=None):
     print(f"  HP {_pct(state.hp)} | MP {_pct(state.mp)} | EXP {_pct(state.exp)}")
     print(f"  玩家小地圖座標: {state.player}｜其他玩家: {len(state.others)}")
     print(f"  偵測到怪物: {len(state.mobs)}")
     for mob in state.mobs[:5]:
-        print(f"    - {mob.name} ({mob.cx},{mob.cy}) 分數 {mob.score:.2f}")
+        print(f"    - {mob.name} ({mob.cx},{mob.cy}) {mob.w}x{mob.h} "
+              f"面積 {mob.w * mob.h}")
+    if detector is not None and hasattr(detector, "explain"):
+        print(f"    {detector.explain()}")
     if followers:
         print(f"  跟隨物（寵物，不攻擊）: {len(followers)}")
     print(f"  當下決策: {type(action).__name__}")
@@ -149,7 +152,8 @@ def main() -> int:
         else:
             print("警告：小地圖自動定位失敗（缺角落模板或分數過低）")
 
-    perceiver = Perceiver(cfg, make_detector(cfg.vision, profile.templates_dir))
+    detector = make_detector(cfg.vision, profile.templates_dir)
+    perceiver = Perceiver(cfg, detector)
     rt = fsm.Runtime()
     pf = cfg.region("playfield")
     center = (pf[2] // 2, pf[3] // 2)
@@ -205,7 +209,7 @@ def main() -> int:
         cv2.imwrite(args.snapshot, annotate(frame, state, action, cfg,
                                             followers=perceiver.last_followers))
         print(f"\n已存標註圖: {args.snapshot}")
-        _report(state, action, perceiver.last_followers)
+        _report(state, action, perceiver.last_followers, detector)
         return 0
 
     # 只建立「一個」視窗；不這樣做的話，某些 Windows OpenCV 版本會在

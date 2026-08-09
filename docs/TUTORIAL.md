@@ -236,7 +236,9 @@ python main.py --profile config/profiles/mymap.yaml
 
 | 症狀 | 解法 |
 |---|---|
+| **抓到的怪比想像中少** | 跑 `python tools/debug_view.py --snapshot check.png`，最後一行會直接告訴你原因與該調哪個旋鈕，例如「黑塊 146 個 -> 採用 3 個（太小 143、太大 0）」 |
 | 抓不到怪 / 框到背景 | 調 `outline_black_level`（8→15 抓更多、8→4 抓更少）與 `outline_min_area` |
+| 幾隻怪被框成一大塊 | `outline_close_kernel` 調小（怪跟地形/彼此連在一起了），或 `outline_max_area` 調高 |
 | **一直打自己的寵物** | 三個辦法，由可靠到不可靠：①**進遊戲把寵物收起來**（最乾脆，撿物有 `loot.key` 可代勞）②`vision: { outline_player_box: [220, 200] }` 把角色旁邊那塊直接挖掉（連貼身的怪也會一起挖掉）③`vision: { filter_followers: true }` 讓程式自己認寵物——它靠鏡頭捲動判別，**窄地圖鏡頭不捲就認不出來**，所以預設關閉 |
 | **一直攻擊、完全不走路** | 多半就是在打寵物。連續打 12 秒位置沒變會自動讓路去巡邏，log 那條警告會說明；解法同上 |
 | 開了 `filter_followers` 之後怪也不打了 | 表示判別在你這張圖不成立（鏡頭不捲動）。設回 `false`，改用上面的 ①或② |
@@ -248,6 +250,7 @@ python main.py --profile config/profiles/mymap.yaml
 | **每個 tick 都是 Wait、角色不動** | 不是當掉，是某條規則擋著。dry-run 的 tick 行括號裡就是原因；正式跑則會在閒置 20 秒後警告。最常見是小地圖紅點誤判成「有其他玩家」 |
 | 誤判有其他玩家 | 用 `--snapshot` 看紅圈畫在哪。縮小 minimap ROI（別框到紅色 UI）、調低 `vision.color_tolerance`，或先設 `safety.pause_when_players: false` |
 | 玩家綠圈不見/亂跳 | 小地圖框太大含到雜物 → 重框；或調 `vision.color_tolerance` |
+| **被撞到就說 HP 不夠停機** | 已修正：被打時血條會閃、那一幀讀成 0%，現在暴跌要下一幀再確認才算數。還會發生的話把 `vision.bar_confirm_frames` 調成 3 |
 | HP/MP % 不對、**莫名說 HP 不夠就停機** | 血條 ROI 有問題。跑 `python tools/debug_view.py --track` 正常玩幾分鐘，看「突降」次數——大於 0 就是誤讀。重跑 `calibrate.py` 只框紅色條本體（不含數字、外框、旁邊 UI）。撐著先用的話把 `safety.critical_hp_frames` 調大 |
 | 自動巡邏報「校正失敗」 | 會自動重試 2 次才放棄。仍失敗代表方向鍵沒送進遊戲（跑 `tools/test_keys.py`）或小地圖 ROI 錯了。怪太多一直被打斷的話，可改用手動 `waypoints: [左x, 右x]` |
 | 一直說沒賺到經驗 | 技能鍵對嗎？怪打得到嗎？先用 `--dry-run` 看決策是不是一直 `Move` |

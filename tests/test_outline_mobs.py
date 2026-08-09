@@ -118,3 +118,68 @@ def test_scaled_thresholds_grow_with_width():
 
 def test_empty_frame():
     assert OutlineMobDetector().detect(np.zeros((0, 0, 3), dtype=np.uint8)) == []
+
+
+def _scene_with_big_mobs(width, spots=(0.10, 0.28, 0.80), mob_w=44, mob_h=34):
+    """同一個場景畫在 width 寬的畫面上：怪的相對大小與位置都一樣。
+
+    上面的 _sized_scene 用的是最小的怪（只驗 min_area 那一側），大隻的怪
+    才會踩到 max_area——面積門檻縮放錯誤就是在這裡漏掉的。
+    怪都避開畫面正中央：那裡是角色自己，本來就會被挖掉。
+    """
+    s = width / 790
+    h = int(520 * s)
+    img = np.full((h, width, 3), 120, dtype=np.uint8)
+    bw, bh = int(mob_w * s), int(mob_h * s)
+    for frac in spots:
+        x, y = int(width * frac), int(300 * s)
+        # 實填：形態學閉合本來就是要把斷續描邊連成一整塊，所以真實的
+        # 連通元件面積接近 sprite 的長x寬，會隨解析度平方成長
+        cv2.rectangle(img, (x, y), (x + bw, y + bh), (0, 0, 0), -1)
+    return img
+
+
+def test_same_scene_is_detected_at_any_window_size():
+    """同一組預設值，在 790 和 1900 寬的畫面上要抓到一樣多隻。
+
+    面積門檻只按線性倍率縮放的話，大視窗裡的怪會超過 max_area 被整個丟掉——
+    這就是「1920 視窗抓到的怪比想像中少」的原因。
+    """
+    det = OutlineMobDetector(black_level=8)
+    small = len(det.detect(_scene_with_big_mobs(790)))
+    big = len(det.detect(_scene_with_big_mobs(1900)))
+    assert small == 3, small
+    assert big == small, f"790px 抓到 {small} 隻，1900px 只抓到 {big} 隻"
+
+
+def test_big_mobs_survive_a_big_window():
+    """大隻的怪最容易踩到 max_area。"""
+    det = OutlineMobDetector(black_level=8)
+    assert len(det.detect(_scene_with_big_mobs(
+        1900, spots=(0.10, 0.80), mob_w=110, mob_h=90))) == 2
+
+
+def test_area_thresholds_scale_with_the_square():
+    det = OutlineMobDetector(min_area=300, max_area=20000)
+    min_a, max_a, kernel, box, _ = det._scaled(790 * 2)
+    assert min_a == 300 * 4 and max_a == 20000 * 4      # 面積：平方
+    assert kernel == det.close_kernel * 2               # 長度：線性
+    assert box == (det.player_box[0] * 2, det.player_box[1] * 2)
+
+
+def test_explain_says_why_blobs_were_dropped():
+    det = OutlineMobDetector(black_level=8, min_area=100000)   # 門檻高到全滅
+    det.detect(_scene_with_big_mobs(790))
+    text = det.explain()
+    assert "太小" in text
+    assert "outline_min_area" in text          # 要講出該調哪個旋鈕
+
+
+def test_explain_flags_an_empty_mask():
+    det = OutlineMobDetector(black_level=0)
+    det.detect(np.full((200, 400, 3), 120, dtype=np.uint8))
+    assert "outline_black_level" in det.explain()
+
+
+def test_explain_before_any_detection():
+    assert OutlineMobDetector().explain() == "尚未偵測"

@@ -48,16 +48,24 @@ class OutlineMobDetector:
         self.player_box = player_box
         self.min_size = min_size
         self.auto_scale = auto_scale
+        # 上一次偵測的篩選統計。「抓到的怪比想像中少」時，這才分得出是
+        # 「黑色遮罩根本沒抓到」還是「抓到了但被門檻篩掉」——兩者要調的旋鈕不同。
+        self.last_stats: dict = {}
 
     def _scaled(self, frame_width: int):
-        """回傳依畫面寬度縮放後的 (min_area, max_area, kernel, player_box, min_size)。"""
+        """回傳依畫面寬度縮放後的 (min_area, max_area, kernel, player_box, min_size)。
+
+        長度（kernel、框大小）跟寬度成正比，**面積要平方**——同一隻怪畫面放大
+        兩倍，寬高各兩倍，面積是四倍。把面積也只乘一倍的話，大隻的怪在大視窗
+        會超過 max_area 被整個丟掉（1920 視窗實測：110x90 的怪必被濾掉）。
+        """
         if not self.auto_scale or frame_width <= 0:
             return (self.min_area, self.max_area, self.close_kernel,
                     self.player_box, self.min_size)
         s = frame_width / REFERENCE_WIDTH
         return (
-            int(self.min_area * s),
-            int(self.max_area * s),
+            int(self.min_area * s * s),
+            int(self.max_area * s * s),
             max(int(round(self.close_kernel * s)), 3),
             (int(self.player_box[0] * s), int(self.player_box[1] * s)),
             (int(self.min_size[0] * s), int(self.min_size[1] * s)),
@@ -87,12 +95,42 @@ class OutlineMobDetector:
 
         n, _, stats, _ = cv2.connectedComponentsWithStats(closed, connectivity=8)
         mobs: List[Mob] = []
+        too_small = too_big = too_thin = 0
         for i in range(1, n):   # 0 是背景
             x, y, bw, bh, area = stats[i]
-            if not (min_area <= area <= max_area):
+            if area < min_area:
+                too_small += 1
+                continue
+            if area > max_area:
+                too_big += 1
                 continue
             if bw < min_size[0] or bh < min_size[1]:
+                too_thin += 1
                 continue
             mobs.append(Mob(cx=int(x + bw // 2), cy=int(y + bh // 2),
                             w=int(bw), h=int(bh), score=1.0, name="mob"))
+        self.last_stats = {
+            "blobs": n - 1, "kept": len(mobs), "too_small": too_small,
+            "too_big": too_big, "too_thin": too_thin,
+            "min_area": min_area, "max_area": max_area,
+            "black_ratio": float((mask > 0).mean()),
+        }
         return mobs
+
+    def explain(self) -> str:
+        """一行說明上次偵測發生什麼事，給 debug_view 印出來。"""
+        s = self.last_stats
+        if not s:
+            return "尚未偵測"
+        out = (f"黑色像素 {s['black_ratio']:.1%}｜黑塊 {s['blobs']} 個 -> 採用 "
+               f"{s['kept']} 個（太小 {s['too_small']}、太大 {s['too_big']}、"
+               f"太細 {s['too_thin']}）｜面積門檻 {s['min_area']}~{s['max_area']}")
+        hints = []
+        if s["blobs"] == 0:
+            hints.append("完全沒抓到黑塊 -> outline_black_level 調高（8→15）")
+        if s["too_small"] > s["kept"]:
+            hints.append("多數被判太小 -> outline_min_area 調低")
+        if s["too_big"]:
+            hints.append("有黑塊被判太大 -> outline_max_area 調高，"
+                         "或 outline_close_kernel 調小（怪跟地形連在一起了）")
+        return out + ("\n    建議：" + "；".join(hints) if hints else "")

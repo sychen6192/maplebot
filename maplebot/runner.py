@@ -74,6 +74,7 @@ class Runner:
         self._idle_warned = False
         self._follower_warned = False
         self._attack_breaks = 0
+        self._bar_warned = False
 
     # ---- 小地圖自動定位（auto-maple corner-template 法）----
 
@@ -199,6 +200,15 @@ class Runner:
             "偵測到 %d 個跟著角色移動的目標（幾乎都是寵物），已排除、不會攻擊。"
             "誤排除到真的怪的話設 vision.filter_followers: false",
             len(self.perceiver.last_followers))
+
+    def _notice_bar_glitch(self) -> None:
+        """血條誤讀被擋下來時說一聲——這是「以前會莫名停機」的那個原因。"""
+        if self._bar_warned or self.perceiver.bar_glitches == 0:
+            return
+        self._bar_warned = True
+        self.log.info(
+            "血條讀值閃了一下（被撞到時的特效），已忽略——這種誤讀以前會被"
+            "當成瀕死而停機。一直發生的話把 vision.bar_confirm_frames 調成 3")
 
     def _notice_attack_break(self) -> None:
         """一直打同一個打不死的東西（寵物、隔著地形的怪）會被強制打斷。"""
@@ -336,6 +346,7 @@ class Runner:
                 self._check_idle(action, now)
                 self._notice_followers()
                 self._notice_attack_break()
+                self._notice_bar_glitch()
                 self._publish(state, action)
 
                 if isinstance(action, fsm.Panic):
