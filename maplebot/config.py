@@ -71,6 +71,10 @@ class VisionCfg:
     # （框上標 hpbar）再開。詳見 vision/mob_hpbar.py
     detect_hp_bars: bool = False
     hp_bar_tolerance: int = 0         # 各通道容許誤差。0 = 精確比色，調大就會誤判草地
+    # 用組隊紅條找角色在畫面上的精確位置（要自己跟自己組隊）。
+    # 鏡頭有跟隨延遲、走到地圖邊緣還會卡住，「角色永遠在正中央」是錯的。
+    # 抓不到就退回畫面中央，等於原本的行為，所以沒組隊也不會壞。
+    locate_player_bar: bool = True
     mob_match_threshold: float = 0.72
     yolo_model: str = ""
     yolo_confidence: float = 0.5
@@ -349,6 +353,7 @@ def load_config(path: str, local_path: Optional[str] = None) -> AppCfg:
     if "outline_player_box" in v:
         pb = v["outline_player_box"]
         vc.outline_player_box = (int(pb[0]), int(pb[1]))
+    vc.locate_player_bar = bool(v.get("locate_player_bar", vc.locate_player_bar))
     vc.detect_hp_bars = bool(v.get("detect_hp_bars", vc.detect_hp_bars))
     vc.hp_bar_tolerance = int(v.get("hp_bar_tolerance", vc.hp_bar_tolerance))
     vc.mob_match_threshold = float(v.get("mob_match_threshold", vc.mob_match_threshold))

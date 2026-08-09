@@ -87,6 +87,17 @@ vision:
   detect_hp_bars: false
   hp_bar_tolerance: 0         # 0 = 精確比色。調大就會開始誤判草地，別動
 
+  # --- 角色在畫面上的位置（組隊紅條）---
+  # 程式原本假設「角色永遠在畫面正中央」。這個假設在楓谷是錯的：鏡頭有跟隨
+  # 延遲，走動時角色會跑在鏡頭前面；走到地圖邊緣鏡頭更會直接卡住。實測 1920
+  # 視窗上角色可以偏離中心 200px 以上，後果是 (1) 挖掉「自己」挖錯地方，
+  # 角色被當成一隻怪打 (2) 攻擊範圍框沒對準角色。
+  #
+  # 解法跟 MapleStoryAutoLevelUp 一樣：**自己跟自己組隊**（按 P 建立隊伍），
+  # 角色頭上就會出現一條組隊小紅條，那是遊戲畫的 UI，抓它就知道角色在哪。
+  # 沒組隊抓不到就退回畫面中央，也就是原本的行為，不會壞。
+  locate_player_bar: true
+
   mob_match_threshold: 0.72   # template 模式用
   yolo_model: ""                      # mob_detector=yolo 時填訓練好的 .pt 路徑
   yolo_confidence: 0.5                # yolo 與 remote 共用的信心門檻

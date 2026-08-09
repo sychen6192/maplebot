@@ -12,7 +12,7 @@ import numpy as np
 
 from .brain.state import GameState
 from .config import AppCfg
-from .vision import minimap, mob_hpbar, status
+from .vision import minimap, mob_hpbar, player_bar, status
 from .vision.locate import PLAYER_NAME, load_ui_template
 from .vision.follower import FollowerFilter
 from .vision.mobs import MobDetector
@@ -78,6 +78,10 @@ class Perceiver:
 
         pf = self._slice(frame, "playfield")
         if pf is not None:
+            if vc.locate_player_bar:
+                st.player_screen = player_bar.find_player_bar(
+                    pf, scale=pf.shape[1] / REFERENCE_WIDTH,
+                    mask_out=self._overlays())
             interval = vc.mob_interval
             due = (interval <= 0 or self._mobs_ts is None
                    or now - self._mobs_ts >= interval)
@@ -96,6 +100,8 @@ class Perceiver:
                     # 傳整個 playfield（不是搜尋框）給它量鏡頭位移：背景紋理越多越準
                     mobs, self.last_followers = self._followers.filter(
                         mobs, pf, self._player_moved(st.player))
+                if st.player_screen is not None:
+                    mobs = self._drop_self(mobs, st.player_screen, pf.shape[1])
                 self._mobs_cache = mobs
                 self._mobs_ts = now
             st.mobs = self._mobs_cache
@@ -119,6 +125,30 @@ class Perceiver:
             return False
         self._prev_player = player
         return True
+
+    def _drop_self(self, mobs, player_xy, frame_width):
+        """把落在角色身上的偵測結果丟掉。
+
+        描邊偵測是照**畫面中央**挖掉自己的，但鏡頭有跟隨延遲、走到地圖邊緣還會
+        卡住，角色其實常常不在正中央——那時角色自己就會被當成一隻怪打。
+        """
+        scale = frame_width / REFERENCE_WIDTH
+        bw, bh = self.cfg.vision.outline_player_box
+        bw, bh = int(bw * scale), int(bh * scale)
+        px, py = player_xy
+        return [m for m in mobs
+                if abs(m.cx - px) > bw // 2 or abs(m.cy - py) > bh // 2]
+
+    def _overlays(self):
+        """playfield 上疊著的 UI 區塊（換算成 playfield 座標）。
+
+        小地圖通常疊在主畫面左上角，上面的其他玩家紅點會被誤認成組隊紅條。
+        """
+        pf = self.cfg.regions.get("playfield")
+        mm = self.cfg.regions.get("minimap")
+        if pf is None or mm is None:
+            return []
+        return [(mm[0] - pf[0], mm[1] - pf[1], mm[2], mm[3])]
 
     def _search_roi(self, playfield: np.ndarray):
         """只取角色周圍的攻擊範圍框；回傳 (影像, x偏移, y偏移)。"""
