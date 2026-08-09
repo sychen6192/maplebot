@@ -18,6 +18,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from maplebot.capture import ImageCapture, WindowCapture  # noqa: E402
 from maplebot.config import load_config  # noqa: E402
+from maplebot.vision.status import bar_ratio  # noqa: E402
+from maplebot.vision.statusbar import find_status_bars  # noqa: E402
+
+BAR_COLORS = {"hp_bar": "red", "mp_bar": "blue", "exp_bar": "yellow"}
 
 REGIONS = [
     ("minimap", "小地圖（含玩家黃點的地圖範圍）"),
@@ -34,6 +38,8 @@ def main() -> int:
     ap.add_argument("--source", default="", help="用靜態截圖代替遊戲視窗")
     ap.add_argument("--write", nargs="?", const="auto", default="",
                     help="直接寫進 config/local.yaml（不用手動複製貼上）")
+    ap.add_argument("--no-auto", action="store_true",
+                    help="狀態列也自己框（預設會自動找紅/藍/黃三條）")
     args = ap.parse_args()
 
     if args.source:
@@ -43,9 +49,24 @@ def main() -> int:
         cap = WindowCapture(cfg.window_title)
 
     frame = cap.grab()
-    print("在每個視窗中拖曳框選後按 Enter/Space 確認；直接按 c 可跳過該區域\n")
     results = {}
-    for name, hint in REGIONS:
+
+    # 三條狀態列是遊戲畫的 UI，顏色固定、又永遠並排在畫面底部——這種東西
+    # 沒道理要人拿滑鼠去拉。先自動找，找到就不用框，只剩小地圖與主畫面。
+    auto = find_status_bars(frame)
+    if auto and not args.no_auto:
+        print("已自動找到狀態列（要自己框的話加 --no-auto）：")
+        for name, box in auto.items():
+            results[name] = [int(v) for v in box]
+            ratio = bar_ratio(frame[box[1]:box[1] + box[3], box[0]:box[0] + box[2]],
+                              BAR_COLORS[name])
+            print(f"  {name}: {results[name]}  讀出來是 {ratio:.0%}"
+                  "（跟遊戲裡顯示的對一下，差很多就是找錯了）")
+        print()
+
+    todo = [(n, h) for n, h in REGIONS if n not in results]
+    print("在每個視窗中拖曳框選後按 Enter/Space 確認；直接按 c 可跳過該區域\n")
+    for name, hint in todo:
         title = f"{name}: {hint}"
         x, y, w, h = cv2.selectROI(title, frame, showCrosshair=True)
         cv2.destroyWindow(title)

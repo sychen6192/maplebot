@@ -130,3 +130,12 @@ datasets/
 config/local.yaml
 runs/
 .venv/
+
+# 使用者自己截的模板（角色名牌、小地圖角落、怪物）——每個人的角色與解析度都不同
+data/templates/
+
+# 第三方外掛的設定與路徑資料（別人的產品內容，不要跟著 repo 上公開的 GitHub）
+config/maps/
+config/UP/
+config/profiles/*.dat
+config/*.json
