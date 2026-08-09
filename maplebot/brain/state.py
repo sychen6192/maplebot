@@ -12,6 +12,9 @@ class GameState:
     mp: Optional[float] = None
     exp: Optional[float] = None
     player: Optional[Tuple[int, int]] = None   # 小地圖座標
+    # 角色在 playfield 上的位置（組隊紅條量到的）。None = 沒量到，
+    # 決策層退回「角色在畫面正中央」的假設
+    player_screen: Optional[Tuple[int, int]] = None
     minimap_size: Optional[Tuple[int, int]] = None  # 小地圖 ROI 寬高（相對座標換算用）
     others: List[Tuple[int, int]] = field(default_factory=list)
     mobs: List[Mob] = field(default_factory=list)  # playfield 座標

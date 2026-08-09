@@ -670,3 +670,35 @@ def test_attack_scale_helper():
     assert fsm.attack_scale(1580) == pytest.approx(2.0)
     assert fsm.attack_scale(1580, enabled=False) == 1.0
     assert fsm.attack_scale(0) == 1.0
+
+
+def test_attack_range_follows_the_character_not_the_screen(cfg, profile):
+    """鏡頭有跟隨延遲，角色常常不在畫面正中央。
+
+    範圍框沒跟著角色走的話，一邊構得到卻不打、另一邊打不到卻猛揮。
+    """
+    profile.attack.range_px = 100
+    st = _state(mobs=[Mob(cx=CENTER[0] + 250, cy=CENTER[1], w=20, h=20,
+                          score=1, name="m")])
+    assert not isinstance(fsm.decide(st, cfg, profile, _rt(), NOW, CENTER), fsm.Attack)
+
+    st.player_screen = (CENTER[0] + 200, CENTER[1])   # 角色其實偏右 200px
+    assert isinstance(fsm.decide(st, cfg, profile, _rt(), NOW, CENTER), fsm.Attack)
+
+
+def test_the_range_is_symmetric_around_the_character(cfg, profile):
+    """角色偏右時，牠左邊的怪也要照樣打得到——範圍是繞著角色，不是繞著畫面。"""
+    profile.attack.range_px = 100
+    player = (CENTER[0] + 200, CENTER[1])
+    for side in (-1, 1):
+        st = _state(mobs=[Mob(cx=player[0] + side * 80, cy=player[1],
+                              w=20, h=20, score=1, name="m")])
+        st.player_screen = player
+        assert isinstance(fsm.decide(st, cfg, profile, _rt(), NOW, CENTER),
+                          fsm.Attack), side
+
+
+def test_falls_back_to_the_screen_centre_without_a_party_bar(cfg, profile):
+    st = _state(mobs=[_mob(CENTER[0] + 10)])
+    assert st.player_screen is None
+    assert isinstance(fsm.decide(st, cfg, profile, _rt(), NOW, CENTER), fsm.Attack)

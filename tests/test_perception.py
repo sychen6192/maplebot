@@ -302,3 +302,53 @@ def test_hp_bar_survives_the_search_box_offset(cfg, frame):
     mobs = p.perceive(_with_hp_bar(frame, x=120, y=170), now=1.0).mobs
     assert len(mobs) == 1
     assert 100 < mobs[0].cx < 200
+
+
+def _with_party_bar(frame, x=140, y=170):
+    """在 playfield 內畫一條組隊紅條（playfield ROI 是 (0,80,300,200)）。"""
+    f = frame.copy()
+    cv2.rectangle(f, (x, y), (x + 11, y + 2), (0, 0, 255), -1)
+    return f
+
+
+class _MobAtDetector:
+    """固定回報指定 playfield 座標的一隻怪。"""
+
+    def __init__(self, cx, cy):
+        self.cx, self.cy = cx, cy
+
+    def detect(self, playfield):
+        from maplebot.vision.mobs import Mob
+        return [Mob(cx=self.cx, cy=self.cy, w=20, h=20, score=1.0, name="m")]
+
+
+def test_party_bar_gives_the_character_position(cfg, frame):
+    p = Perceiver(cfg, _BlindDetector())
+    st = p.perceive(_with_party_bar(frame), now=1.0)
+    assert st.player_screen is not None
+    assert abs(st.player_screen[0] - 145) <= 8      # 血條左上 + 偏移
+    assert st.player_screen[1] > 90                 # 角色在血條下面
+
+
+def test_no_party_bar_leaves_it_unknown(cfg, frame):
+    """沒組隊就沒紅條，決策層退回畫面中央（原本的行為）。"""
+    assert Perceiver(cfg, _BlindDetector()).perceive(frame, now=1.0).player_screen is None
+
+
+def test_the_character_itself_is_not_reported_as_a_mob(cfg, frame):
+    """描邊偵測是照畫面中央挖掉自己的；角色偏離中央時會把自己當成怪。"""
+    shot = _with_party_bar(frame, x=140, y=170)
+    p = Perceiver(cfg, _MobAtDetector(cx=145, cy=105))   # 正好在角色身上
+    assert p.perceive(shot, now=1.0).mobs == []
+
+
+def test_a_real_mob_next_to_the_character_still_counts(cfg, frame):
+    shot = _with_party_bar(frame, x=140, y=170)
+    p = Perceiver(cfg, _MobAtDetector(cx=280, cy=105))
+    assert len(p.perceive(shot, now=1.0).mobs) == 1
+
+
+def test_player_bar_lookup_can_be_turned_off(cfg, frame):
+    cfg.vision.locate_player_bar = False
+    st = Perceiver(cfg, _BlindDetector()).perceive(_with_party_bar(frame), now=1.0)
+    assert st.player_screen is None

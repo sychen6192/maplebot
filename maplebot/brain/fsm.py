@@ -368,7 +368,9 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
         return Wait("讀不到畫面狀態（HP 條或小地圖玩家點）")
 
     assert state.hp is not None and state.player is not None
-    center_x, center_y = playfield_center
+    # 攻擊範圍要以**角色**為中心，不是畫面中心：鏡頭有跟隨延遲、走到地圖邊緣
+    # 還會卡住，實測角色可以偏離畫面中心 200px 以上。量不到就退回畫面中心
+    center_x, center_y = state.player_screen or playfield_center
     pat = profile.patrol
 
     # 單一幀讀到低血就停機太危險——血條被特效蓋住、擷取抖一下都會誤判。
@@ -407,7 +409,7 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
         #（大絕設 min_mobs=3 就不會浪費在單隻怪身上）。
         mobs_near = False        # 任一技能範圍內有怪 -> 先打完再撿東西
         may_attack = now >= rt.attack_break_until
-        s = attack_scale(center_x * 2, profile.attack_auto_scale)
+        s = attack_scale(playfield_center[0] * 2, profile.attack_auto_scale)
         for i, sk in enumerate(profile.active_skills()):
             in_range = [
                 m for m in state.mobs

@@ -32,6 +32,7 @@ RED = (0, 0, 255)
 YELLOW = (0, 255, 255)
 WHITE = (255, 255, 255)
 GRAY = (150, 150, 150)      # 跟隨物（寵物）：偵測到但不攻擊
+MAGENTA = (255, 0, 255)     # 組隊紅條量到的角色位置
 CYAN = (255, 200, 0)        # 攻擊範圍框
 
 WINDOW = "maplebot debug (q to quit)"
@@ -50,7 +51,7 @@ def _display_size(capture_size):
     return MAX_DISPLAY_W, int(h * MAX_DISPLAY_W / w)
 
 
-def _draw_attack_box(canvas, cfg, profile):
+def _draw_attack_box(canvas, cfg, profile, player_screen=None):
     """把攻擊範圍框畫出來——「range_px 該設多少」用看的比用猜的快。
 
     短劍砍不到卻一直揮、或是明明構得到卻不打，看這個框跟怪的相對位置就知道。
@@ -58,7 +59,13 @@ def _draw_attack_box(canvas, cfg, profile):
     if "playfield" not in cfg.regions:
         return
     fx, fy, fw, fh = cfg.regions["playfield"]
-    cx, cy = fx + fw // 2, fy + fh // 2
+    if player_screen:                       # 組隊紅條量到的真實角色位置
+        cx, cy = fx + player_screen[0], fy + player_screen[1]
+        cv2.drawMarker(canvas, (cx, cy), MAGENTA, cv2.MARKER_CROSS, 22, 2)
+        cv2.putText(canvas, "player", (cx + 10, cy - 8),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, MAGENTA, 1)
+    else:
+        cx, cy = fx + fw // 2, fy + fh // 2
     s = fsm.attack_scale(fw, profile.attack_auto_scale)
     for sk in profile.active_skills():
         rx, ry = int(sk.range_px * s), int(sk.vertical_range_px * s)
@@ -73,7 +80,7 @@ def annotate(frame, state, action, cfg, fps=None, followers=(), profile=None):
     """把辨識結果畫上去（畫在原尺寸畫面，座標讀值才準）。"""
     canvas = frame.copy()
     if profile is not None:
-        _draw_attack_box(canvas, cfg, profile)
+        _draw_attack_box(canvas, cfg, profile, state.player_screen)
 
     for name, (x, y, w, h) in cfg.regions.items():
         cv2.rectangle(canvas, (x, y), (x + w, y + h), WHITE, 1)
@@ -130,6 +137,7 @@ def _place_away_from_game(cap, disp_w, disp_h) -> None:
 def _report(state, action, followers=(), detector=None):
     print(f"  HP {_pct(state.hp)} | MP {_pct(state.mp)} | EXP {_pct(state.exp)}")
     print(f"  玩家小地圖座標: {state.player}｜其他玩家: {len(state.others)}")
+    print(f"  角色畫面位置: {state.player_screen or '（沒抓到組隊紅條，退回畫面中央）'}")
     print(f"  偵測到怪物: {len(state.mobs)}")
     for mob in state.mobs[:5]:
         print(f"    - {mob.name} ({mob.cx},{mob.cy}) {mob.w}x{mob.h} "
