@@ -1,4 +1,9 @@
 """偵錯視窗擺位：找不與遊戲視窗重疊的位置（避免螢幕擷取拍到自己）。"""
+import logging
+
+import numpy as np
+
+from maplebot.config import AppCfg
 from maplebot.window import _overlaps, pick_free_position
 
 SCREEN = (0, 0, 1920, 1080)
@@ -38,3 +43,53 @@ def test_result_never_overlaps_game():
 def test_overlap_helper():
     assert _overlaps((0, 0, 10, 10), (5, 5, 10, 10)) is True
     assert _overlaps((0, 0, 10, 10), (10, 0, 10, 10)) is False   # 邊界相接不算
+
+
+def test_runner_resizes_the_window_back_to_the_calibrated_size():
+    """ROI 是照某個視窗大小量的，尺寸一變全部錯位。
+
+    與其開場報錯要使用者自己去把視窗拉回去（拉不準就一直錯），程式自己調。
+    """
+    calls = []
+
+    class _Capture:
+        size = (1366, 768)
+
+        def __init__(self):
+            self._frame = np.zeros((768, 1366, 3), dtype=np.uint8)
+
+        def grab(self, region=None):
+            return self._frame
+
+        def resize_client(self, w, h):
+            calls.append((w, h))
+            self._frame = np.zeros((h, w, 3), dtype=np.uint8)
+            return (w, h)
+
+    from maplebot.runner import Runner
+
+    runner = object.__new__(Runner)
+    runner.cfg = AppCfg()
+    runner.cfg.calibrated_for = (1920, 1080)
+    runner.capture = _Capture()
+    runner.log = logging.getLogger("test-resize")
+
+    assert runner._match_calibrated_size((1366, 768)) == (1920, 1080)
+    assert calls == [(1920, 1080)]
+
+
+def test_no_resize_hook_still_reports_the_mismatch():
+    """靜態圖片來源沒有視窗可以調，維持原本的「報錯不要跑」。"""
+    from maplebot.runner import Runner
+
+    class _ImageSource:
+        def grab(self, region=None):
+            return np.zeros((600, 800, 3), dtype=np.uint8)
+
+    runner = object.__new__(Runner)
+    runner.cfg = AppCfg()
+    runner.cfg.calibrated_for = (1920, 1080)
+    runner.capture = _ImageSource()
+    runner.log = logging.getLogger("test-resize")
+
+    assert runner._match_calibrated_size((800, 600)) == (800, 600)

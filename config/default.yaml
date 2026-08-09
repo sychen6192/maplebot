@@ -59,7 +59,19 @@ vision:
   outline_auto_scale: true    # 依實際畫面寬度自動縮放上面兩個門檻。
                               # 關掉的話，為某一種視窗大小調的值換個解析度就失效
   outline_close_kernel: 20    # 把斷續的描邊連成一整塊
-  outline_player_box: [100, 140]   # 畫面中央挖掉的範圍（你自己的角色）
+  outline_player_box: [100, 140]   # 挖掉角色自己的範圍（位置見 locate_nametag）
+  # 形狀不可能是怪的黑塊直接擋掉。地形平台的暗邊會被閉合連成又寬又扁的
+  # 長條，面積剛好落在合理區間裡，只有尺寸與長寬比擋得住。
+  # 真的漏抓到超大隻的怪才調大（同樣以 790px 寬為基準）。
+  outline_max_size: [160, 160]
+  outline_max_aspect: 4.0     # 長寬比超過就不是怪（0 = 不檢查）
+
+  # --- 疊在主畫面上的 UI，不拿去找怪 ---
+  # 小地圖面板的標題、系統公告跑馬燈的文字都有黑色描邊，描邊偵測分不出那是
+  # 文字還是怪。座標是遊戲視窗 client 區的 [x, y, w, h]，可以列好幾塊。
+  # mob_exclude:
+  #   - [0, 0, 1920, 32]      # 最上方系統公告
+  #   - [0, 24, 178, 180]     # 小地圖面板
 
   # --- 跟隨物過濾（把寵物從怪物清單剔除）---
   # 寵物也有黑色描邊，描邊偵測分不出牠跟怪。判別方式：鏡頭捲動時世界上的怪會
@@ -93,9 +105,22 @@ vision:
   # 視窗上角色可以偏離中心 200px 以上，後果是 (1) 挖掉「自己」挖錯地方，
   # 角色被當成一隻怪打 (2) 攻擊範圍框沒對準角色。
   #
-  # 解法跟 MapleStoryAutoLevelUp 一樣：**自己跟自己組隊**（按 P 建立隊伍），
-  # 角色頭上就會出現一條組隊小紅條，那是遊戲畫的 UI，抓它就知道角色在哪。
-  # 沒組隊抓不到就退回畫面中央，也就是原本的行為，不會壞。
+  # 有兩招，會依序嘗試，都失敗才退回畫面中央（也就是原本的行為，不會壞）：
+  #
+  # 1. locate_nametag：認**角色名牌**。名牌本來就掛在角色腳下，不用進遊戲做
+  #    任何設定，而且上面是你的角色名，別人的名字比不中——天生只找得到自己。
+  #    先截一次模板：
+  #      python tools/grab_template.py --dir data/templates/ui --name player_nametag
+  #    （框住名牌那塊深色底的文字，不用框很準）。沒有模板檔就自動跳過。
+  #    nametag_offset 是「名牌中心 -> 角色中心」的位移，以 790px 寬為基準；
+  #    往上是負的。用 tools/debug_view.py --snapshot 看洋紅色十字有沒有落在
+  #    角色身上，沒有就調這個值。
+  #
+  # 2. locate_player_bar：認**組隊紅條**（跟 MapleStoryAutoLevelUp 同一招）。
+  #    要自己跟自己組隊，角色頭上才會出現那條紅條。
+  locate_nametag: true
+  nametag_offset: [0, -24]
+  nametag_threshold: 0.85
   locate_player_bar: true
 
   mob_match_threshold: 0.72   # template 模式用
