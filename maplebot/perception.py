@@ -36,6 +36,17 @@ class Perceiver:
         ) if cfg.vision.filter_followers else None
         self._prev_player: Optional[tuple] = None
         self.last_followers: list = []      # 給 debug_view 畫出來用
+        # 被撞到時血條會閃，那一幀會讀成 0%——擋在這裡，別讓下游灌藥又停機
+        self._bars = {
+            name: status.BarFilter(cfg.vision.bar_max_drop,
+                                   cfg.vision.bar_confirm_frames)
+            for name in ("hp", "mp", "exp")
+        }
+
+    @property
+    def bar_glitches(self) -> int:
+        """擋掉幾次血條誤讀（閃爍/特效蓋住）。"""
+        return sum(f.suppressed for f in self._bars.values())
 
     def _slice(self, frame: np.ndarray, name: str) -> Optional[np.ndarray]:
         region = self.cfg.regions.get(name)
@@ -57,15 +68,12 @@ class Perceiver:
             st.player = minimap.find_player(mm, vc, template=self.player_template)
             st.others = minimap.find_others(mm, vc)
 
-        hp = self._slice(frame, "hp_bar")
-        if hp is not None:
-            st.hp = status.bar_ratio(hp, vc.bar_colors.get("hp", "red"))
-        mp = self._slice(frame, "mp_bar")
-        if mp is not None:
-            st.mp = status.bar_ratio(mp, vc.bar_colors.get("mp", "blue"))
-        exp = self._slice(frame, "exp_bar")
-        if exp is not None:
-            st.exp = status.bar_ratio(exp, vc.bar_colors.get("exp", "yellow"))
+        for name, default_color in (("hp", "red"), ("mp", "blue"), ("exp", "yellow")):
+            roi = self._slice(frame, f"{name}_bar")
+            if roi is None:
+                continue
+            raw = status.bar_ratio(roi, vc.bar_colors.get(name, default_color))
+            setattr(st, name, self._bars[name].update(raw))
 
         pf = self._slice(frame, "playfield")
         if pf is not None:

@@ -49,6 +49,9 @@ class VisionCfg:
     ui_templates_dir: str = "data/templates/ui"
     minimap_border: int = 6           # auto 定位小地圖時向內縮的邊框厚度
     bar_colors: Dict[str, str] = field(default_factory=lambda: {"hp": "red", "mp": "blue", "exp": "yellow"})
+    # 血條讀值去雜訊：被撞到時血條會閃，那一幀會讀成 0%
+    bar_max_drop: float = 0.35        # 一幀掉超過這個比例就先不信，下一幀再確認
+    bar_confirm_frames: int = 2       # 連續幾幀都是低值才承認
     mob_detector: str = "outline"   # outline | template | yolo | remote
     outline_black_level: int = 8       # 判定為描邊的最大亮度（JPEG 測試時調高到 12~20）
     outline_min_area: int = 300        # 太小的黑塊當雜訊（790px 寬為基準）
@@ -315,6 +318,9 @@ def load_config(path: str, local_path: Optional[str] = None) -> AppCfg:
     vc.ui_templates_dir = str(v.get("ui_templates_dir", vc.ui_templates_dir))
     vc.minimap_border = int(v.get("minimap_border", vc.minimap_border))
     vc.bar_colors.update(v.get("bars", {}))
+    vc.bar_max_drop = float(v.get("bar_max_drop", vc.bar_max_drop))
+    vc.bar_confirm_frames = max(int(v.get("bar_confirm_frames",
+                                          vc.bar_confirm_frames)), 1)
     vc.mob_detector = str(v.get("mob_detector", vc.mob_detector)).lower()
     if vc.mob_detector not in ("outline", "template", "yolo", "remote"):
         raise ConfigError(
