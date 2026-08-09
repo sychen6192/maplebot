@@ -74,7 +74,7 @@
 
 | 借鑑 | 來源 | 在本專案的實作 |
 |---|---|---|
-| 「同一組參數要能跨解析度」 | [Airtest](https://github.com/AirtestProject/Airtest)（網易的遊戲 QA 自動化框架）用 SIFT 等特徵匹配做到尺度不變 | 我們沒用 SIFT（描邊偵測不吃模板），但這個角度讓我們發現 outline 的面積門檻是解析度相依的——同一組值只在某一種視窗大小下有效。改成依畫面寬度自動縮放（`outline_auto_scale`） |
+| 「同一組參數要能跨解析度」 | [Airtest](https://github.com/AirtestProject/Airtest)（網易的遊戲 QA 自動化框架）用 SIFT 等特徵匹配做到尺度不變 | 我們沒用 SIFT（描邊偵測不吃模板），但這個角度讓我們發現**所有以像素為單位的門檻都是解析度相依的**，同一組值只在某一種視窗大小下有效。先後修了三處：outline 面積門檻（`outline_auto_scale`，而且面積要**平方**縮放不是線性）、攻擊距離（`attack_auto_scale`）。基準統一在 `config.REFERENCE_WIDTH = 790` |
 
 ## 三個參考專案都沒有、我們自己加的
 
@@ -90,7 +90,7 @@
 
 ## 比對後確認我們已領先的部分
 
-- **可測試性**：兩個參考專案都沒有單元測試；本專案 318 個 pytest + CI + 真實截圖 ground truth
+- **可測試性**：兩個參考專案都沒有單元測試；本專案 322 個 pytest + CI + 真實截圖 ground truth
 - **離線開發**：`--source 截圖` 可跑完整 pipeline，參考專案都必須開遊戲才能調
 - **決策層純函式**：auto-maple 的決策散在 bot/routine/命令簿多處，狀態耦合全域 config；我們的 `fsm.decide()` 可以直接窮舉測試
 - **ML 升級路徑**：YOLO 訓練管線（自動預標註）與 VLM 督導層是兩個參考專案都沒有的

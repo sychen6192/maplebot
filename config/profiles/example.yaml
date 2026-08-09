@@ -57,7 +57,19 @@ attack:
   min_mp: 0.0               # MP 低於此比例就不放技能，改成繼續巡邏等回魔（0=不檢查）
   min_mobs: 1               # 範圍內至少幾隻才放
   type: directional         # directional = 先轉向再打；aoe = 原地放（祭司/主教的技能）
-  range_px: 320             # 怪物離畫面中心（≈角色）多少 px 內才攻擊
+  # 攻擊範圍：以 790px 寬的 playfield 為基準，實際視窗較大時**自動等比例放大**
+  #（attack_auto_scale，見檔案最後）。所以換視窗大小不用重調這兩個值。
+  #
+  # 各武器的起手值（不準就照下面的方法量）：
+  #   短劍 / 單手劍   120     拳套 / 標               500
+  #   雙手劍 / 斧 / 棍 160     弓 / 弩                 600
+  #   槍 / 矛         200     攻擊魔法（火球等）      400
+  #
+  # 怎麼量：python tools/debug_view.py --snapshot check.png
+  # 圖上會畫出**青色的攻擊範圍框**。跟你實際揮砍打得到的距離對一下就知道——
+  # 框太大 = 對著構不到的怪空揮（沒經驗、還會觸發「打很久沒進展」）；
+  # 框太小 = 明明貼臉了卻不打。
+  range_px: 320             # 水平範圍（左右各這麼多 px）
   vertical_range_px: 90     # 垂直容許範圍（避免打不到樓上樓下的怪）
   cast_seconds: 0.6         # 按住攻擊鍵的時間
   repeat: 2                 # 一次決策連續施放幾下
@@ -72,3 +84,7 @@ buffs:
 potions:
   hp: { key: pageup,   below_ratio: 0.50, cooldown: 1.0 }
   mp: { key: pagedown, below_ratio: 0.30, cooldown: 1.0 }
+
+# 攻擊範圍依 playfield 寬度自動縮放（基準 790px）。
+# 關掉的話 range_px 就是你這個視窗大小的實際像素，換視窗要自己重調。
+attack_auto_scale: true

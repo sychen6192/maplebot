@@ -12,6 +12,12 @@ import yaml
 
 Region = Tuple[int, int, int, int]  # x, y, w, h（遊戲視窗 client 區座標）
 
+# 所有「畫面像素」類的設定值都是對這個 playfield 寬度校正的。
+# 楓谷 800x600 視窗扣掉 UI 之後大約就是這個寬度。實際畫面比較大時，
+# 同一個世界距離會佔更多像素，所以門檻要等比例放大——否則同一組設定
+# 只在某一種視窗大小下有效（面積門檻與攻擊距離都踩過這個坑）。
+REFERENCE_WIDTH = 790
+
 LOCAL_NAME = "local.yaml"
 LOCAL_OVERRIDE = os.path.join("config", LOCAL_NAME)   # 僅供顯示訊息用
 
@@ -213,6 +219,9 @@ class Profile:
     potions: Dict[str, PotionCfg] = field(default_factory=dict)
     loot: LootCfg = field(default_factory=LootCfg)
     panic_return_key: str = ""        # 設定後，Panic 時會先按回城卷再停止
+    # 攻擊距離依 playfield 寬度自動縮放（基準 REFERENCE_WIDTH）。
+    # 關掉的話 range_px 就是你這個視窗大小的實際像素，換視窗要自己重調。
+    attack_auto_scale: bool = True
 
     def active_skills(self) -> List[AttackCfg]:
         """依優先權排好的技能清單。沒設定 skills 就退回單一 attack。"""
@@ -393,6 +402,7 @@ def load_profile(path: str) -> Profile:
     p.name = str(data.get("name", p.name))
     p.templates_dir = str(data.get("templates_dir", p.templates_dir))
     p.panic_return_key = str(data.get("panic_return_key", "")).lower()
+    p.attack_auto_scale = bool(data.get("attack_auto_scale", p.attack_auto_scale))
 
     pa = data.get("patrol", {})
     raw_wps = pa.get("waypoints", pa.get("waypoints_x", []))

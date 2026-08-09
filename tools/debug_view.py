@@ -32,6 +32,7 @@ RED = (0, 0, 255)
 YELLOW = (0, 255, 255)
 WHITE = (255, 255, 255)
 GRAY = (150, 150, 150)      # 跟隨物（寵物）：偵測到但不攻擊
+CYAN = (255, 200, 0)        # 攻擊範圍框
 
 WINDOW = "maplebot debug (q to quit)"
 MAX_DISPLAY_W = 1280   # 顯示視窗最大寬度，避免大解析度畫面塞爆螢幕
@@ -49,9 +50,30 @@ def _display_size(capture_size):
     return MAX_DISPLAY_W, int(h * MAX_DISPLAY_W / w)
 
 
-def annotate(frame, state, action, cfg, fps=None, followers=()):
+def _draw_attack_box(canvas, cfg, profile):
+    """把攻擊範圍框畫出來——「range_px 該設多少」用看的比用猜的快。
+
+    短劍砍不到卻一直揮、或是明明構得到卻不打，看這個框跟怪的相對位置就知道。
+    """
+    if "playfield" not in cfg.regions:
+        return
+    fx, fy, fw, fh = cfg.regions["playfield"]
+    cx, cy = fx + fw // 2, fy + fh // 2
+    s = fsm.attack_scale(fw, profile.attack_auto_scale)
+    for sk in profile.active_skills():
+        rx, ry = int(sk.range_px * s), int(sk.vertical_range_px * s)
+        cv2.rectangle(canvas, (cx - rx, cy - ry), (cx + rx, cy + ry), CYAN, 1)
+        cv2.putText(canvas, f"{sk.key} range {sk.range_px}x{sk.vertical_range_px}"
+                    + (f" (x{s:.1f}={rx})" if abs(s - 1) > 0.05 else ""),
+                    (cx - rx + 4, cy - ry + 14),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, CYAN, 1)
+
+
+def annotate(frame, state, action, cfg, fps=None, followers=(), profile=None):
     """把辨識結果畫上去（畫在原尺寸畫面，座標讀值才準）。"""
     canvas = frame.copy()
+    if profile is not None:
+        _draw_attack_box(canvas, cfg, profile)
 
     for name, (x, y, w, h) in cfg.regions.items():
         cv2.rectangle(canvas, (x, y), (x + w, y + h), WHITE, 1)
@@ -207,7 +229,8 @@ def main() -> int:
         state = perceiver.perceive(frame, now)
         action = fsm.decide(state, cfg, profile, rt, now, center)
         cv2.imwrite(args.snapshot, annotate(frame, state, action, cfg,
-                                            followers=perceiver.last_followers))
+                                            followers=perceiver.last_followers,
+                                            profile=profile))
         print(f"\n已存標註圖: {args.snapshot}")
         _report(state, action, perceiver.last_followers, detector)
         return 0
@@ -227,7 +250,8 @@ def main() -> int:
         state = perceiver.perceive(frame, t0)
         action = fsm.decide(state, cfg, profile, rt, t0, center)
         fps = 1.0 / max(time.monotonic() - t0, 1e-6)
-        canvas = annotate(frame, state, action, cfg, fps, perceiver.last_followers)
+        canvas = annotate(frame, state, action, cfg, fps,
+                          perceiver.last_followers, profile)
 
         shown = canvas if canvas.shape[1] <= disp_w else \
             cv2.resize(canvas, (disp_w, disp_h))
