@@ -25,7 +25,9 @@ from typing import Optional, Tuple
 import cv2
 import numpy as np
 
-TAG_NAME = "player_nametag.png"
+# 使用者自己截的「角色特徵」。截什麼都行——名牌、帽子、整個角色 sprite；
+# 只要那塊圖是**你的角色才有**的就成立。舊檔名仍然可用。
+FEATURE_NAMES = ("player_feature.png", "player_nametag.png")
 
 # 名牌中心 -> 角色中心的位移，以 790px 寬的 playfield 為基準（往上是負的）。
 # 名牌畫在角色腳下，所以要往上找回身體中段。
@@ -83,20 +85,34 @@ class NametagLocator:
 
 
 def _text_mask(gray: np.ndarray) -> np.ndarray:
-    """從模板裡挑出文字筆畫。底色是半透明黑塊，文字明顯比它亮。"""
+    """決定模板裡哪些像素可信。
+
+    截名牌跟截角色本體要用不同策略，而使用者不該還要回來設定這個：
+
+    * **名牌**底色是半透明黑塊，背後的地形會透出來 —— 整塊比會隨背景飄
+      （實測 1.00 -> 0.86）。只比文字筆畫才穩得住。
+    * **角色 sprite**（或帽子、武器）是不透明的，整塊都是資訊。這時挑「亮的
+      部分」反而把角色深色的那半丟掉，比得更差。
+
+    兩種都取「亮的部分」就好，不用分辨是哪一種：名牌只剩文字筆畫（正是要的），
+    不透明的圖也還剩幾百個像素可比，一樣夠準。
+    （試過自動分辨「暗部是不是平的」——結果剛好相反：名牌的暗部因為背景透出來
+    反而變化很大，那個判斷會把最需要遮罩的情況判成不用遮罩。）
+    """
     level = max(int(gray.mean()) + 25, 110)
     mask = (gray >= level).astype(np.uint8) * 255
     # 筆畫邊緣有抗鋸齒，膨脹一格把半亮的邊也算進來，樣本數才夠穩
     mask = cv2.dilate(mask, np.ones((2, 2), np.uint8))
-    if int((mask > 0).sum()) < 30:      # 幾乎沒挑到筆畫 -> 模板多半框錯了
+    if int((mask > 0).sum()) < 30:      # 幾乎沒挑到東西 -> 模板多半框錯了
         return np.full(gray.shape, 255, dtype=np.uint8)
     return mask
 
 
 def load_locator(ui_dir: str, offset: Tuple[int, int] = DEFAULT_OFFSET,
                  threshold: float = MATCH_THRESHOLD) -> Optional[NametagLocator]:
-    path = os.path.join(ui_dir, TAG_NAME)
-    img = cv2.imread(path, cv2.IMREAD_COLOR)
-    if img is None:
-        return None
-    return NametagLocator(img, offset, threshold)
+    """載入使用者截的角色特徵模板；沒有就回 None（呼叫端退回組隊紅條）。"""
+    for name in FEATURE_NAMES:
+        img = cv2.imread(os.path.join(ui_dir, name), cv2.IMREAD_COLOR)
+        if img is not None:
+            return NametagLocator(img, offset, threshold)
+    return None
