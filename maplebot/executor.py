@@ -49,6 +49,17 @@ class Executor:
             return 0.01
         return seconds * (0.8 + 0.4 * random())
 
+    def _hold(self, arrow: str, seconds: float) -> None:
+        """遠距離持續按住方向鍵，快到了才短按微調（走位與追擊共用）。"""
+        if seconds >= HOLD_MIN_SECONDS:
+            if self._held_dir != arrow:
+                self.stop_movement()
+                self.kb.press(arrow)
+                self._held_dir = arrow
+            return          # 不放開；由主迴圈控制節奏，每 tick 重新確認方向
+        self.stop_movement()
+        self.kb.tap(arrow, self._dur(seconds))
+
     def _move(self, action: "fsm.Move") -> None:
         """遠距離持續按住方向鍵，快到了才短按微調。
 
@@ -61,16 +72,7 @@ class Executor:
         self.log.debug("巡邏：往%s走（目標小地圖 x=%d，估計還要 %.2fs）",
                        "右" if action.direction > 0 else "左",
                        action.target_x, action.seconds)
-        if action.seconds >= HOLD_MIN_SECONDS:
-            if self._held_dir != arrow:
-                self.stop_movement()
-                self.kb.press(arrow)
-                self._held_dir = arrow
-            # 不放開；由主迴圈控制節奏，每 tick 重新確認方向
-            return
-        # 剩最後一小段：短按精準微調，免得持續按住會衝過頭
-        self.stop_movement()
-        self.kb.tap(arrow, self._dur(action.seconds))
+        self._hold(arrow, action.seconds)
 
     def stop_movement(self) -> None:
         """放開持續按住的方向鍵。暫停、停機、切換動作前都要呼叫。"""
@@ -79,9 +81,10 @@ class Executor:
             self._held_dir = None
 
     def execute(self, action: fsm.Action, now: float) -> None:
-        # 除了繼續走路以外的任何動作，都要先放開方向鍵——
-        # 按著方向鍵放技能會讓角色邊走邊打，也會在繩子上掉下來
-        if not isinstance(action, fsm.Move):
+        # 除了繼續走路（巡邏／追擊）以外的任何動作，都要先放開方向鍵——
+        # 按著方向鍵放技能會讓角色邊走邊打，也會在繩子上掉下來。
+        # 走路類的不能在這裡放開：每 tick 放開再按下去，角色會走走停停。
+        if not isinstance(action, (fsm.Move, fsm.Chase)):
             self.stop_movement()
 
         if isinstance(action, fsm.Wait):
@@ -93,7 +96,7 @@ class Executor:
             self.log.info("喝 %s 藥水（%s 鍵）", action.kind.upper(), action.key)
             self.kb.tap(action.key, self._dur(0.08))
             self.rt.note_potion(action.kind, now)
-            if action.kind == "hp":
+            if action.kind.startswith("hp"):      # hp 與 hp_emergency 都算補血
                 self.stats.potions_hp += 1
             else:
                 self.stats.potions_mp += 1
@@ -125,6 +128,13 @@ class Executor:
 
         if isinstance(action, fsm.Move):
             self._move(action)
+            return
+
+        if isinstance(action, fsm.Chase):
+            arrow = "right" if action.direction > 0 else "left"
+            self.log.debug("追擊：往%s走過去打",
+                           "右" if action.direction > 0 else "左")
+            self._hold(arrow, action.seconds)
             return
 
         if isinstance(action, fsm.Probe):
