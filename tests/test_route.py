@@ -1,5 +1,6 @@
 """錄製路線 -> 巡邏點的壓縮。"""
-from maplebot.route import RoutePoint, Sample, compress, to_yaml_block
+from maplebot.route import (RoutePoint, Sample, compress, coverage,
+                            describe, to_yaml_block)
 
 
 def _walk(xs, y=20, keys=()):
@@ -83,3 +84,28 @@ def test_yaml_block_expands_when_there_is_more_than_x():
     out = to_yaml_block([RoutePoint(30, y=40), RoutePoint(60, y=20, keys=["9"])])
     assert "- {x: 30, y: 40}" in out
     assert "- {x: 60, y: 20, keys: ['9']}" in out
+
+
+def test_describe_reads_like_a_route():
+    pts = compress(_walk(range(30, 60, 2), y=40) + _walk([60] * 3, y=20)
+                   + _walk(range(60, 90, 2), y=20, keys=("9",)))
+    text = describe(pts)
+    assert "x=" in text and "y=" in text and "→" in text
+    assert "9" in text          # 站定按的技能鍵也要看得到
+
+
+def test_describe_marks_a_jump_down():
+    pts = compress(_walk(range(30, 50, 2), y=20) + _walk([50, 50], y=40, keys=("alt",)),
+                   jump_key="alt")
+    assert "下跳" in describe(pts)
+
+
+def test_describe_survives_an_empty_recording():
+    assert describe([]) == "（沒有錄到有效座標）"
+
+
+def test_coverage_reports_span_and_levels():
+    assert "左右跨距 60px" in coverage([RoutePoint(30), RoutePoint(90)])
+    assert "樓層" not in coverage([RoutePoint(30), RoutePoint(90)])
+    assert "2 個樓層" in coverage([RoutePoint(30, y=40), RoutePoint(60, y=20)])
+    assert coverage([]) == "0 個點"

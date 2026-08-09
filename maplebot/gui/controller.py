@@ -15,7 +15,7 @@ from ..config import ConfigError, load_config, load_profile, resolve_local_path
 from ..control.input_win import IS_WINDOWS, Keyboard, NullBackend
 from ..perception import Perceiver
 from ..recorder import KeyWatcher, Recorder
-from ..route import compress, to_yaml_block
+from ..route import compress, coverage, describe, to_yaml_block
 from ..runner import Runner, Status
 from ..vision.mobs import make_detector
 from . import settings
@@ -227,8 +227,14 @@ class Controller:
                           y_tolerance=self.profile.patrol.y_tolerance,
                           jump_key=self.profile.patrol.jump_key)
         self.last_route = to_yaml_block(points)
-        self.log.info("錄製結束：%.0f 秒、%d 幀 -> %d 個巡邏點",
-                      rec.seconds, len(rec.samples), len(points))
+        self.log.info("錄製結束：%.0f 秒、%d 幀 -> %s",
+                      rec.seconds, len(rec.samples), coverage(points))
+        self.log.info("錄到的路線：%s", describe(points))
+        if len(points) < 2:
+            self.log.warning(
+                "只錄到 %d 個點——角色要真的左右走到底才量得出巡邏範圍。"
+                "跨距太小的話也可能是小地圖 ROI 框錯了（用「辨識自檢」確認）",
+                len(points))
         return self.waypoints_text(points)
 
     @staticmethod

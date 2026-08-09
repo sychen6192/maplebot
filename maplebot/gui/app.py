@@ -303,9 +303,10 @@ class App(tk.Tk):
             self.rec_btn["text"] = "開始錄製"
             if text:
                 self.vars["waypoints"].set(text)
-                self.rec_text["text"] = "已填入巡邏點，記得按「儲存設定」"
+                self.rec_text["text"] = ("已填入巡邏點，記得按「儲存設定」\n"
+                                         "（路線內容看系統日誌）")
             else:
-                self.rec_text["text"] = "沒錄到有效座標"
+                self.rec_text["text"] = "沒錄到有效座標——先按「辨識自檢」看小地圖"
             return
         if self.ctl.start_record():
             self.rec_btn["text"] = "停止錄製"

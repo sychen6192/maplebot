@@ -203,3 +203,45 @@ safety:
     assert cfg.vision.player_move_px == 3
     assert cfg.safety.attack_stall_seconds == 20
     assert cfg.safety.attack_break_seconds == 1.5
+
+
+def test_shipped_default_yaml_has_no_dead_keys():
+    """config/default.yaml 裡每個鍵都要真的還在用。
+
+    真實踩過的坑：欄位改名後 default.yaml 沒跟著改，舊鍵被靜靜忽略，
+    而同一段裡寫死的 filter_followers: true 反而蓋掉了程式的新預設值——
+    「我明明把預設關掉了」跟使用者實際跑到的行為對不起來。
+    """
+    import dataclasses
+    import yaml as _yaml
+
+    from maplebot.config import AppCfg, SafetyCfg, VisionCfg
+
+    with open("config/default.yaml", encoding="utf-8") as f:
+        doc = _yaml.safe_load(f)
+
+    aliases = {"bars": "bar_colors"}
+    sections = {
+        "vision": VisionCfg,
+        "safety": SafetyCfg,
+        "window": None,      # window 的鍵名跟欄位名不一樣，另外列
+    }
+    for section, cls in sections.items():
+        if cls is None:
+            continue
+        known = {f.name for f in dataclasses.fields(cls)}
+        for key in (doc.get(section) or {}):
+            assert aliases.get(key, key) in known, \
+                f"config/default.yaml 的 {section}.{key} 已經沒有對應的設定欄位了"
+
+    assert set(doc.get("window") or {}) <= {"title", "capture", "calibrated_for"}
+    assert set(doc.get("loop") or {}) <= {"fps"}
+    assert set(doc.get("advisor") or {}) <= {
+        f.name for f in dataclasses.fields(AppCfg().advisor.__class__)}
+
+
+def test_shipped_default_yaml_agrees_with_the_code_default():
+    """會影響行為的開關，YAML 跟程式預設值不能各說各話。"""
+    from maplebot.config import VisionCfg
+    cfg = load_config("config/default.yaml", local_path="")
+    assert cfg.vision.filter_followers is VisionCfg().filter_followers is False
