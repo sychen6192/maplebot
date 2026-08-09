@@ -107,6 +107,8 @@ def make_detector(vision_cfg, templates_dir: str, logger=None) -> MobDetector:
             max_area=vision_cfg.outline_max_area,
             close_kernel=vision_cfg.outline_close_kernel,
             player_box=vision_cfg.outline_player_box,
+            max_size=vision_cfg.outline_max_size,
+            max_aspect=vision_cfg.outline_max_aspect,
             auto_scale=vision_cfg.outline_auto_scale,
         )
     if vision_cfg.mob_detector == "yolo":

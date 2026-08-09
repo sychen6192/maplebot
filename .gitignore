@@ -130,3 +130,6 @@ datasets/
 config/local.yaml
 runs/
 .venv/
+
+# 使用者自己截的模板（角色名牌、小地圖角落、怪物）——每個人的角色與解析度都不同
+data/templates/

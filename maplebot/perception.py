@@ -12,7 +12,7 @@ import numpy as np
 
 from .brain.state import GameState
 from .config import AppCfg
-from .vision import minimap, mob_hpbar, player_bar, status
+from .vision import minimap, mob_hpbar, nametag, player_bar, status
 from .vision.locate import PLAYER_NAME, load_ui_template
 from .vision.follower import FollowerFilter
 from .vision.mobs import MobDetector
@@ -25,6 +25,11 @@ class Perceiver:
         self.detector = detector
         # 有玩家點模板就優先用模板匹配（見 vision/minimap.py）
         self.player_template = load_ui_template(cfg.vision.ui_templates_dir, PLAYER_NAME)
+        # 角色名牌定位（見 vision/nametag.py）。沒有模板檔就是 None，
+        # 自動退回組隊紅條——所以沒截模板的人不會壞掉。
+        self.nametag = nametag.load_locator(
+            cfg.vision.ui_templates_dir, cfg.vision.nametag_offset,
+            cfg.vision.nametag_threshold) if cfg.vision.locate_nametag else None
         # 怪物偵測若很貴（遠端推理、大畫面），可以降頻並沿用上次結果；
         # HP/位置這些便宜又攸關安全的辨識仍然每個 tick 都做。
         self._mobs_cache: list = []
@@ -78,15 +83,23 @@ class Perceiver:
 
         pf = self._slice(frame, "playfield")
         if pf is not None:
-            if vc.locate_player_bar:
+            scale = pf.shape[1] / REFERENCE_WIDTH
+            if self.nametag is not None:
+                st.player_screen = self.nametag.locate(pf, scale)
+            if st.player_screen is None and vc.locate_player_bar:
                 st.player_screen = player_bar.find_player_bar(
-                    pf, scale=pf.shape[1] / REFERENCE_WIDTH,
-                    mask_out=self._overlays())
+                    pf, scale=scale, mask_out=self._overlays())
             interval = vc.mob_interval
             due = (interval <= 0 or self._mobs_ts is None
                    or now - self._mobs_ts >= interval)
             if due:
                 roi, ox, oy = self._search_roi(pf)
+                roi = self._blank_overlays(roi, ox, oy)
+                # 描邊偵測要照**實際**的角色位置挖掉自己，不是畫面正中央
+                if hasattr(self.detector, "player_xy"):
+                    self.detector.player_xy = (
+                        (st.player_screen[0] - ox, st.player_screen[1] - oy)
+                        if st.player_screen is not None else None)
                 mobs = self.detector.detect(roi)
                 if vc.detect_hp_bars:
                     # 怪物頭上的血條是遊戲畫的 UI，顏色固定、不用調門檻——
@@ -149,6 +162,31 @@ class Perceiver:
         if pf is None or mm is None:
             return []
         return [(mm[0] - pf[0], mm[1] - pf[1], mm[2], mm[3])]
+
+    def _blank_overlays(self, roi: np.ndarray, ox: int, oy: int) -> np.ndarray:
+        """把疊在主畫面上的 UI 塗成中灰再拿去找怪。
+
+        小地圖面板的標題文字、聊天視窗的字都有黑色描邊，描邊偵測分不出那是
+        文字還是怪——實測小地圖標題那一條會固定變成一隻「怪」。塗中灰而不是
+        塗黑：黑的話反而變成一整塊符合條件的黑塊。
+        """
+        rects = self.cfg.vision.mob_exclude
+        if not rects:
+            return roi
+        pf = self.cfg.regions.get("playfield", (0, 0, 0, 0))
+        h, w = roi.shape[:2]
+        out = None
+        for x, y, rw, rh in rects:
+            # client 座標 -> playfield -> 搜尋框
+            x0, y0 = x - pf[0] - ox, y - pf[1] - oy
+            x1, y1 = max(x0, 0), max(y0, 0)
+            x2, y2 = min(x0 + rw, w), min(y0 + rh, h)
+            if x2 <= x1 or y2 <= y1:
+                continue
+            if out is None:
+                out = roi.copy()
+            out[y1:y2, x1:x2] = 128
+        return roi if out is None else out
 
     def _search_roi(self, playfield: np.ndarray):
         """只取角色周圍的攻擊範圍框；回傳 (影像, x偏移, y偏移)。"""
