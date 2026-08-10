@@ -92,6 +92,13 @@ class WindowCapture:
         assert self._win is not None
         return self._win.origin
 
+    @property
+    def hwnd(self) -> int:
+        """視窗 handle。sysmon 拿它問作業系統「這個視窗是誰的」，
+        比用行程名字猜可靠——開兩個客戶端時名字會撞在一起。"""
+        assert self._win is not None
+        return self._win.hwnd
+
     def _grab_screen(self) -> np.ndarray:
         assert self._win is not None
         ox, oy = self._win.origin
