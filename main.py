@@ -26,6 +26,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-seconds", type=float, default=0.0,
                    help="跑 N 秒後自動結束（0=不限）。定時試跑用這個而不是從外面殺"
                         "行程——正常結束才會放開按住的方向鍵")
+    p.add_argument("--preview", action="store_true",
+                   help="開一個視窗即時顯示主迴圈這一幀的辨識結果（會多花一點 CPU）")
+    p.add_argument("--no-report", action="store_true", help="這次不要產生收工報告")
     return p
 
 
@@ -63,12 +66,22 @@ def main(argv=None) -> int:
             logger.warning("此客戶端不支援 PrintWindow，改用螢幕擷取："
                            "執行期間不要讓任何視窗蓋住遊戲畫面")
 
+    if args.no_report:
+        cfg.report.enabled = False
+
     keyboard = Keyboard(NullBackend() if (dry_run or not IS_WINDOWS) else None)
     detector = make_detector(cfg.vision, profile.templates_dir, logger)
 
+    preview = None
+    if args.preview:
+        from maplebot.overlay import Preview
+        preview = Preview(cfg, profile, logger)
+        logger.info("已開啟即時預覽——畫的是主迴圈當下這一幀，"
+                    "跟決策看到的完全是同一份資料")
+
     runner = Runner(cfg, profile, capture, keyboard, detector, logger,
                     dry_run=dry_run, max_ticks=args.max_ticks,
-                    max_seconds=args.max_seconds)
+                    max_seconds=args.max_seconds, preview=preview)
     try:
         runner.run()
     except KeyboardInterrupt:

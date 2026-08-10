@@ -92,8 +92,10 @@ class VisionCfg:
     nametag_offset: Tuple[int, int] = (0, -24)   # 名牌中心 -> 角色中心（790 基準）
     nametag_threshold: float = 0.85
     mob_match_threshold: float = 0.72
-    yolo_model: str = ""
+    yolo_model: str = ""              # .pt 或 .onnx（ONNX 不需要 PyTorch，見 yolo_mobs.py）
     yolo_confidence: float = 0.5
+    yolo_device: str = ""             # ""=自動；"cpu" / "0" / "cuda:1" 指定裝置
+    yolo_imgsz: int = 0               # 推理解析度（0=模型預設 640）
     remote_endpoint: str = ""          # mob_detector=remote：推理伺服器位址
     remote_timeout: float = 1.0
     remote_jpeg_quality: int = 80
@@ -129,6 +131,31 @@ class SafetyCfg:
     exp_stall_minutes: float = 10.0   # 幾分鐘沒賺到經驗就暫停（0=不檢查）
     attack_stall_seconds: float = 12.0  # 連續攻擊這麼久位置還沒變就先去巡邏（0=不檢查）
     attack_break_seconds: float = 3.0   # 讓路給巡邏幾秒
+    # 跑滿這麼多分鐘就自己收工（0=不限）。這不是反偵測，是「無人看管的
+    # 程式應該有個盡頭」：睡前開的 bot 不該在你醒來前一直跑，卡在某個
+    # 沒人預期的狀態上耗一整個白天
+    max_runtime_minutes: float = 0.0
+
+
+@dataclass
+class MonitorCfg:
+    """系統/遊戲行程監看（需要 psutil，沒裝就自動停用）。詳見 sysmon.py。"""
+    enabled: bool = True
+    interval: float = 5.0             # 幾秒取樣一次（psutil 掃行程有成本）
+    stop_when_game_exits: bool = True  # 遊戲行程消失就停機（強烈建議開著）
+    process: str = ""                 # 行程名關鍵字；留空 = 從遊戲視窗自動取 PID
+    cpu_threshold: float = 92.0       # 系統 CPU 高於此值就警告一次
+    mem_threshold: float = 90.0       # 系統記憶體同上
+    game_mem_threshold_mb: float = 4096.0   # 遊戲行程記憶體上限提醒（0=不檢查）
+
+
+@dataclass
+class ReportCfg:
+    """收工報告。詳見 report.py。"""
+    enabled: bool = True
+    dir: str = "logs/reports"
+    sample_interval: float = 10.0     # 曲線取樣間隔（0=不記曲線）
+    chart: bool = True                # 產生 PNG（需要 matplotlib，沒裝就跳過）
 
 
 @dataclass
@@ -151,6 +178,8 @@ class AppCfg:
     minimap_auto: bool = False        # regions.minimap: auto 時用角落模板自動定位
     vision: VisionCfg = field(default_factory=VisionCfg)
     safety: SafetyCfg = field(default_factory=SafetyCfg)
+    monitor: MonitorCfg = field(default_factory=MonitorCfg)
+    report: ReportCfg = field(default_factory=ReportCfg)
     advisor: AdvisorCfg = field(default_factory=AdvisorCfg)
     sources: List[str] = field(default_factory=list)   # 實際載入了哪些檔案
 
@@ -394,6 +423,8 @@ def load_config(path: str, local_path: Optional[str] = None) -> AppCfg:
     vc.mob_match_threshold = float(v.get("mob_match_threshold", vc.mob_match_threshold))
     vc.yolo_model = str(v.get("yolo_model", vc.yolo_model))
     vc.yolo_confidence = float(v.get("yolo_confidence", vc.yolo_confidence))
+    vc.yolo_device = str(v.get("yolo_device", vc.yolo_device))
+    vc.yolo_imgsz = int(v.get("yolo_imgsz", vc.yolo_imgsz))
     vc.remote_endpoint = str(v.get("remote_endpoint", vc.remote_endpoint))
     vc.remote_timeout = float(v.get("remote_timeout", vc.remote_timeout))
     vc.remote_jpeg_quality = int(v.get("remote_jpeg_quality", vc.remote_jpeg_quality))
@@ -429,6 +460,27 @@ def load_config(path: str, local_path: Optional[str] = None) -> AppCfg:
     sc.attack_stall_seconds = float(s.get("attack_stall_seconds", sc.attack_stall_seconds))
     sc.attack_break_seconds = max(
         float(s.get("attack_break_seconds", sc.attack_break_seconds)), 0.0)
+    sc.max_runtime_minutes = max(
+        float(s.get("max_runtime_minutes", sc.max_runtime_minutes)), 0.0)
+
+    m = data.get("monitor", {})
+    mc = cfg.monitor
+    mc.enabled = bool(m.get("enabled", mc.enabled))
+    mc.interval = max(float(m.get("interval", mc.interval)), 1.0)
+    mc.stop_when_game_exits = bool(m.get("stop_when_game_exits",
+                                         mc.stop_when_game_exits))
+    mc.process = str(m.get("process", mc.process))
+    mc.cpu_threshold = float(m.get("cpu_threshold", mc.cpu_threshold))
+    mc.mem_threshold = float(m.get("mem_threshold", mc.mem_threshold))
+    mc.game_mem_threshold_mb = float(m.get("game_mem_threshold_mb",
+                                           mc.game_mem_threshold_mb))
+
+    r = data.get("report", {})
+    rc = cfg.report
+    rc.enabled = bool(r.get("enabled", rc.enabled))
+    rc.dir = str(r.get("dir", rc.dir))
+    rc.sample_interval = max(float(r.get("sample_interval", rc.sample_interval)), 0.0)
+    rc.chart = bool(r.get("chart", rc.chart))
 
     a = data.get("advisor", {})
     ac = cfg.advisor

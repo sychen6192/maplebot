@@ -114,7 +114,9 @@ def make_detector(vision_cfg, templates_dir: str, logger=None) -> MobDetector:
     if vision_cfg.mob_detector == "yolo":
         from .yolo_mobs import YoloMobDetector
 
-        return YoloMobDetector(vision_cfg.yolo_model, vision_cfg.yolo_confidence)
+        return YoloMobDetector(vision_cfg.yolo_model, vision_cfg.yolo_confidence,
+                               device=vision_cfg.yolo_device,
+                               imgsz=vision_cfg.yolo_imgsz or None)
     if vision_cfg.mob_detector == "remote":
         from .remote_mobs import RemoteMobDetector
 

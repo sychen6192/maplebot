@@ -35,6 +35,7 @@ FIELDS: Dict[str, Tuple[Any, type]] = {
     "critical_hp": (25, int),
     "critical_hp_frames": (3, int),
     "exp_stall_minutes": (10.0, float),
+    "max_runtime_minutes": (0.0, float),   # 0 = 不限
     "pause_when_players": (True, bool),
     "sound_alerts": (True, bool),
     "mob_interval": (0.0, float),
@@ -112,6 +113,7 @@ def from_config(cfg: AppCfg, profile: Profile) -> Dict[str, Any]:
         critical_hp=int(round(cfg.safety.critical_hp_ratio * 100)),
         critical_hp_frames=cfg.safety.critical_hp_frames,
         exp_stall_minutes=cfg.safety.exp_stall_minutes,
+        max_runtime_minutes=cfg.safety.max_runtime_minutes,
         pause_when_players=cfg.safety.pause_when_players,
         sound_alerts=cfg.safety.sound_alerts,
         mob_interval=cfg.vision.mob_interval,
@@ -185,6 +187,7 @@ LOCAL_MAP = {
     ("safety", "critical_hp_ratio"): ("critical_hp", _PCT),
     ("safety", "critical_hp_frames"): ("critical_hp_frames", None),
     ("safety", "exp_stall_minutes"): ("exp_stall_minutes", None),
+    ("safety", "max_runtime_minutes"): ("max_runtime_minutes", None),
     ("safety", "pause_when_players"): ("pause_when_players", None),
     ("safety", "sound_alerts"): ("sound_alerts", None),
 }

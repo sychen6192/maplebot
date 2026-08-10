@@ -6,9 +6,10 @@
 |---|---|---|
 | [tanjeffreyz/auto-maple](https://github.com/tanjeffreyz/auto-maple) | 684★ | GMS 全功能 bot：CV + TensorFlow 符文破解 + GUI + routine 系統，此類專案中星數最高 |
 | [KenYu910645/MapleStoryAutoLevelUp](https://github.com/KenYu910645/MapleStoryAutoLevelUp) | 356★ | 楓之谷 Artale（經典版）專用：純視覺、狀態機、路線錄製 |
+| [tingwei1111/maplestory-worlds-automation](https://github.com/tingwei1111/maplestory-worlds-automation) | 119★ | MapleStory Worlds（Artale）：YOLOv8 偵測 + 主動找怪 + **進程/資源監控與圖表** |
 | [楓之谷達人](https://gamebox365wg.pixnet.net/blog/post/118048) | 商業閉源 | 台灣早期的自動掛機程式。無法讀原始碼，只能從公開功能表比對缺口 |
 
-兩者都是「螢幕視覺 + 模擬按鍵」路線，驗證了本專案的基本架構選擇。
+三個開源專案都是「螢幕視覺 + 模擬按鍵」路線，驗證了本專案的基本架構選擇。
 以下是逐項比對後**採用**與**不採用**的清單。
 
 ## 已採用（v1.3.0）
@@ -34,6 +35,55 @@
 | **用身體判定攻擊範圍，不是用中心點** | MapleStoryAutoLevelUp 用攻擊框與怪框的**交集面積**（`max_mob_area_trigger`） | `fsm._in_attack_box()`。原本比中心點，體型大的怪「中心在範圍外、身體壓在臉上」會被當成打不到而放過。改成框對框相交（範圍框本來就是「打得到的範圍」，碰到就算打得到），比他們的面積門檻少一個要調的參數 |
 | **組隊紅條定位角色** | MapleStoryAutoLevelUp `party_red_bar`（他們先做 nametag 模板匹配，後來標記為 deprecated 改用這個）；淘寶那份商業腳本也要求「隊伍放 P」 | `vision/player_bar.py`。原本假設「角色永遠在畫面正中央」是錯的——鏡頭有跟隨延遲、走到地圖邊緣會卡住，實測 1920 視窗可偏離 200px 以上，導致角色自己被當成怪打、攻擊範圍也沒對準。自己跟自己組隊後頭上的紅條是遊戲畫的 UI，抓到就是精確位置。我們多加一道保險：位置離畫面中心超過 35% 就不採信（那多半是場景裡的紅色物件），抓不到則退回畫面中央 |
 | **tkinter GUI** | auto-maple `gui/`、各家商業腳本 | `gui.py`：狀態、控制、錄製、打怪/藥水/循環按鍵設定、系統日誌。原本評估為「維護成本高、與研究目的無關」而不採用，實際使用後推翻——設定散在兩個 YAML、校正要複製貼上，是最主要的出錯來源。邏輯全在 `gui/controller.py`（不碰 tkinter）所以測得到 |
+
+## 對照 maplestory-worlds-automation（119★）
+
+這份是 2026-08 補的。它跟前兩個參考專案的路線不同：**打怪邏輯比我們簡單很多**
+（沒有小地圖定位、沒有巡邏路線、沒有 HP/MP 讀取、沒有爬繩、沒有狀態機——
+`auto.py` 一支 787 行，決策就是「YOLO 找到 mob 就把滑鼠移過去按 Z」），
+但它有一整套我們完全沒有的東西：**掛機的可觀測性**。
+
+逐項對照如下。
+
+### 他們有、我們原本沒有 → 這次補上
+
+| 他們的功能 | 他們的做法 | 我們的實作 |
+|---|---|---|
+| **系統/進程監控** | `monitoring/monitor_plus.py`：psutil 掃 `MapleStory Worlds` 進程，記 CPU/RSS/執行緒/handle 數 | `sysmon.py`。但目的不同：他們拿來「看數字」，我們拿來**當安全機制**。遊戲行程消失 = 當掉/被關掉/被踢下線，這時 bot 還在對著桌面按技能鍵，`stop_when_game_exits` 直接停機。這是所有「遊戲不見了」訊號裡最不會誤判的一個——比黑屏偵測明確（讀圖也會黑）、比找不到玩家點明確（換圖也會找不到）。另外我們用**視窗 handle 反查 PID**（`GetWindowThreadProcessId`），他們用行程名比對：開兩個客戶端時名字會撞在一起，關掉「另一個」就會被誤判成遊戲當了 |
+| **效能監控（FPS + 平均偵測耗時）** | `PerformanceMonitor`：每秒計數一次 FPS，記最近 100 次偵測耗時 | `metrics.py`。差別有兩點。(1) 我們量的是**分段**耗時（capture / perceive / decide / execute / monitor）——「慢」不可行動，「慢在 perceive」才可行動，所以 `advice()` 會直接說出該去調 `mob_search_box` 還是 `mob_interval`。(2) FPS 用 tick 之間的**真實時間差**算，不是把耗時倒數回去：後者會得到一個永遠達標的漂亮數字，因為 sleep 補足預算的那段時間被忽略了，而那正是人感受到的頻率。還有一個他們沒處理的坑——`execute` 的耗時本來就包含按住技能鍵的時間，算進超支率的話每份報告都會說「execute 最慢」，那是廢話，所以判定超支時要扣掉 |
+| **資源告警（門檻 + 歷史）** | CPU>90%、RAM>85%、進程 RAM>2GB 就記一筆 alert，保留最近 100 筆 | `sysmon.evaluate()`（純函式，可窮舉測試）+ `alerts.py` 的帳本。多了**同類警報 2 分鐘冷卻**：CPU 高檔會連續好幾分鐘，每 5 秒吵一次沒人會看。訊息也寫成可行動的——「系統 CPU 95%，主迴圈會開始掉幀，反應變慢先看這裡再去調辨識參數」，而不是只報數字 |
+| **JSON 數據持久化** | 每 30 秒把最近 100 個 snapshot 寫成 JSON | `report.py`。我們不做「持續寫入」而是**收工寫一份**：掛機中每 10 秒取一個樣點放記憶體（`Series`，有筆數上限），結束時一次落地成 `session_<時間>.json` |
+| **matplotlib 效能圖表** | 每 5 分鐘自動出一張 2x2 圖（系統 CPU/RAM、遊戲 CPU/RAM） | `report.write_chart()`：HP/MP/EXP、視野內怪數、實際 FPS、遊戲記憶體。**圖上的字一律 ASCII**——他們的圖表標題寫中文，但 matplotlib 預設字型（DejaVu Sans）沒有中文字符，實際輸出是一排豆腐框。我們的測試會盯著 matplotlib 的 `missing from font` warning，寫中文進去就紅燈 |
+| **文字報告匯出** | 選單第 5 項，把當前狀態存成 .txt | `report.render_markdown()`，跑完自動產生。內容取捨不同：他們的報告是「當下的系統資源」，我們的是**這一場的結算**——賺了幾等、每小時幾等、攻擊幾次、喝幾瓶藥、出過幾次警報、慢在哪一段、遊戲有沒有掛掉 |
+| **啟動器的環境自檢** | `start.py` 檢查 Python 版本、套件、模型檔、設定檔，缺套件可代裝 | `tools/doctor.py` + `maplebot/doctor.py`（檢查邏輯是純函式，28 個測試）。我們多檢查的是**設定的內部矛盾**，那才是實際卡住人的地方：ROI 有沒有超出校正時的視窗大小、血條 ROI 有沒有被框進 playfield（症狀是站在空地一直揮）、`potions.hp.below_ratio` 有沒有低於 `critical_hp_ratio`（症狀是一掉血就停機，而人會以為是辨識壞了）。每一項都附「該動哪裡」，有 ❌ 就 exit 1 |
+| **錯誤診斷腳本** | `tools/diagnose_errors.py`：import 測試 + `compile()` 語法檢查 | 併進 doctor 的套件檢查。語法檢查我們不做——那是 CI 的工作（`.github/workflows/ci.yml` 每次 push 跑 431 個測試，語法錯根本進不了 repo） |
+| **最長運行時間** | `safety.max_runtime_hours: 2` | `safety.max_runtime_minutes`（0=不限）。用分鐘是因為「掛 90 分鐘」比「掛 1.5 小時」好填。到點正常收工並產生報告，不是硬中斷 |
+| **執行中即時預覽疊框** | `start_automation(show_preview=True)` 用 cv2.imshow 畫偵測框 | `main.py --preview`。原本我們只有獨立的 `tools/debug_view.py`，那是**另一個行程**：各自擷取、各自辨識，看到的東西不保證跟主迴圈一樣，CPU 也多一份。繪圖搬到 `maplebot/overlay.py` 之後兩邊共用，預覽畫的就是主迴圈這一幀 |
+| **ONNX 模型** | repo 裡放了 `best.onnx`（但程式沒用到，只吃 .pt） | `tools/export_onnx.py` + `yolo_mobs.py` 收 `.onnx`。真正的價值是**掛機那台不用裝 PyTorch**：torch + torchvision 2GB 起跳還要對 CUDA 版本，換 onnxruntime 只要幾十 MB，CPU 推理通常還快一到三倍 |
+
+### 他們有、我們評估後不採用
+
+| 功能 | 不採用原因 |
+|---|---|
+| **主動尋找怪物**（`horizontal` / `vertical` / `random` 三種搜尋模式） | 他們沒有巡邏系統，所以「兩秒沒看到怪就隨機走走跳跳」是他們唯一的走位。我們的 `patrol` 是它的超集且更可靠：巡邏點可錄製或 `auto` 量測，走一步就用小地圖重新定位（閉迴路），還能爬繩上下樓。`random` 搜尋在楓谷的多層地圖上會把角色帶到奇怪的地方，而且他們的「返回原位」只是往反方向按同樣時間的方向鍵——被怪打歪或撞到牆就回不去了 |
+| **滑鼠移到怪物身上再攻擊**（`pyautogui.moveTo` + click/press） | 楓谷的攻擊是面向 + 技能鍵，跟游標位置無關；移游標只是白費時間（`duration=0.1` 一次就吃掉 100ms）。我們用 `fsm` 判斷面向再送 scancode |
+| **多類別偵測行為表**（mob/item/npc/character/ui 各自 action + max_distance） | 表達力看起來強，但他們的設定檔裡除了 mob 全部是 `action: ignore`——因為 NPC 互動、撿物判定都需要遊戲內狀態，光靠一個框做不到。我們的撿物走 `loot`（清完場才撿、只在最後一次攻擊後 N 秒內撿），比「看到 item 就走過去」實際 |
+| **多解析度視窗預設**（small/medium/large/fullhd/qhd 五組寫死的座標） | 我們用視窗標題自動抓 client 區座標（`window.py`，含 DPI aware），遊戲視窗移動或改大小都不用改設定。寫死螢幕座標的做法在多螢幕或有工作列時就會偏掉 |
+| **`pyautogui` 按鍵** | 跨平台（他們支援 macOS）是優點，但 pyautogui 送的是 virtual-key，DirectInput 的遊戲收不到。我們用 SendInput scancode——這是「按鍵有沒有真的進遊戲」的分水嶺 |
+| **`emergency_stop_corner`（滑鼠移到角落停機）** | pyautogui 的 FAILSAFE。我們用 F12 熱鍵：掛機時滑鼠本來就不會動，角落判定反而容易被誤觸 |
+
+### 對照後我們仍然領先的部分
+
+| 面向 | 他們 | 我們 |
+|---|---|---|
+| 角色定位 | 無。假設角色永遠在畫面正中央 | 小地圖黃點 + 組隊紅條雙重定位（鏡頭有跟隨延遲，實測可偏離中心 200px 以上） |
+| HP/MP/EXP | 完全不讀 | 逐欄色彩統計 + 閃爍去雜訊 + 瀕死停機 + EXP 停滯偵測 |
+| 喝藥 | 設定檔有 `potion: delete` 但程式沒有任何使用它的分支 | `potions` 依比例門檻，且 doctor 會擋掉「門檻低於停機線」這種矛盾設定 |
+| 走位 | 隨機／固定方向按鍵（開迴路） | 巡邏點閉迴路 + 爬繩/下跳平台，每步回頭確認小地圖座標真的變了 |
+| 怪物偵測 | 只有 YOLO，**必須先自己訓練模型**（repo 裡的 `best.pt` 是 132 bytes 的 placeholder） | 描邊偵測**零設定即可用**，另有 template / YOLO / 遠端推理三條路 |
+| 決策 | 單一 for 迴圈，一輪最多做 3 個動作 | 純函式優先權狀態機，可窮舉測試 |
+| 測試 | 0 個單元測試（`tools/test_*.py` 是手動示範腳本，要人看畫面） | 431 個 pytest + CI + 真實截圖 ground truth |
+| 離線開發 | 必須開遊戲 | `--source 截圖` 可跑完整 pipeline |
 
 ## 評估後不採用
 
@@ -91,7 +141,7 @@
 
 ## 比對後確認我們已領先的部分
 
-- **可測試性**：兩個參考專案都沒有單元測試；本專案 344 個 pytest + CI + 真實截圖 ground truth
+- **可測試性**：三個開源參考專案都沒有單元測試；本專案 431 個 pytest + CI + 真實截圖 ground truth
 - **離線開發**：`--source 截圖` 可跑完整 pipeline，參考專案都必須開遊戲才能調
 - **決策層純函式**：auto-maple 的決策散在 bot/routine/命令簿多處，狀態耦合全域 config；我們的 `fsm.decide()` 可以直接窮舉測試
 - **ML 升級路徑**：YOLO 訓練管線（自動預標註）與 VLM 督導層是兩個參考專案都沒有的

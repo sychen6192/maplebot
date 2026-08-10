@@ -185,10 +185,11 @@ class App(tk.Tk):
         self._labeled(box, 4, "危險血量 %", "critical_hp")
         self._labeled(box, 5, "連續幾幀才停機", "critical_hp_frames")
         self._labeled(box, 6, "幾分沒經驗就停", "exp_stall_minutes")
-        self._labeled(box, 7, "回城卷按鍵", "panic_return_key")
-        self._checkbox(box, 8, "有其他玩家時暫停", "pause_when_players")
-        self._checkbox(box, 9, "危險事件嗶聲", "sound_alerts")
-        self._checkbox(box, 10, "濾掉寵物（需鏡頭會捲動）", "filter_followers")
+        self._labeled(box, 7, "最長掛幾分鐘（0=不限）", "max_runtime_minutes")
+        self._labeled(box, 8, "回城卷按鍵", "panic_return_key")
+        self._checkbox(box, 9, "有其他玩家時暫停", "pause_when_players")
+        self._checkbox(box, 10, "危險事件嗶聲", "sound_alerts")
+        self._checkbox(box, 11, "濾掉寵物（需鏡頭會捲動）", "filter_followers")
 
     def _build_window(self, parent) -> None:
         box = ttk.LabelFrame(parent, text="遊戲視窗與辨識", padding=PAD)
@@ -222,6 +223,10 @@ class App(tk.Tk):
         self.mob_text.pack(anchor="w")
         self.tick_text = ttk.Label(box, text="tick 0", foreground="#666")
         self.tick_text.pack(anchor="w")
+        # 實際頻率與遊戲記憶體：前者掉下來代表這台跟不上（辨識參數不用動），
+        # 後者是長時間掛機的客戶端會不會愈吃愈多
+        self.perf_text = ttk.Label(box, text="", foreground="#666")
+        self.perf_text.pack(anchor="w")
 
     def _build_log(self, parent) -> None:
         box = ttk.LabelFrame(parent, text="系統日誌", padding=PAD)
@@ -327,6 +332,10 @@ class App(tk.Tk):
         self.mob_text["text"] = (f"怪物: {st.mobs}｜其他玩家: {st.others}"
                                  f"｜寵物: {st.followers}")
         self.tick_text["text"] = f"tick {st.ticks}｜決策 {st.action} {st.reason}"
+        perf = f"{st.fps:.1f} FPS" if st.fps else ""
+        if st.game_mem_mb:
+            perf += f"｜遊戲 {st.game_mem_mb:.0f} MB"
+        self.perf_text["text"] = perf
 
         running, recording = self.ctl.running, self.ctl.recording
         if recording:
