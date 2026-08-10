@@ -23,103 +23,19 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from maplebot.brain import fsm  # noqa: E402
 from maplebot.capture import ImageCapture, WindowCapture  # noqa: E402
 from maplebot.config import load_config, load_profile  # noqa: E402
+from maplebot.overlay import annotate, display_size  # noqa: E402
+from maplebot.overlay import pct as _pct  # noqa: E402
 from maplebot.perception import Perceiver  # noqa: E402
 from maplebot.vision.mobs import make_detector  # noqa: E402
 from maplebot.window import pick_free_position, virtual_screen  # noqa: E402
-
-GREEN = (0, 255, 0)
-RED = (0, 0, 255)
-YELLOW = (0, 255, 255)
-WHITE = (255, 255, 255)
-GRAY = (150, 150, 150)      # 跟隨物（寵物）：偵測到但不攻擊
-MAGENTA = (255, 0, 255)     # 組隊紅條量到的角色位置
-CYAN = (255, 200, 0)        # 攻擊範圍框
 
 WINDOW = "maplebot debug (q to quit)"
 MAX_DISPLAY_W = 1280   # 顯示視窗最大寬度，避免大解析度畫面塞爆螢幕
 TITLE_BAR_H = 40       # 估算標題列高度，找擺放位置時要算進去
 
 
-def _pct(v):
-    return f"{v:.0%}" if v is not None else "?"
-
-
 def _display_size(capture_size):
-    w, h = capture_size
-    if w <= MAX_DISPLAY_W:
-        return w, h
-    return MAX_DISPLAY_W, int(h * MAX_DISPLAY_W / w)
-
-
-def _draw_attack_box(canvas, cfg, profile, player_screen=None):
-    """把攻擊範圍框畫出來——「range_px 該設多少」用看的比用猜的快。
-
-    短劍砍不到卻一直揮、或是明明構得到卻不打，看這個框跟怪的相對位置就知道。
-    """
-    if "playfield" not in cfg.regions:
-        return
-    fx, fy, fw, fh = cfg.regions["playfield"]
-    if player_screen:                       # 組隊紅條量到的真實角色位置
-        cx, cy = fx + player_screen[0], fy + player_screen[1]
-        cv2.drawMarker(canvas, (cx, cy), MAGENTA, cv2.MARKER_CROSS, 22, 2)
-        cv2.putText(canvas, "player", (cx + 10, cy - 8),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, MAGENTA, 1)
-    else:
-        cx, cy = fx + fw // 2, fy + fh // 2
-    s = fsm.attack_scale(fw, profile.attack_auto_scale)
-    for sk in profile.active_skills():
-        rx, ry = int(sk.range_px * s), int(sk.vertical_range_px * s)
-        cv2.rectangle(canvas, (cx - rx, cy - ry), (cx + rx, cy + ry), CYAN, 1)
-        cv2.putText(canvas, f"{sk.key} range {sk.range_px}x{sk.vertical_range_px}"
-                    + (f" (x{s:.1f}={rx})" if abs(s - 1) > 0.05 else ""),
-                    (cx - rx + 4, cy - ry + 14),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, CYAN, 1)
-
-
-def annotate(frame, state, action, cfg, fps=None, followers=(), profile=None):
-    """把辨識結果畫上去（畫在原尺寸畫面，座標讀值才準）。"""
-    canvas = frame.copy()
-    if profile is not None:
-        _draw_attack_box(canvas, cfg, profile, state.player_screen)
-
-    for name, (x, y, w, h) in cfg.regions.items():
-        cv2.rectangle(canvas, (x, y), (x + w, y + h), WHITE, 1)
-        cv2.putText(canvas, name, (x, max(y - 3, 10)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, WHITE, 1)
-
-    if "minimap" in cfg.regions:
-        mx, my = cfg.regions["minimap"][:2]
-        if state.player:
-            px, py = state.player
-            cv2.circle(canvas, (mx + px, my + py), 4, GREEN, 2)
-            cv2.putText(canvas, f"({px},{py})", (mx + px + 6, my + py),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, GREEN, 1)
-        for ox, oy in state.others:
-            cv2.circle(canvas, (mx + ox, my + oy), 4, RED, 2)
-
-    if "playfield" in cfg.regions:
-        fx, fy = cfg.regions["playfield"][:2]
-        for mob in state.mobs:
-            x1 = fx + mob.cx - mob.w // 2
-            y1 = fy + mob.cy - mob.h // 2
-            cv2.rectangle(canvas, (x1, y1), (x1 + mob.w, y1 + mob.h), YELLOW, 2)
-            cv2.putText(canvas, f"{mob.name} {mob.score:.2f}", (x1, max(y1 - 4, 10)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, YELLOW, 1)
-        # 跟著角色跑的（寵物）畫灰框，代表看得到但不會打
-        for mob in followers:
-            x1 = fx + mob.cx - mob.w // 2
-            y1 = fy + mob.cy - mob.h // 2
-            cv2.rectangle(canvas, (x1, y1), (x1 + mob.w, y1 + mob.h), GRAY, 1)
-            cv2.putText(canvas, "follower", (x1, max(y1 - 4, 10)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, GRAY, 1)
-
-    header = (f"HP {_pct(state.hp)} | MP {_pct(state.mp)} | EXP {_pct(state.exp)} | "
-              f"mobs {len(state.mobs)}")
-    if fps is not None:
-        header += f" | {fps:.0f} FPS"
-    header += f" | -> {type(action).__name__}"
-    cv2.putText(canvas, header, (8, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.55, GREEN, 2)
-    return canvas
+    return display_size(capture_size, MAX_DISPLAY_W)
 
 
 def _place_away_from_game(cap, disp_w, disp_h) -> None:

@@ -42,6 +42,9 @@ def ctl(tmp_path, shot):
         "loop": {"fps": 60},
         "regions": {"minimap": [10, 10, 120, 40], "hp_bar": [10, 60, 50, 8],
                     "playfield": [0, 80, 300, 200]},
+        # 測的是控制器，不是報告。開著的話每跑一次測試就在 repo 的
+        # logs/reports/ 留一份垃圾
+        "report": {"enabled": False},
     })
     _yaml(tmp_path / "profiles.yaml", {})
     prof = _yaml(tmp_path / "mymap.yaml", {
