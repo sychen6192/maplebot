@@ -15,7 +15,7 @@
 注意：JPEG 壓縮會破壞純黑，所以離線用截圖測試時要把 black_level 調高
 （12~20）；即時擷取是無損的，用 0~8 最準。
 """
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import cv2
 import numpy as np
