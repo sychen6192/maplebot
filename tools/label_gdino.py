@@ -10,8 +10,8 @@
 ⚠ 誠實提醒：GroundingDINO 是用真實照片訓練的，對 2D 卡通 sprite 不保證
    認得。**先用 --test 在一張截圖上試**，確認它真的框到怪再批次跑：
        python tools/label_gdino.py --test shot.jpg --prompt monster
-   框不到的話改用模板老師（python tools/auto_pipeline.py），楓谷 sprite
-   每幀像素幾乎相同，模板匹配在這個場景反而更可靠。
+   框不到的話改用描邊老師（python tools/auto_pipeline.py，預設就是），
+   楓谷 sprite 都有純黑描邊，那招在這個場景反而更可靠、也不用模板。
 
 安裝（有 GPU 的機器，多半已經有了）：
    uv pip install transformers pillow
@@ -170,7 +170,7 @@ def run_test(image, keep, reject, out_path, box_threshold, text_threshold,
         print("  1. 降門檻: --box-threshold 0.1")
         print("  2. 換 prompt: --prompt \"blue snail\" / \"cartoon creature\"")
         print("  3. 換大模型: --model base")
-        print("  4. 都不行 —— 改用模板老師：python tools/auto_pipeline.py")
+        print("  4. 都不行 —— 改用描邊老師：python tools/auto_pipeline.py --check")
 
 
 def main() -> int:

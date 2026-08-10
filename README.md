@@ -289,25 +289,29 @@ EXP 59.89%，測試直接拿這些畫面顯示值當 ground truth 驗證辨識�
 | `buffs` / `potions` | buff 週期、藥水鍵與門檻 |
 | `panic_return_key` | 進入危險線時先按回城卷再停止（留空 = 直接停止） |
 
-## 進階：ML 感知層（有 GPU 的路線，例如 RTX 5090）
+## 進階：ML 感知層（有 GPU 的路線）
 
-模板匹配對「怪物動作幀變化、重疊、背景干擾」比較脆弱。有顯卡時建議升級成兩層：
+描邊偵測對「怪與地形黏在一起、背景很暗」比較脆弱。有顯卡時建議升級成兩層：
 
-**1. 即時感知：YOLO 怪物偵測（取代模板匹配，毫秒級）**
+**1. 即時感知：YOLO 怪物偵測（毫秒級）**
 
-完整教學見 **[docs/YOLO_TRAINING.md](docs/YOLO_TRAINING.md)**，流程一條龍：
+完整教學見 **[docs/YOLO_TRAINING.md](docs/YOLO_TRAINING.md)**。
+**不用手動標註、也不用截模板**——拿你現在就跑得動的描邊偵測當「老師」自動
+產生標註，蒸餾成一個更快更穩的 YOLO「學生」：
 
 ```bash
 python tools/collect_dataset.py --interval 2 --count 400   # 邊玩邊蒐集（自動去重）
-python tools/autolabel.py                                  # 用模板匹配自動預標註
-labelImg datasets/raw datasets/raw/classes.txt              # 人工校對（大多只是掃過）
-python tools/prepare_dataset.py                            # 切 train/val + dataset.yaml
-python tools/train_yolo.py                                 # 5090 上幾分鐘練完
+python tools/auto_pipeline.py --check                      # 自動標註 + 輸出預覽圖
+#   -> 打開 datasets/raw/_preview/ 看黃框標得對不對
+python tools/auto_pipeline.py                              # 確認後：標註→切分→訓練
 ```
 
 訓練結尾會直接印出要貼進 `config/default.yaml` 的兩行（`mob_detector: yolo` +
 權重路徑）。介面完全相同（`maplebot/vision/yolo_mobs.py`），決策層不用動。
-YOLO11n 在 RTX 5090 上推理只要 1~3ms/幀，主迴圈 8 FPS 完全無感。
+YOLO11n 推理只要 1~3ms/幀（3060 Ti 等級即可），主迴圈 8 FPS 完全無感。
+
+> 老師抓不到的，學生也學不到。先用 `tools/debug_view.py` 把描邊門檻調到
+> 畫面上真的框得到怪，再開始蒐集。
 
 **掛機那台不想裝 PyTorch？轉 ONNX：**
 
@@ -383,19 +387,21 @@ maplebot/
   gui/controller.py          # GUI 大腦：開關 bot、錄製、存讀設定、log（不碰 tkinter）
   gui/settings.py            #   UI 欄位 <-> 設定檔的雙向轉換
   gui/app.py                 #   tkinter 視窗（只有畫面）
-  dataset.py                 # YOLO 資料集：模板自動預標註、train/val 打包
+  teachers.py                # 自動標註的「老師」：描邊（免模板）／模板匹配
+  dataset.py                 # YOLO 資料集：自動預標註、預覽、train/val 打包
 tools/
   doctor.py                  # 環境自檢 CLI（開跑前先跑這個）
   calibrate.py               # 框選 ROI 產生 config
   grab_template.py           # 擷取怪物模板
   debug_view.py              # 即時辨識結果疊框（與主程式共用 Perceiver）
-  collect_dataset.py         # 訓練資料蒐集（自動去除重複幀）
-  autolabel.py               # 模板匹配自動預標註（labelImg 相容）
+  collect_dataset.py         # 訓練資料蒐集（自動去除重複幀，預設存 PNG）
+  autolabel.py               # 自動預標註 + 預覽 + 門檻掃描（labelImg 相容）
+  auto_pipeline.py           # 一鍵：自動標註 -> 切分 -> 訓練
   prepare_dataset.py         # 切 train/val + 產生 dataset.yaml
   train_yolo.py              # ultralytics 訓練入口（遊戲畫面特化參數）
   export_onnx.py             # .pt -> .onnx（掛機那台就不用裝 PyTorch）
 docs/TUTORIAL.md             # 手把手教學（含每步預期結果與疑難排解）
-docs/YOLO_TRAINING.md        # 5090 訓練流程完整教學
+docs/YOLO_TRAINING.md        # 免標註訓練流程完整教學（描邊當老師）
 docs/COMPARISON.md           # 與高星開源專案的比對與採用清單
 tests/                       # pytest：合成影像 + 真實截圖 ground truth
 ```
