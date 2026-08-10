@@ -150,3 +150,29 @@ def test_every_field_reaches_a_yaml_key():
 
 def test_attack_key_defaults_to_ctrl():
     assert settings.FIELDS["attack_key"][0] == "ctrl"
+
+
+def test_max_runtime_survives_the_round_trip(tmp_path):
+    base = _write(tmp_path / "default.yaml", BASE)
+    prof_path = _write(tmp_path / "map.yaml", PROFILE)
+    values = settings.defaults()
+    values["max_runtime_minutes"] = 240
+    local, prof = settings.to_yaml(values, None, "test map")
+    settings.merge_into(str(tmp_path / "local.yaml"), local)
+    settings.merge_into(prof_path, prof)
+
+    cfg = load_config(base, local_path=str(tmp_path / "local.yaml"))
+    assert cfg.safety.max_runtime_minutes == 240
+    assert settings.from_config(cfg, load_profile(prof_path))["max_runtime_minutes"] == 240
+
+
+def test_saving_does_not_wipe_the_monitor_and_report_sections(tmp_path):
+    """monitor / report 沒有出現在 UI 上。UI 上沒有的東西按一次「儲存設定」
+    就被清空的話，使用者根本不知道發生了什麼事。"""
+    local_path = str(tmp_path / "local.yaml")
+    settings.merge_into(local_path, {"monitor": {"interval": 20.0},
+                                     "report": {"chart": False}})
+    local, _ = settings.to_yaml(settings.defaults(), None, "m")
+    merged = settings.merge_into(local_path, local)
+    assert merged["monitor"]["interval"] == 20.0
+    assert merged["report"]["chart"] is False

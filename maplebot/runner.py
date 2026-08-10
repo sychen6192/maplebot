@@ -8,15 +8,18 @@ from typing import Optional, Tuple
 
 import numpy as np
 
+from . import report as report_mod
 from .alerts import Alerts
 from .brain import fsm
 from .brain.advisor import Advisor
 from .config import AppCfg, Profile
 from .control.input_win import Keyboard
 from .executor import Executor, Stats
+from .metrics import LoopMetrics, Series
 from .perception import Perceiver
 from .progress import ExpTracker
 from .safety import LostPlayerWatchdog, Safety, is_black_screen, save_anomaly
+from .sysmon import SystemMonitor
 from .vision.locate import BR_NAME, TL_NAME, find_minimap, load_ui_template
 from .vision.mobs import MobDetector
 
@@ -38,12 +41,14 @@ class Status:
     followers: int = 0
     action: str = "-"
     reason: str = ""
+    fps: float = 0.0
+    game_mem_mb: Optional[float] = None
 
 
 class Runner:
     def __init__(self, cfg: AppCfg, profile: Profile, capture, keyboard: Keyboard,
                  detector: MobDetector, logger, dry_run: bool = False,
-                 max_ticks: int = 0, max_seconds: float = 0.0):
+                 max_ticks: int = 0, max_seconds: float = 0.0, preview=None):
         self.cfg = cfg
         self.profile = profile
         self.capture = capture
@@ -62,6 +67,10 @@ class Runner:
         self.exp = ExpTracker(stall_seconds=cfg.safety.exp_stall_minutes * 60)
         self.perceiver = Perceiver(cfg, detector)
         self.executor = Executor(keyboard, self.rt, self.stats, logger, dry_run)
+        self.metrics = LoopMetrics(cfg.fps)
+        self.series = Series(cfg.report.sample_interval if cfg.report.enabled else 0.0)
+        self.sysmon = SystemMonitor(cfg.monitor, logger)
+        self.preview = preview
 
         pf = cfg.region("playfield")
         self.playfield_center = (pf[2] // 2, pf[3] // 2)
@@ -76,6 +85,10 @@ class Runner:
         self._follower_warned = False
         self._attack_breaks = 0
         self._bar_warned = False
+        self._started_wall = time.time()
+        self._started_mono = time.monotonic()
+        self._stop_reason = ""
+        self._perf_warned = False
 
     # ---- 小地圖自動定位（auto-maple corner-template 法）----
 
@@ -170,14 +183,14 @@ class Runner:
 
     def _on_advisor_abnormal(self, note: str) -> None:
         self.safety.paused = True
-        self.alerts.ping("warn")
+        self.alerts.ping("warn", f"VLM 督導判定異常：{note}")
         save_anomaly(self._last_frame, f"VLM 督導: {note}", self.log)
         self.log.warning("VLM 督導判定異常，已切換為暫停。確認畫面後按 %s 繼續",
                          self.cfg.safety.pause_key)
 
     def _on_player_lost(self) -> None:
         save_anomaly(self._last_frame, "太久找不到玩家小地圖黃點", self.log)
-        self.alerts.ping("warn")
+        self.alerts.ping("warn", "太久找不到玩家小地圖黃點")
         # 視窗可能被移動過，趁暫停時重新定位一次
         if hasattr(self.capture, "refresh"):
             try:
@@ -246,6 +259,90 @@ class Runner:
             self.cfg.safety.attack_stall_seconds,
             self.cfg.safety.attack_break_seconds, self.rt.attack_breaks)
 
+    # ---- 系統監看與時間限制 ----
+
+    def _attach_game_process(self) -> None:
+        """把 sysmon 綁到正在擷取的那個視窗所屬的行程。
+
+        優先用視窗 handle 反查 PID：開兩個客戶端時行程名字一模一樣，
+        用名字找會綁到「另一個」——然後那個關掉時我們就誤判成遊戲當了。
+        """
+        if not self.sysmon.available:
+            return
+        pid = None
+        hwnd = getattr(self.capture, "hwnd", None)
+        if hwnd:
+            pid = self.sysmon.attach_window(hwnd)
+        if pid is None and self.cfg.monitor.process:
+            pid = self.sysmon.attach_by_name(self.cfg.monitor.process)
+        if pid is None:
+            self.log.debug("沒有綁定遊戲行程（離線來源或權限不足），"
+                           "遊戲當掉偵測不會生效")
+
+    def _check_system(self, now: float) -> bool:
+        """慢迴圈：資源門檻警告 + 遊戲行程消失偵測。回 True 代表要停機。"""
+        snap = self.sysmon.poll(now)
+        if snap is None:
+            return False
+        self.status.game_mem_mb = snap.game_mem_mb
+        for kind, msg in self.sysmon.alerts(snap):
+            self.alerts.ping("warn", msg)
+            self.log.warning("%s", msg)
+        if self.sysmon.game_lost and self.cfg.monitor.stop_when_game_exits:
+            self.alerts.ping("panic", "遊戲行程已結束")
+            self.log.error(
+                "遊戲行程不見了（當掉、被關掉、或被踢下線）。立刻停止——"
+                "再跑下去只是把技能鍵和方向鍵送進桌面或別的程式")
+            self._stop_reason = "遊戲行程結束"
+            return True
+        return False
+
+    def _check_runtime_limit(self, now: float) -> bool:
+        limit = self.cfg.safety.max_runtime_minutes * 60
+        if limit <= 0 or now - self._started_mono < limit:
+            return False
+        self.log.warning("已達 safety.max_runtime_minutes=%g 分鐘，自動收工",
+                         self.cfg.safety.max_runtime_minutes)
+        self.alerts.ping("warn", "達到最長運行時間，自動收工")
+        self._stop_reason = f"達到最長運行時間（{self.cfg.safety.max_runtime_minutes:g} 分鐘）"
+        return True
+
+    def _notice_perf(self) -> None:
+        """跟不上設定的 FPS 時講一次，並指出慢在哪一段。"""
+        if self._perf_warned or self.stats.ticks < 80:
+            return
+        advice = self.metrics.advice()
+        if not advice:
+            return
+        self._perf_warned = True
+        self.log.warning("%s", advice)
+
+    def _sample(self, state, now: float) -> None:
+        last = self.sysmon.last
+        self.series.maybe_add(
+            now, self._started_mono,
+            hp=state.hp, mp=state.mp, exp=state.exp, mobs=len(state.mobs),
+            fps=self.metrics.fps,
+            cpu=last.game_cpu if last else None,
+            mem_mb=last.game_mem_mb if last else None)
+
+    def _write_report(self) -> None:
+        if not self.cfg.report.enabled:
+            return
+        try:
+            data = report_mod.build(
+                self.profile.name, self._started_wall, time.time(), time.monotonic(),
+                self.stats, self.exp, self.metrics, self.alerts, self.sysmon,
+                self.series, dry_run=self.dry_run, stop_reason=self._stop_reason)
+            paths = report_mod.save(data, self.cfg.report.dir, self.cfg.report.chart)
+            self.log.info("收工報告：%s", "、".join(paths))
+            if self.cfg.report.chart and not any(p.endswith(".png") for p in paths):
+                self.log.info("（沒有曲線圖：pip install matplotlib 之後就會一起產生）")
+        except Exception as e:
+            # 報告寫不出來絕不能蓋掉「這場跑完了」這件事，也不該把
+            # 主迴圈 finally 區塊的其他清理工作（放開按鍵）擋在後面
+            self.log.warning("寫收工報告失敗（不影響已完成的執行）: %s", e)
+
     def _publish(self, state, action) -> None:
         st = self.status
         st.ticks = self.stats.ticks
@@ -255,6 +352,7 @@ class Runner:
         st.action = type(action).__name__
         st.reason = getattr(action, "reason", "")
         st.paused = self.safety.paused
+        st.fps = self.metrics.fps
 
     def _check_input_delivered(self) -> None:
         """SendInput 被擋掉時，log 會照常顯示「已送出按鍵」但遊戲毫無反應。
@@ -269,12 +367,12 @@ class Runner:
             self.kb.failures, err,
             "遊戲是用系統管理員執行的，這個終端機也必須用系統管理員開啟。"
             if err == 5 else "")
-        self.alerts.ping("warn")
+        self.alerts.ping("warn", f"SendInput 失敗 {self.kb.failures} 次，按鍵沒送進遊戲")
 
     def _on_exp_stalled(self, frame: np.ndarray, now: float) -> None:
         mins = self.cfg.safety.exp_stall_minutes
         save_anomaly(frame, f"連續 {mins:.0f} 分鐘沒有經驗進帳", self.log)
-        self.alerts.ping("warn")
+        self.alerts.ping("warn", f"連續 {mins:.0f} 分鐘沒有經驗進帳")
         self.log.warning(
             "連續 %.0f 分鐘沒賺到經驗，自動暫停（按 %s 繼續）。"
             "常見原因：技能鍵設錯、怪物偵測抓不到、角色卡在打不到怪的地方",
@@ -284,7 +382,8 @@ class Runner:
 
     def _panic(self, frame: np.ndarray, reason: str, return_home: bool = True) -> None:
         save_anomaly(frame, reason, self.log)
-        self.alerts.ping("panic")
+        self.alerts.ping("panic", reason)
+        self._stop_reason = f"PANIC：{reason}"
         self.log.error("PANIC: %s", reason)
         self.executor.stop_movement()
         self.kb.release_all()
@@ -301,13 +400,17 @@ class Runner:
         if not self._resolve_minimap():
             return
         if not self._preflight():
-            self.alerts.ping("warn")
+            self.alerts.ping("warn", "開場自檢沒過")
             return
         tick_interval = 1.0 / max(self.cfg.fps, 1.0)
         self.log.info("開始執行 profile「%s」%s", self.profile.name,
                       "（dry-run：不會送出任何按鍵）" if self.dry_run else "")
         self.log.info("熱鍵：%s 暫停/繼續，%s 停止",
                       self.cfg.safety.pause_key, self.cfg.safety.stop_key)
+        if self.cfg.safety.max_runtime_minutes > 0:
+            self.log.info("最長運行 %g 分鐘後自動收工",
+                          self.cfg.safety.max_runtime_minutes)
+        self._attach_game_process()
         self.advisor.start()
         self.status.running = True
         deadline = time.monotonic() + self.max_seconds if self.max_seconds else None
@@ -328,24 +431,32 @@ class Runner:
                     continue
 
                 now = time.monotonic()
-                frame = self.capture.grab()
+                if self._check_runtime_limit(now):
+                    break
+                with self.metrics.stage("monitor"):
+                    if self._check_system(now):
+                        break
+
+                with self.metrics.stage("capture"):
+                    frame = self.capture.grab()
 
                 if self.cfg.safety.black_screen_pause and is_black_screen(frame):
                     save_anomaly(frame, "畫面全黑（斷線/換頻道/讀圖）", self.log)
-                    self.alerts.ping("warn")
+                    self.alerts.ping("warn", "畫面全黑（斷線/換頻道/讀圖）")
                     self.log.warning("偵測到黑屏，自動暫停（按 %s 繼續）",
                                      self.cfg.safety.pause_key)
                     self.safety.paused = True
                     continue
 
-                state = self.perceiver.perceive(frame, now)
+                with self.metrics.stage("perceive"):
+                    state = self.perceiver.perceive(frame, now)
                 self._last_frame = frame
                 if self.advisor.cfg.enabled:
                     self.advisor.latest_frame = frame
                 self.stats.ticks += 1
 
                 if len(state.others) > self._prev_others:
-                    self.alerts.ping("ding")
+                    self.alerts.ping("ding", f"小地圖出現其他玩家（{len(state.others)} 人）")
                 self._prev_others = len(state.others)
 
                 self.exp.update(state.exp, now)
@@ -357,8 +468,9 @@ class Runner:
                     self._on_player_lost()
                     continue
 
-                action = fsm.decide(state, self.cfg, self.profile, self.rt,
-                                    now, self.playfield_center)
+                with self.metrics.stage("decide"):
+                    action = fsm.decide(state, self.cfg, self.profile, self.rt,
+                                        now, self.playfield_center)
                 if self.dry_run:
                     # Wait 的理由一定要印出來——否則「每 tick 都 Wait」看起來
                     # 像卡住，實際上是某條規則一直擋著（例如誤判有其他玩家）
@@ -375,29 +487,53 @@ class Runner:
                 self._notice_attack_break()
                 self._notice_bar_glitch()
                 self._publish(state, action)
+                self._sample(state, now)
+                if self.preview is not None:
+                    self.preview.show(frame, state, action, fps=self.metrics.fps,
+                                      followers=self.perceiver.last_followers,
+                                      extra=self.sysmon.summary())
 
                 if isinstance(action, fsm.Panic):
                     self._panic(frame, action.reason, action.return_home)
                     break
+                exec_start = time.monotonic()
                 self.executor.execute(action, now)
+                exec_seconds = time.monotonic() - exec_start
+                self.metrics.record("execute", exec_seconds)
                 self._check_input_delivered()
 
                 if time.monotonic() - self._last_summary >= 60:
                     self.log.info("狀態：%s", self.stats.summary())
                     self.log.info("進度：%s", self.exp.summary(time.monotonic()))
+                    self.log.info("效能：%s｜%s",
+                                  self.metrics.summary(), self.sysmon.summary())
                     self._last_summary = time.monotonic()
+                self._notice_perf()
 
                 if self.max_ticks and self.stats.ticks >= self.max_ticks:
                     self.log.info("已達 max_ticks=%d，結束", self.max_ticks)
+                    self._stop_reason = self._stop_reason or f"跑滿 max_ticks={self.max_ticks}"
                     break
 
                 elapsed = time.monotonic() - loop_start
+                # 扣掉 execute：那段是按住技能鍵/方向鍵的「刻意等待」，
+                # 算進超支率的話每一份報告都會說「execute 最慢」而那是廢話
+                self.metrics.tick(elapsed, elapsed - exec_seconds)
                 if elapsed < tick_interval:
                     time.sleep(tick_interval - elapsed)
         finally:
+            if not self._stop_reason and self.safety.stop:
+                self._stop_reason = f"使用者按下 {self.cfg.safety.stop_key} 停止"
             self.status.running = False
             self.advisor.stop()
             self.executor.stop_movement()
             self.kb.release_all()
+            if self.preview is not None:
+                self.preview.close()
             self.log.info("已結束。%s", self.stats.summary())
             self.log.info("進度：%s", self.exp.summary(time.monotonic()))
+            self.log.info("效能：%s", self.metrics.summary())
+            if self.sysmon.available:
+                self.log.info("系統：%s", self.sysmon.summary())
+            self.log.info("%s", self.alerts.summary())
+            self._write_report()
