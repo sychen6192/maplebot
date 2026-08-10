@@ -1,8 +1,10 @@
-"""YOLO 資料集工具：模板匹配自動預標註（bootstrap）與訓練集打包。
+"""YOLO 資料集工具：自動預標註（bootstrap）與訓練集打包。
 
-流程：collect_dataset 蒐集畫面 -> autolabel_dir 用模板匹配器產生
-YOLO 格式預標註 -> labelImg 人工校對 -> prepare_dataset 切分
+流程：collect_dataset 蒐集畫面 -> autolabel_dir 用「老師」偵測器產生
+YOLO 格式預標註 -> （選配）labelImg 人工校對 -> prepare_dataset 切分
 train/val 並產生 dataset.yaml -> ultralytics 訓練。
+
+老師有描邊與模板兩種，定義在 teachers.py。
 
 標籤格式與 labelImg 相容：每張圖同名 .txt（`cls cx cy w h`，
 皆為 0~1 正規化值）加上一份 classes.txt。
@@ -10,22 +12,17 @@ train/val 並產生 dataset.yaml -> ultralytics 訓練。
 import glob
 import os
 import random
-import re
 import shutil
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import cv2
 import yaml
 
-from .vision.mobs import Mob, TemplateMobDetector
+from .teachers import TemplateTeacher, class_from_template_name  # noqa: F401
+from .vision.mobs import Mob
 
 IMG_EXTS = (".jpg", ".jpeg", ".png")
-
-
-def class_from_template_name(name: str) -> str:
-    """模板檔名 snail_01 -> 類別 snail。"""
-    return re.sub(r"_\d+$", "", name)
 
 
 def yolo_line(cls_id: int, mob: Mob, img_w: int, img_h: int) -> str:
@@ -71,25 +68,22 @@ class AutoLabelResult:
     unlabeled_files: List[str] = field(default_factory=list)
 
 
-def autolabel_dir(images_dir: str, templates_dir: str, threshold: float,
+def autolabel_dir(images_dir: str, templates_dir: str = "", threshold: float = 0.72,
                   single_class: bool = False, class_name: str = "mob",
-                  progress=None) -> AutoLabelResult:
-    """對資料夾內所有影像跑模板匹配，寫出同名 .txt 與 classes.txt。
+                  progress=None, teacher=None) -> AutoLabelResult:
+    """對資料夾內所有影像跑老師偵測器，寫出同名 .txt 與 classes.txt。
+
+    teacher 是任何有 `.classes` 與 `.label(img) -> [(類別編號, Mob), ...]`
+    的物件（見 teachers.py）。留 None 就沿用原本的模板匹配老師。
 
     沒偵測到怪的影像也會寫出空 .txt——校對時人工補框，
     留空則成為負樣本（背景），能有效壓低誤報。
     """
-    det = TemplateMobDetector(templates_dir, threshold)
-    if not det.templates:
-        raise ValueError(f"{templates_dir} 裡沒有任何模板 PNG，先用 tools/grab_template.py 蒐集")
+    if teacher is None:
+        teacher = TemplateTeacher(templates_dir, threshold,
+                                  single_class=single_class, class_name=class_name)
 
-    if single_class:
-        classes = [class_name]
-    else:
-        classes = sorted({class_from_template_name(n) for n, _ in det.templates})
-    cls_idx = {c: i for i, c in enumerate(classes)}
-
-    res = AutoLabelResult(classes=classes)
+    res = AutoLabelResult(classes=list(teacher.classes))
     paths = list_images(images_dir)
     for index, path in enumerate(paths, 1):
         if progress:
@@ -99,10 +93,7 @@ def autolabel_dir(images_dir: str, templates_dir: str, threshold: float,
             continue
         res.images += 1
         h, w = img.shape[:2]
-        lines = []
-        for mob in det.detect(img):
-            cls = class_name if single_class else class_from_template_name(mob.name)
-            lines.append(yolo_line(cls_idx[cls], mob, w, h))
+        lines = [yolo_line(cls_id, mob, w, h) for cls_id, mob in teacher.label(img)]
         with open(os.path.splitext(path)[0] + ".txt", "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + ("\n" if lines else ""))
         if lines:
@@ -112,8 +103,49 @@ def autolabel_dir(images_dir: str, templates_dir: str, threshold: float,
             res.unlabeled_files.append(os.path.basename(path))
 
     with open(os.path.join(images_dir, "classes.txt"), "w", encoding="utf-8") as f:
-        f.write("\n".join(classes) + "\n")
+        f.write("\n".join(res.classes) + "\n")
     return res
+
+
+def draw_labels(img, labeled, classes: Sequence[str] = ("mob",)):
+    """把老師標出來的框畫在影像上，回傳新影像。
+
+    自動標註最大的風險是「標錯了但沒人看」——錯的標註餵下去，學生會非常
+    忠實地學會那個錯誤（例如把角色自己或小地圖當成怪）。所以先看再練。
+    """
+    out = img.copy()
+    for cls_id, mob in labeled:
+        x1, y1 = mob.cx - mob.w // 2, mob.cy - mob.h // 2
+        cv2.rectangle(out, (x1, y1), (x1 + mob.w, y1 + mob.h), (0, 255, 255), 2)
+        name = classes[cls_id] if cls_id < len(classes) else str(cls_id)
+        cv2.putText(out, name, (x1, max(y1 - 4, 10)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+    return out
+
+
+def preview_labels(images_dir: str, teacher, out_dir: str,
+                   count: int = 6, step: Optional[int] = None) -> List[str]:
+    """在資料夾裡平均取樣 count 張，畫上老師的標註存到 out_dir。
+
+    平均取樣而不是取前幾張：蒐集資料時前幾張多半是同一個點位的重複畫面，
+    看了等於沒看。
+    """
+    paths = list_images(images_dir)
+    if not paths or count <= 0:
+        return []
+    if step is None:
+        step = max(len(paths) // count, 1)
+    picked = paths[::step][:count]
+    os.makedirs(out_dir, exist_ok=True)
+    written = []
+    for path in picked:
+        img = cv2.imread(path, cv2.IMREAD_COLOR)
+        if img is None:
+            continue
+        dst = os.path.join(out_dir, os.path.basename(path))
+        cv2.imwrite(dst, draw_labels(img, teacher.label(img), teacher.classes))
+        written.append(dst)
+    return written
 
 
 @dataclass
