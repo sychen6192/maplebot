@@ -48,7 +48,7 @@ class Status:
 class Runner:
     def __init__(self, cfg: AppCfg, profile: Profile, capture, keyboard: Keyboard,
                  detector: MobDetector, logger, dry_run: bool = False,
-                 max_ticks: int = 0, preview=None):
+                 max_ticks: int = 0, max_seconds: float = 0.0, preview=None):
         self.cfg = cfg
         self.profile = profile
         self.capture = capture
@@ -56,6 +56,7 @@ class Runner:
         self.log = logger
         self.dry_run = dry_run
         self.max_ticks = max_ticks
+        self.max_seconds = max_seconds
 
         self.safety = Safety(cfg.safety.stop_key, cfg.safety.pause_key, logger)
         self.watchdog = LostPlayerWatchdog(cfg.safety.lost_player_timeout)
@@ -116,6 +117,24 @@ class Runner:
 
     # ---- 開場自檢 ----
 
+    def _match_calibrated_size(self, size):
+        """視窗大小跟校正時不一樣時，直接把它調回去。
+
+        ROI 是照某個視窗大小量的，尺寸一變全部錯位。與其開場報錯要使用者
+        自己去拉視窗（拉不準就一直錯），不如程式自己調——視窗多大本來就不是
+        使用者在意的事。調不動（靜態圖來源、被遊戲鎖住）就照舊報錯。
+        """
+        resize = getattr(self.capture, "resize_client", None)
+        if resize is None:
+            return size
+        cw, ch = self.cfg.calibrated_for
+        self.log.info("遊戲視窗是 %dx%d，校正時是 %dx%d——自動調回去",
+                      size[0], size[1], cw, ch)
+        new_size = resize(cw, ch)
+        if new_size == (cw, ch):
+            self.log.info("視窗已調整為 %dx%d", cw, ch)
+        return new_size or size
+
     def _preflight(self) -> bool:
         """跑之前先確認辨識是對的。
 
@@ -126,13 +145,17 @@ class Runner:
         frame = self.capture.grab()
         size = (frame.shape[1], frame.shape[0])
         if self.cfg.calibrated_for and tuple(self.cfg.calibrated_for) != size:
+            size = self._match_calibrated_size(size)
+        if self.cfg.calibrated_for and tuple(self.cfg.calibrated_for) != size:
             cw, ch = self.cfg.calibrated_for
             self.log.error(
                 "遊戲視窗現在是 %dx%d，但 regions 是照 %dx%d 校正的——"
-                "所有 ROI 都會錯位（血條讀成 0%% 之類）。"
-                "請重跑 python tools/calibrate.py 再把新的 regions 貼進 config/local.yaml",
+                "所有 ROI 都會錯位（血條讀成 0%% 之類），而且自動調整也失敗了。"
+                "請手動把視窗調回去，或重跑 python tools/calibrate.py "
+                "再把新的 regions 貼進 config/local.yaml",
                 size[0], size[1], cw, ch)
             return False
+        frame = self.capture.grab()
 
         state = self.perceiver.perceive(frame, time.monotonic())
         if state.hp is None:
@@ -390,8 +413,12 @@ class Runner:
         self._attach_game_process()
         self.advisor.start()
         self.status.running = True
+        deadline = time.monotonic() + self.max_seconds if self.max_seconds else None
         try:
             while not self.safety.stop:
+                if deadline is not None and time.monotonic() >= deadline:
+                    self.log.info("已達 max_seconds=%.0f，結束", self.max_seconds)
+                    break
                 loop_start = time.monotonic()
                 self.safety.poll()
                 # 暫停時整個 tick 都會跳過，狀態也要在這裡更新——不然 UI 上的

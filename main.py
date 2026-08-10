@@ -23,6 +23,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true", help="不送出按鍵，只顯示每個 tick 的決策")
     p.add_argument("--source", default="", help="用靜態截圖代替遊戲視窗（離線測試）")
     p.add_argument("--max-ticks", type=int, default=0, help="跑 N 個 tick 後自動結束（0=不限）")
+    p.add_argument("--max-seconds", type=float, default=0.0,
+                   help="跑 N 秒後自動結束（0=不限）。定時試跑用這個而不是從外面殺"
+                        "行程——正常結束才會放開按住的方向鍵")
     p.add_argument("--preview", action="store_true",
                    help="開一個視窗即時顯示主迴圈這一幀的辨識結果（會多花一點 CPU）")
     p.add_argument("--no-report", action="store_true", help="這次不要產生收工報告")
@@ -56,7 +59,7 @@ def main(argv=None) -> int:
         if not IS_WINDOWS:
             logger.error("即時擷取只支援 Windows。開發環境請加 --source <截圖> 離線執行")
             return 2
-        capture = WindowCapture(cfg.window_title, cfg.capture_method)
+        capture = WindowCapture(cfg.window_title, cfg.capture_method, logger)
         logger.info("已鎖定遊戲視窗（client 區 %dx%d，擷取方式 %s）",
                     *capture.size, capture.method)
         if capture.method == "screen":
@@ -77,7 +80,8 @@ def main(argv=None) -> int:
                     "跟決策看到的完全是同一份資料")
 
     runner = Runner(cfg, profile, capture, keyboard, detector, logger,
-                    dry_run=dry_run, max_ticks=args.max_ticks, preview=preview)
+                    dry_run=dry_run, max_ticks=args.max_ticks,
+                    max_seconds=args.max_seconds, preview=preview)
     try:
         runner.run()
     except KeyboardInterrupt:

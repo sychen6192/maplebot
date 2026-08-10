@@ -110,9 +110,10 @@ def test_without_auto_scale_defaults_miss_small_window():
 
 def test_scaled_thresholds_grow_with_width():
     det = OutlineMobDetector(min_area=300, max_area=20000, close_kernel=20)
-    min_a, max_a, kernel, player, min_sz = det._scaled(2554)
+    min_a, max_a, kernel, player, min_sz, max_sz = det._scaled(2554)
     assert min_a > 300 and max_a > 20000
     assert kernel > 20 and player[0] > 100 and min_sz[0] > 18
+    assert max_sz[0] > det.max_size[0]
     assert det._scaled(790)[0] == 300          # 參考寬度時不變
 
 
@@ -161,7 +162,7 @@ def test_big_mobs_survive_a_big_window():
 
 def test_area_thresholds_scale_with_the_square():
     det = OutlineMobDetector(min_area=300, max_area=20000)
-    min_a, max_a, kernel, box, _ = det._scaled(790 * 2)
+    min_a, max_a, kernel, box, _, _ = det._scaled(790 * 2)
     assert min_a == 300 * 4 and max_a == 20000 * 4      # 面積：平方
     assert kernel == det.close_kernel * 2               # 長度：線性
     assert box == (det.player_box[0] * 2, det.player_box[1] * 2)
@@ -183,3 +184,69 @@ def test_explain_flags_an_empty_mask():
 
 def test_explain_before_any_detection():
     assert OutlineMobDetector().explain() == "尚未偵測"
+
+
+def _scene_with_terrain_strip(width=1900):
+    """一條很寬很扁的地形暗邊 + 兩隻正常大小的怪。
+
+    地形平台的暗邊會被形態學閉合連成一整條，面積剛好落在合理區間裡——
+    只有外框比例擋得掉。實拍 1920 視窗量到的是 1397x56。
+    """
+    s = width / 790
+    h = int(520 * s)
+    img = np.full((h, width, 3), 120, dtype=np.uint8)
+    cv2.rectangle(img, (0, int(150 * s)), (width - 40, int(150 * s) + int(22 * s)),
+                  (0, 0, 0), -1)
+    for frac in (0.20, 0.75):
+        x, y = int(width * frac), int(330 * s)
+        cv2.rectangle(img, (x, y), (x + int(44 * s), y + int(34 * s)), (0, 0, 0), -1)
+    return img
+
+
+def test_terrain_strip_is_not_a_mob():
+    det = OutlineMobDetector(black_level=8)
+    mobs = det.detect(_scene_with_terrain_strip())
+    assert len(mobs) == 2, [f"{m.w}x{m.h}" for m in mobs]
+    assert det.last_stats["too_wide"] == 1
+
+
+def test_max_size_can_be_raised_for_genuinely_huge_mobs():
+    det = OutlineMobDetector(black_level=8, max_size=(2000, 2000), max_aspect=0)
+    assert len(det.detect(_scene_with_terrain_strip())) == 3
+
+
+def test_player_cutout_follows_the_measured_position():
+    """挖空框要跟著實際量到的角色位置走，不是永遠挖畫面正中央。"""
+    width = 1900
+    s = width / 790
+    img = np.full((int(520 * s), width, 3), 120, dtype=np.uint8)
+    x, y = int(width * 0.25), int(300 * s)
+    cv2.rectangle(img, (x, y), (x + int(44 * s), y + int(34 * s)), (0, 0, 0), -1)
+
+    det = OutlineMobDetector(black_level=8)
+    assert len(det.detect(img)) == 1              # 沒指定位置 -> 挖中央，怪還在
+
+    det.player_xy = (x + int(22 * s), y + int(17 * s))
+    assert det.detect(img) == []                  # 指到怪身上 -> 被當成自己挖掉
+
+
+def _scene_with_flat_fragment(width=1900):
+    """平台暗邊被閉合切斷後留下的短片段：尺寸過得了關，比例過不了。"""
+    s = width / 790
+    img = np.full((int(520 * s), width, 3), 120, dtype=np.uint8)
+    x, y = int(width * 0.35), int(150 * s)
+    cv2.rectangle(img, (x, y), (x + int(100 * s), y + int(24 * s)), (0, 0, 0), -1)
+    mx, my = int(width * 0.75), int(330 * s)
+    cv2.rectangle(img, (mx, my), (mx + int(44 * s), my + int(34 * s)), (0, 0, 0), -1)
+    return img
+
+
+def test_flat_terrain_fragment_is_not_a_mob():
+    det = OutlineMobDetector(black_level=8)
+    mobs = det.detect(_scene_with_flat_fragment())
+    assert len(mobs) == 1, [f"{m.w}x{m.h}" for m in mobs]
+
+
+def test_aspect_filter_can_be_switched_off():
+    det = OutlineMobDetector(black_level=8, max_aspect=0)
+    assert len(det.detect(_scene_with_flat_fragment())) == 2

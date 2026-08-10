@@ -702,3 +702,195 @@ def test_falls_back_to_the_screen_centre_without_a_party_bar(cfg, profile):
     st = _state(mobs=[_mob(CENTER[0] + 10)])
     assert st.player_screen is None
     assert isinstance(fsm.decide(st, cfg, profile, _rt(), NOW, CENTER), fsm.Attack)
+
+
+def _floor_profile():
+    """兩個巡邏點都綁在地面層（y=90），站太高就往下跳。"""
+    p = Profile()
+    p.patrol.waypoints = [Waypoint(x=12, y=90, descend="jump"),
+                          Waypoint(x=130, y=90, descend="jump")]
+    p.patrol.y_tolerance = 3
+    return p
+
+
+def test_drops_down_without_waiting_to_line_up_x():
+    """站上路邊的小平台後，x 通常也走不動——等對準 x 才處理等於永遠不處理。
+
+    脫困跳躍會把角色送上小木屋屋頂，站在上面離地面的怪 250px，只能空揮。
+    """
+    cfg, p = AppCfg(), _floor_profile()
+    rt = fsm.Runtime()
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(104, 80))   # 高一層、x 差很遠
+    action = fsm.decide(state, cfg, p, rt, 0.0, (400, 300))
+    assert isinstance(action, fsm.Climb), action
+    assert action.direction == 1               # 往下
+    assert action.jump_key                     # 下跳平台
+
+
+def test_still_lines_up_x_before_climbing_a_rope():
+    """往上爬一定要先站到繩子前面，這條不能被上面那個規則吃掉。"""
+    cfg = AppCfg()
+    p = Profile()
+    p.patrol.waypoints = [Waypoint(x=68, y=20)]
+    rt = fsm.Runtime()
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(30, 90))
+    assert isinstance(fsm.decide(state, cfg, p, rt, 0.0, (400, 300)), fsm.Move)
+
+
+def test_rope_descent_still_needs_x_first():
+    """descend: rope 是抓著繩子下降，站在別的地方按下鍵沒有用。"""
+    cfg = AppCfg()
+    p = Profile()
+    p.patrol.waypoints = [Waypoint(x=68, y=90, descend="rope")]
+    rt = fsm.Runtime()
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(104, 80))
+    assert isinstance(fsm.decide(state, cfg, p, rt, 0.0, (400, 300)), fsm.Move)
+
+
+def test_on_the_patrol_floor_it_just_walks():
+    cfg, p = AppCfg(), _floor_profile()
+    rt = fsm.Runtime()
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(104, 90))
+    assert isinstance(fsm.decide(state, cfg, p, rt, 0.0, (400, 300)), fsm.Move)
+
+
+def _chase_profile(chase_px=250):
+    p = Profile()
+    p.patrol.waypoints = [Waypoint(x=12), Waypoint(x=130)]
+    p.attack.range_px = 55
+    p.attack.vertical_range_px = 35
+    p.chase_px = chase_px
+    return p
+
+
+def _mob_at(cx, cy, w=40, h=40):
+    return Mob(cx=cx, cy=cy, w=w, h=h, score=1.0, name="m")
+
+
+def test_walks_towards_a_mob_it_cannot_reach_yet():
+    """看得到怪卻構不到時，原本會照巡邏路線走掉——畫面上站著五隻一隻都沒打。"""
+    cfg, p = AppCfg(), _chase_profile()
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(70, 90),
+                      mobs=[_mob_at(600, 300)])          # 中心右邊 200px，打不到
+    action = fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300))
+    assert isinstance(action, fsm.Chase), action
+    assert action.direction == 1
+
+
+def test_chase_prefers_the_nearest_mob():
+    cfg, p = AppCfg(), _chase_profile()
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(70, 90),
+                      mobs=[_mob_at(600, 300), _mob_at(280, 300)])
+    action = fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300))
+    assert isinstance(action, fsm.Chase) and action.direction == -1
+
+
+def test_does_not_chase_mobs_on_another_floor():
+    """樓上樓下的怪追過去也打不到，只會被拉離巡邏路線。"""
+    cfg, p = AppCfg(), _chase_profile()
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(70, 90),
+                      mobs=[_mob_at(600, 60)])           # 水平構得到、但高很多
+    assert isinstance(fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300)),
+                      fsm.Move)
+
+
+def test_does_not_chase_beyond_the_limit():
+    cfg, p = AppCfg(), _chase_profile(chase_px=100)
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(70, 90),
+                      mobs=[_mob_at(760, 300)])
+    assert isinstance(fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300)),
+                      fsm.Move)
+
+
+def test_chase_off_by_default_keeps_the_old_behaviour():
+    cfg, p = AppCfg(), _chase_profile(chase_px=0)
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(70, 90),
+                      mobs=[_mob_at(600, 300)])
+    assert isinstance(fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300)),
+                      fsm.Move)
+
+
+def test_attacking_still_wins_over_chasing():
+    cfg, p = AppCfg(), _chase_profile()
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(70, 90),
+                      mobs=[_mob_at(430, 300), _mob_at(600, 300)])
+    assert isinstance(fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300)),
+                      fsm.Attack)
+
+
+def _potion_profile():
+    p = Profile()
+    p.patrol.waypoints = [Waypoint(x=12)]
+    p.potions = {
+        "hp": PotionCfg(key="s", below_ratio=0.7, cooldown=0.5),
+        "hp_emergency": PotionCfg(key="d", below_ratio=0.35, cooldown=1.0),
+    }
+    return p
+
+
+def test_emergency_potion_takes_over_when_hp_is_really_low():
+    """一般補血一瓶只回一點點——實測 530 血一瓶回 44，被圍住時每秒一瓶
+    追不上掉血速度，就會一路掉到危險線停機。血更低時要改按大瓶。"""
+    cfg, p = AppCfg(), _potion_profile()
+    state = GameState(ts=0.0, hp=0.30, mp=1.0, player=(70, 90))
+    action = fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300))
+    assert isinstance(action, fsm.DrinkPotion)
+    assert action.key == "d"
+
+
+def test_normal_potion_used_when_hp_is_only_a_bit_low():
+    cfg, p = AppCfg(), _potion_profile()
+    state = GameState(ts=0.0, hp=0.55, mp=1.0, player=(70, 90))
+    action = fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300))
+    assert isinstance(action, fsm.DrinkPotion) and action.key == "s"
+
+
+def test_the_two_potions_have_separate_cooldowns():
+    """大瓶剛喝過不代表小瓶也要等——各自算冷卻，才不會兩邊互相卡住。"""
+    cfg, p = AppCfg(), _potion_profile()
+    rt = fsm.Runtime()
+    rt.note_potion("hp_emergency", NOW)
+    state = GameState(ts=0.0, hp=0.30, mp=1.0, player=(70, 90))
+    action = fsm.decide(state, cfg, p, rt, NOW + 0.6, (400, 300))
+    assert isinstance(action, fsm.DrinkPotion) and action.key == "s"
+
+
+def test_no_emergency_potion_configured_keeps_the_old_behaviour():
+    cfg = AppCfg()
+    p = _potion_profile()
+    del p.potions["hp_emergency"]
+    state = GameState(ts=0.0, hp=0.30, mp=1.0, player=(70, 90))
+    action = fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300))
+    assert isinstance(action, fsm.DrinkPotion) and action.key == "s"
+
+
+def test_ranged_class_backs_off_when_a_mob_gets_too_close():
+    """遠程職業站樁輸出，怪貼到臉上只會挨打——先退開，下個 tick 就打得到了。"""
+    cfg, p = AppCfg(), _chase_profile()
+    p.attack.range_px = 150          # 遠程：射程長
+    p.keep_away_px = 60
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(70, 90),
+                      mobs=[_mob_at(430, 300)])          # 中心右邊 30px，太近
+    action = fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300))
+    assert isinstance(action, fsm.Chase) and action.away
+    assert action.direction == -1                        # 往反方向退
+
+
+def test_ranged_class_attacks_once_it_has_room():
+    cfg, p = AppCfg(), _chase_profile()
+    p.attack.range_px = 150
+    p.keep_away_px = 60
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(70, 90),
+                      mobs=[_mob_at(520, 300)])          # 120px 遠，夠開
+    assert isinstance(fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300)),
+                      fsm.Attack)
+
+
+def test_melee_class_never_backs_off():
+    """近戰貼臉本來就是它要的，keep_away_px 設 0 關掉。"""
+    cfg, p = AppCfg(), _chase_profile()
+    p.keep_away_px = 0
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(70, 90),
+                      mobs=[_mob_at(410, 300)])
+    assert isinstance(fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300)),
+                      fsm.Attack)
