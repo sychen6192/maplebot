@@ -1,4 +1,4 @@
-"""maplebot 控制台（tkinter，Python 內建，不用裝額外套件）。
+"""mapleai 控制台（tkinter，Python 內建，不用裝額外套件）。
 
 版面照著市面上那種輔助工具排：左邊狀態與控制、中間打怪/循環按鍵/安全設定、
 右邊小地圖預覽與系統日誌。所有邏輯都在 controller.py，這一層只有畫面。
@@ -20,7 +20,7 @@ class App(tk.Tk):
     def __init__(self, controller: Controller):
         super().__init__()
         self.ctl = controller
-        self.title("maplebot 控制台")
+        self.title("mapleai 控制台")
         self.minsize(960, 620)
         self.vars = {}
         self.buff_vars = []

@@ -20,6 +20,25 @@ COLOR_PRESETS: Dict[str, Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]
 _COLUMN_FILL_MIN = 0.30
 
 
+def color_mask(bgr: np.ndarray, color: str) -> np.ndarray:
+    """哪些像素屬於這個 bar 的顏色（布林遮罩）。
+
+    讀比例與自動校正共用同一份判色——分成兩套遲早會漂掉，變成「校正框到的
+    東西跟讀值認得的顏色不一樣」這種很難查的問題。
+    """
+    if color not in COLOR_PRESETS:
+        raise ValueError(f"未知的 bar 顏色 {color!r}，可用: {list(COLOR_PRESETS)}")
+    (rmin, rmax), (gmin, gmax), (bmin, bmax) = COLOR_PRESETS[color]
+    b = bgr[:, :, 0].astype(np.int16)
+    g = bgr[:, :, 1].astype(np.int16)
+    r = bgr[:, :, 2].astype(np.int16)
+    return (
+        (r >= rmin) & (r <= rmax)
+        & (g >= gmin) & (g <= gmax)
+        & (b >= bmin) & (b <= bmax)
+    )
+
+
 def bar_ratio(bar_bgr: np.ndarray, color: str) -> Optional[float]:
     """回傳 0.0~1.0；ROI 無效（零面積）才回 None。
 
@@ -30,16 +49,7 @@ def bar_ratio(bar_bgr: np.ndarray, color: str) -> Optional[float]:
         raise ValueError(f"未知的 bar 顏色 {color!r}，可用: {list(COLOR_PRESETS)}")
     if bar_bgr.size == 0:
         return None
-    (rmin, rmax), (gmin, gmax), (bmin, bmax) = COLOR_PRESETS[color]
-    b = bar_bgr[:, :, 0].astype(np.int16)
-    g = bar_bgr[:, :, 1].astype(np.int16)
-    r = bar_bgr[:, :, 2].astype(np.int16)
-    mask = (
-        (r >= rmin) & (r <= rmax)
-        & (g >= gmin) & (g <= gmax)
-        & (b >= bmin) & (b <= bmax)
-    )
-    col_fill = mask.mean(axis=0)
+    col_fill = color_mask(bar_bgr, color).mean(axis=0)
     filled = np.nonzero(col_fill >= _COLUMN_FILL_MIN)[0]
     if len(filled) == 0:
         return 0.0

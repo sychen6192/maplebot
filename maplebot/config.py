@@ -21,6 +21,11 @@ REFERENCE_WIDTH = 790
 LOCAL_NAME = "local.yaml"
 LOCAL_OVERRIDE = os.path.join("config", LOCAL_NAME)   # 僅供顯示訊息用
 
+# 使用者自己截的 UI 模板（小地圖角落、角色名牌）放這裡。
+# 用模組常數而不是寫死在 dataclass 預設值裡，測試才有辦法指到乾淨的空目錄——
+# 否則開發機上有沒有這些個人模板，測試結果就會不一樣。
+UI_TEMPLATES_DIR = os.path.join("data", "templates", "ui")
+
 
 class ConfigError(Exception):
     pass
@@ -52,7 +57,7 @@ class VisionCfg:
     color_tolerance: int = 60
     min_dot_pixels: int = 2
     max_dot_pixels: int = 60          # 大於此面積的色塊視為地形而非玩家點
-    ui_templates_dir: str = "data/templates/ui"
+    ui_templates_dir: str = field(default_factory=lambda: UI_TEMPLATES_DIR)
     minimap_border: int = 6           # auto 定位小地圖時向內縮的邊框厚度
     bar_colors: Dict[str, str] = field(default_factory=lambda: {"hp": "red", "mp": "blue", "exp": "yellow"})
     # 血條讀值去雜訊：被撞到時血條會閃，那一幀會讀成 0%
@@ -64,7 +69,13 @@ class VisionCfg:
     outline_max_area: int = 20000      # 太大的當背景/UI（790px 寬為基準）
     outline_auto_scale: bool = True    # 依實際畫面寬度等比例縮放上面的門檻
     outline_close_kernel: int = 20     # 把斷續描邊連成整塊
-    outline_player_box: Tuple[int, int] = (100, 140)   # 畫面中央挖掉的自己
+    outline_player_box: Tuple[int, int] = (100, 140)   # 挖掉角色自己的範圍
+    # 外框大於這個尺寸就不可能是怪（790px 寬為基準）。地形平台的暗邊會連成
+    # 一條很寬很扁的長條，面積剛好落在合理區間裡，只有比例擋得掉。
+    outline_max_size: Tuple[int, int] = (160, 160)
+    # 長寬比超過這個值就不是怪（0=不檢查）。平台暗邊被閉合切斷後會留下
+    # 又扁又長的片段，尺寸過得了關、比例過不了。
+    outline_max_aspect: float = 4.0
     # 怪物頭上的綠色血條：被打過的怪一定有，是遊戲畫的 UI。
     # **預設關閉**：這招成立的前提是「那個綠只有血條會出現」，而草地/樹葉的綠
     # 只差十幾階。先用 tools/debug_view.py --snapshot 確認框有落在真的血條上
@@ -75,6 +86,11 @@ class VisionCfg:
     # 鏡頭有跟隨延遲、走到地圖邊緣還會卡住，「角色永遠在正中央」是錯的。
     # 抓不到就退回畫面中央，等於原本的行為，所以沒組隊也不會壞。
     locate_player_bar: bool = True
+    # 用角色名牌找角色（見 vision/nametag.py）。比組隊紅條優先，因為它不用
+    # 進遊戲做任何設定；沒有模板檔就自動略過，退回組隊紅條再退回畫面中央。
+    locate_nametag: bool = True
+    nametag_offset: Tuple[int, int] = (0, -24)   # 名牌中心 -> 角色中心（790 基準）
+    nametag_threshold: float = 0.85
     mob_match_threshold: float = 0.72
     yolo_model: str = ""              # .pt 或 .onnx（ONNX 不需要 PyTorch，見 yolo_mobs.py）
     yolo_confidence: float = 0.5
@@ -88,6 +104,9 @@ class VisionCfg:
     # 只在角色周圍這個大小的框內找怪（None=整個 playfield）。
     # 角色永遠在畫面中央，打不到的地方本來就不用看——省時間也少誤判。
     mob_search_box: Optional[Tuple[int, int]] = None
+    # 疊在主畫面上、不該拿去找怪的 UI 區塊（client 區座標 [x, y, w, h]）。
+    # 小地圖面板的標題文字、聊天視窗的字都有黑色描邊，會被當成怪。
+    mob_exclude: List[Region] = field(default_factory=list)
     # 濾掉跟著角色跑的東西（寵物）。角色移動時，怪會在畫面上滑動，寵物不會。
     # 預設關閉：判別得靠鏡頭捲動，而窄地圖鏡頭根本不捲，這時分不出誰是寵物。
     # 最可靠的做法還是進遊戲把寵物收起來。詳見 vision/follower.py
@@ -254,6 +273,13 @@ class Profile:
     potions: Dict[str, PotionCfg] = field(default_factory=dict)
     loot: LootCfg = field(default_factory=LootCfg)
     panic_return_key: str = ""        # 設定後，Panic 時會先按回城卷再停止
+    # 看得到怪但不在攻擊範圍內時，先走過去打（0 = 關掉，照原本的巡邏路線走）。
+    # 跟 attack.range_px 一樣以 REFERENCE_WIDTH 為基準自動縮放。
+    # 設成攻擊距離的 3~5 倍：太小等於沒開，太大會被畫面邊緣的怪一直拉走。
+    chase_px: int = 0
+    # 怪靠得比這個近就先退開再打（0 = 關掉）。遠程職業站樁輸出時，怪貼上來
+    # 只會挨打；近戰不需要，貼臉本來就是它要的。同樣以 REFERENCE_WIDTH 縮放。
+    keep_away_px: int = 0
     # 攻擊距離依 playfield 寬度自動縮放（基準 REFERENCE_WIDTH）。
     # 關掉的話 range_px 就是你這個視窗大小的實際像素，換視窗要自己重調。
     attack_auto_scale: bool = True
@@ -382,7 +408,16 @@ def load_config(path: str, local_path: Optional[str] = None) -> AppCfg:
     if "outline_player_box" in v:
         pb = v["outline_player_box"]
         vc.outline_player_box = (int(pb[0]), int(pb[1]))
+    if "outline_max_size" in v:
+        ms = v["outline_max_size"]
+        vc.outline_max_size = (int(ms[0]), int(ms[1]))
+    vc.outline_max_aspect = float(v.get("outline_max_aspect", vc.outline_max_aspect))
     vc.locate_player_bar = bool(v.get("locate_player_bar", vc.locate_player_bar))
+    vc.locate_nametag = bool(v.get("locate_nametag", vc.locate_nametag))
+    if "nametag_offset" in v:
+        no = v["nametag_offset"]
+        vc.nametag_offset = (int(no[0]), int(no[1]))
+    vc.nametag_threshold = float(v.get("nametag_threshold", vc.nametag_threshold))
     vc.detect_hp_bars = bool(v.get("detect_hp_bars", vc.detect_hp_bars))
     vc.hp_bar_tolerance = int(v.get("hp_bar_tolerance", vc.hp_bar_tolerance))
     vc.mob_match_threshold = float(v.get("mob_match_threshold", vc.mob_match_threshold))
@@ -405,6 +440,8 @@ def load_config(path: str, local_path: Optional[str] = None) -> AppCfg:
     if v.get("mob_search_box"):
         sb = v["mob_search_box"]
         vc.mob_search_box = (int(sb[0]), int(sb[1]))
+    vc.mob_exclude = [_region(r, "vision.mob_exclude")
+                      for r in (v.get("mob_exclude") or [])]
     if vc.mob_detector == "remote" and not vc.remote_endpoint:
         raise ConfigError("vision.mob_detector=remote 必須設定 vision.remote_endpoint")
 
@@ -462,6 +499,8 @@ def load_profile(path: str) -> Profile:
     p.templates_dir = str(data.get("templates_dir", p.templates_dir))
     p.panic_return_key = str(data.get("panic_return_key", "")).lower()
     p.attack_auto_scale = bool(data.get("attack_auto_scale", p.attack_auto_scale))
+    p.chase_px = int(data.get("chase_px", p.chase_px))
+    p.keep_away_px = int(data.get("keep_away_px", p.keep_away_px))
 
     pa = data.get("patrol", {})
     raw_wps = pa.get("waypoints", pa.get("waypoints_x", []))

@@ -352,3 +352,58 @@ def test_player_bar_lookup_can_be_turned_off(cfg, frame):
     cfg.vision.locate_player_bar = False
     st = Perceiver(cfg, _BlindDetector()).perceive(_with_party_bar(frame), now=1.0)
     assert st.player_screen is None
+
+
+def _with_nametag(frame, x=200, y=210):
+    """在 playfield 內畫一塊角色名牌（playfield ROI 是 (0,80,300,200)）。"""
+    f = frame.copy()
+    cv2.rectangle(f, (x, y), (x + 40, y + 10), (35, 35, 35), -1)
+    for i in range(4):
+        cv2.rectangle(f, (x + 3 + i * 10, y + 2), (x + 9 + i * 10, y + 8),
+                      (240, 240, 240), -1)
+    return f
+
+
+def _save_nametag(cfg, frame, x=200, y=210):
+    import os
+    os.makedirs(cfg.vision.ui_templates_dir, exist_ok=True)
+    tagged = _with_nametag(frame, x, y)
+    px, py = cfg.regions["playfield"][:2]
+    cv2.imwrite(os.path.join(cfg.vision.ui_templates_dir, "player_nametag.png"),
+                tagged[y:y + 10, x:x + 40])
+    return tagged
+
+
+def test_nametag_locates_the_character(cfg, frame):
+    shot = _save_nametag(cfg, frame)
+    st = Perceiver(cfg, _BlindDetector()).perceive(shot, now=1.0)
+    assert st.player_screen is not None
+    assert abs(st.player_screen[0] - 220) <= 3     # 名牌中心 x
+
+
+def test_nametag_wins_over_the_party_bar(cfg, frame):
+    """名牌不用進遊戲組隊就有，兩個都抓得到時以它為準。"""
+    shot = _with_party_bar(_save_nametag(cfg, frame, x=60, y=210), x=250, y=170)
+    st = Perceiver(cfg, _BlindDetector()).perceive(shot, now=1.0)
+    assert st.player_screen is not None
+    assert abs(st.player_screen[0] - 80) <= 3      # 名牌那邊，不是紅條那邊
+
+
+def test_party_bar_still_used_without_a_nametag_template(cfg, frame):
+    st = Perceiver(cfg, _BlindDetector()).perceive(_with_party_bar(frame), now=1.0)
+    assert st.player_screen is not None
+
+
+def test_ui_overlays_are_not_searched_for_mobs(cfg, frame):
+    """小地圖面板疊在主畫面上，它的標題文字有黑色描邊會被當成怪。"""
+    cfg.vision.mob_exclude = [(0, 80, 120, 60)]    # client 座標，蓋住 playfield 左上
+    seen = {}
+
+    class _Recorder:
+        def detect(self, playfield):
+            seen["roi"] = playfield.copy()
+            return []
+
+    Perceiver(cfg, _Recorder()).perceive(frame, now=1.0)
+    assert (seen["roi"][0:60, 0:120] == 128).all()     # 被塗掉了
+    assert not (seen["roi"][0:60, 130:200] == 128).all()  # 框外沒被動到

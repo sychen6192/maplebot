@@ -135,7 +135,8 @@ class Controller:
             return self._capture_factory(self.cfg)
         if not IS_WINDOWS:
             raise RuntimeError("即時擷取只支援 Windows")
-        return WindowCapture(self.cfg.window_title, self.cfg.capture_method)
+        return WindowCapture(self.cfg.window_title, self.cfg.capture_method,
+                             self.log)
 
     def start(self, dry_run: bool = False) -> bool:
         if self.busy or not self.cfg:

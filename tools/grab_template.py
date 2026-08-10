@@ -34,8 +34,9 @@ def main() -> int:
     frame = cap.grab()
 
     os.makedirs(args.dir, exist_ok=True)
-    # UI 模板固定檔名（minimap_tl / minimap_br / minimap_player），不加流水號
-    is_ui = args.name.startswith("minimap_")
+    # UI 模板固定檔名（minimap_tl / minimap_br / minimap_player /
+    # player_nametag），不加流水號
+    is_ui = args.name.startswith("minimap_") or args.name == "player_nametag"
     n = 0
     while True:
         title = f"框選 {args.name}（Enter 確認，c 結束）"
