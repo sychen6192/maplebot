@@ -21,18 +21,27 @@
 標好，再訓練一個又快又小的 YOLO「學生」。**人工標註不是必要步驟**——它只是
 想再擠一點準度時的選配精修。
 
-老師有兩種，挑一個：
+老師有三種：
 
 | 老師 | 指令 | 適合 |
 |---|---|---|
-| **模板匹配**（你已經有了） | `tools/auto_pipeline.py` | 楓谷 sprite 每幀像素幾乎相同，模板在這個場景**反而最可靠**。你已經截過 snail 模板且命中 0.78，直接用 |
-| **GroundingDINO**（大模型） | `tools/label_gdino.py` | 完全不想截模板，用一句英文 prompt（"monster"）標。但它是拿真實照片訓練的，對卡通 sprite 不保證認得——**先 `--test` 試一張** |
+| **描邊 ∪ 模板**（建議） | `tools/autolabel_outline.py` | 兩個老師聯集，盲點互補：描邊怕怪跟草叢黏在一起、模板怕沒見過的動作幀。**換地圖不用重截模板**（描邊對任何怪都成立），有模板就順便一起用 |
+| **模板匹配** | `tools/auto_pipeline.py` | 只想用模板、而且模板已經蒐集齊全時。楓谷 sprite 每幀像素幾乎相同，命中率很高 |
+| **GroundingDINO**（大模型） | `tools/label_gdino.py` | 完全不想截模板。但它是拿真實照片訓練的，對卡通 sprite 語意很模糊——實測標籤會混成 `"slime npc signboard"` 這種複合詞而被 reject 過濾掉。**先 `--test` 試一張** |
 
-最短路徑（模板老師，一行指令跑完標註→切分→訓練）：
+最短路徑（描邊 ∪ 模板）：
 
 ```
-collect_dataset  ->  auto_pipeline  ->  改 config 部署
-（邊玩邊蒐集）       （自動標註+訓練，一鍵）  （貼兩行）
+collect_dataset  ->  autolabel_outline  ->  prepare_dataset  ->  train_yolo
+（邊玩邊蒐集）        （自動標註）            （切 train/val）      （訓練）
+```
+
+實測（弓箭手訓練場 I，2560x1440）：300 張圖標出 3236 個框（10.8 隻/張），
+`--exclude` 把小地圖、快捷鍵盤、公告那幾塊固定 UI 排掉——它們每幀都在同一個
+位置，不排除的話模型會把那裡學成一隻怪。
+
+```bash
+python tools/autolabel_outline.py --exclude 0,0,320,400 --exclude 1700,1130,859,182
 ```
 
 想用大模型老師就把中間換成 `label_gdino -> prepare_dataset -> train_yolo`。
