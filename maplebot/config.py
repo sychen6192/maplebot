@@ -214,6 +214,8 @@ class Waypoint:
     y: Optional[float] = None         # 同上（比例是佔小地圖高度）；None = 只對 x（單層地圖）
     descend: str = "rope"             # 往下的方式：rope（抓繩下降）| jump（下跳平台）
     keys: List[str] = field(default_factory=list)  # 抵達時依序敲的鍵（跳躍/技能等）
+    tolerance: Optional[int] = None   # 這個點的 x 對位容差（None = 用 patrol.tolerance）。
+                                      # 爬繩點的抓取窗口只有 ±1~2px，需要比走路更準
 
 
 @dataclass
@@ -350,10 +352,14 @@ def _parse_waypoint(raw) -> Waypoint:
                 f"waypoint descend 只能是 rope（抓繩下降）或 jump（下跳平台），"
                 f"拿到: {descend!r}")
         y = raw.get("y")
+        tol = raw.get("tolerance")
+        if tol is not None and int(tol) < 1:
+            raise ConfigError(f"waypoint tolerance 至少要是 1，拿到: {tol!r}")
         return Waypoint(x=float(raw["x"]),
                         y=None if y is None else float(y),
                         descend=descend,
-                        keys=[str(k).lower() for k in keys])
+                        keys=[str(k).lower() for k in keys],
+                        tolerance=None if tol is None else int(tol))
     if isinstance(raw, (int, float)):
         return Waypoint(x=float(raw))
     raise ConfigError(f"看不懂的 waypoint 格式: {raw!r}")
