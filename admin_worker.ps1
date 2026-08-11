@@ -1,17 +1,23 @@
 # maplebot elevated worker (launched by admin_worker.bat via UAC)
-# Watches cmd.ps1 in the session scratchpad; runs it elevated; writes output back.
+# Watches cmd.ps1 in the queue dir; runs it elevated; writes output back.
 # Close this window to stop the collaboration.
+#
+# The queue lives at %TEMP%\maplebot_worker by default -- a stable path that
+# survives Claude Code session changes (session-specific scratchpad UUIDs
+# rot on every new session). Pass -QueueDir to override.
+param([string]$QueueDir = (Join-Path $env:TEMP "maplebot_worker"))
 $ErrorActionPreference = "Continue"
-$dir = "C:\Users\Shao\AppData\Local\Temp\claude\C--Users-Shao-maplebot\0a9a6651-d870-4270-88d2-43ffed0dc26f\scratchpad\worker"
+$dir = $QueueDir
 New-Item -ItemType Directory -Force $dir | Out-Null
 ("boot " + (Get-Date -Format o)) | Out-File "$dir\boot.txt" -Encoding utf8
-Set-Location "C:\Users\Shao\maplebot"
+Set-Location $PSScriptRoot
 
 $id = [Security.Principal.WindowsIdentity]::GetCurrent()
 $admin = (New-Object Security.Principal.WindowsPrincipal($id)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 Write-Host ""
 Write-Host "=== maplebot elevated worker ONLINE ==="
 Write-Host ("admin: " + $admin)
+Write-Host ("queue: " + $dir)
 Write-Host "Claude drives key tests / bot runs through this window."
 Write-Host "Close this window anytime to STOP."
 Write-Host ""
