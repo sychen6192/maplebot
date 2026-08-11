@@ -46,7 +46,7 @@ def _place_away_from_game(cap, disp_w, disp_h) -> None:
         cv2.moveWindow(WINDOW, spot[0], spot[1])
         print(f"已把偵錯視窗移到 {spot}，避免拍到自己造成畫面遞迴疊圖")
     else:
-        print("⚠ 螢幕空間不足以把偵錯視窗放到遊戲畫面以外。"
+        print("[!] 螢幕空間不足以把偵錯視窗放到遊戲畫面以外。"
               "請改用 --snapshot out.png（不開視窗），或縮小遊戲視窗／用副螢幕")
 
 
@@ -88,7 +88,8 @@ def main() -> int:
         WindowCapture(cfg.window_title, cfg.capture_method)
     print(f"擷取尺寸: {cap.size[0]}x{cap.size[1]}｜擷取方式: {cap.method}")
     if cap.method == "screen":
-        print("⚠ 此客戶端不支援 PrintWindow，改用螢幕擷取："
+        # cp950 終端印 U+26A0 會直接 UnicodeEncodeError 崩潰（doctor 踩過同一個坑）
+        print("[!] 此客戶端不支援 PrintWindow，改用螢幕擷取："
               "任何蓋住遊戲的視窗都會被拍進去")
 
     if cfg.minimap_auto:
