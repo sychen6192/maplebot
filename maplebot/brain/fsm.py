@@ -159,6 +159,7 @@ class Runtime:
     last_potion: Dict[str, float] = field(default_factory=dict)
     last_attack: float = 0.0
     low_hp_streak: int = 0              # 連續幾幀讀到低於危險線
+    low_hp_since: Optional[float] = None  # 這一段低血是什麼時候開始的
     last_skill: Dict[int, float] = field(default_factory=dict)   # 每個技能各自的冷卻
     last_loot: float = 0.0
     stuck_pos: Optional[Tuple[int, int]] = None
@@ -394,13 +395,22 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
 
     # 單一幀讀到低血就停機太危險——血條被特效蓋住、擷取抖一下都會誤判。
     # 真實血量不會一幀掉到底，所以要求連續幾幀都讀到才算數。
+    #
+    # 但「低血就停機」本身也是個陷阱：停機之後角色**站在原地繼續被打**，
+    # 掛整晚的結局就是屍體（實測 2026-08-11 早上就是這樣死的）。所以血量
+    # 見底時要先灌藥搶救，連續撐了 critical_hp_seconds 還是拉不回來，
+    # 才承認救不了而停機——那時停機才真的是止血。
     if state.hp <= cfg.safety.critical_hp_ratio:
         rt.low_hp_streak += 1
-        if rt.low_hp_streak >= cfg.safety.critical_hp_frames:
-            return Panic(f"HP 剩 {state.hp:.0%}，連續 {rt.low_hp_streak} 幀"
-                         f"低於危險線 {cfg.safety.critical_hp_ratio:.0%}")
+        if rt.low_hp_since is None:
+            rt.low_hp_since = now
+        long_enough = now - rt.low_hp_since >= cfg.safety.critical_hp_seconds
+        if rt.low_hp_streak >= cfg.safety.critical_hp_frames and long_enough:
+            return Panic(f"HP 剩 {state.hp:.0%}，連續 {now - rt.low_hp_since:.0f} 秒"
+                         f"低於危險線 {cfg.safety.critical_hp_ratio:.0%}，補血追不上")
     else:
         rt.low_hp_streak = 0
+        rt.low_hp_since = None
 
     # 緊急回血：血更低的時候改按另一個鍵（大瓶／全補藥）。
     # 一般補血一瓶只回一點點——實測 530 血的角色一瓶回 44，被圍住時

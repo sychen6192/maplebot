@@ -89,6 +89,8 @@ class Runner:
         self._started_mono = time.monotonic()
         self._stop_reason = ""
         self._perf_warned = False
+        self._black_since: Optional[float] = None   # 畫面開始全黑的時間點
+        self._deaths: list = []                     # 近期復活的時間戳（熔斷用）
 
     # ---- 小地圖自動定位（auto-maple corner-template 法）----
 
@@ -179,7 +181,87 @@ class Runner:
                       len(state.mobs))
         return True
 
+    def _focus_game(self) -> None:
+        """開跑前把遊戲視窗帶到前景。
+
+        SendInput 打進的是**前景**視窗——bot 從終端機或 GUI 啟動時焦點在
+        那邊，所有按鍵會打進終端機而不是遊戲。這種失敗完全無聲：SendInput
+        回報成功、log 照常印「往左走」，角色卻站在原地被怪圍毆到死。
+        （實測就是 2026-08-10 那場：喝了 37 瓶藥沒一瓶生效、脫困 9 次。）
+        """
+        if self.dry_run:
+            return
+        hwnd = getattr(self.capture, "hwnd", None)
+        if hwnd is not None:
+            from .window import input_privilege_gap
+            if input_privilege_gap(hwnd):
+                self.alerts.ping("panic", "遊戲提權了、bot 沒有，按鍵會被默默丟掉")
+                self.log.error(
+                    "遊戲是以系統管理員執行的，這個 bot 卻不是——Windows 的 UIPI "
+                    "會**默默丟掉**所有按鍵（SendInput 回報成功、遊戲收不到、"
+                    "角色一步都不會動，還會站在原地被怪圍毆）。"
+                    "請關掉 bot，用「以系統管理員身分執行」重新開終端機或 GUI")
+        focus_fn = getattr(self.capture, "focus", None)
+        if focus_fn is None:
+            return
+        try:
+            ok = focus_fn()
+        except Exception as e:
+            self.log.warning("聚焦遊戲視窗失敗（%s）——請自己點一下遊戲視窗", e)
+            return
+        if ok:
+            self.log.info("已把遊戲視窗帶到前景（按鍵只送給前景視窗）")
+        else:
+            self.alerts.ping("warn", "無法聚焦遊戲視窗")
+            self.log.warning(
+                "無法把遊戲視窗帶到前景！請在 bot 開跑後**自己點一下遊戲視窗**，"
+                "否則所有按鍵都會打進別的程式（log 看起來正常、角色卻不會動）")
+
     # ---- 安全事件 ----
+
+    def _handle_death(self, state, frame: np.ndarray, now: float) -> bool:
+        """偵測到死亡復活對話框時點「確定」原地復活。回 True = 這個 tick 處理掉了。
+
+        HP≈0 ＋ 對話框都在（雙重確認）才會動作。熔斷：death_window_minutes
+        內復活超過 max_deaths 次就停機報警——復活點一直送死時，別無限復活
+        把角色餵給怪。dry-run 只記錄不點。
+        """
+        if not self.cfg.safety.auto_revive or state.revive_button is None:
+            return False
+
+        # 換算 playfield 座標 -> 螢幕絕對座標（screen 擷取：origin＋region＋pf）
+        origin = getattr(self.capture, "origin", None)
+        pfx, pfy, _, _ = self.cfg.region("playfield")
+        bx, by = state.revive_button
+        self.alerts.ping("warn", "偵測到死亡，嘗試復活")
+        self.log.warning("偵測到死亡復活對話框（HP 0%%）——點「確定」原地復活")
+        save_anomaly(frame, "角色死亡（自動復活）", self.log)
+
+        if not self.dry_run and origin is not None:
+            self.executor.stop_movement()
+            self.kb.release_all()
+            sx, sy = origin[0] + pfx + bx, origin[1] + pfy + by
+            if hasattr(self.capture, "focus"):
+                self.capture.focus()
+            if not self.kb.click(sx, sy):
+                self.log.error("復活點擊送不出去（%s）——多半是提權不足，"
+                               "SendInput/滑鼠都會被 UIPI 擋掉",
+                               "錯誤碼 %d" % self.kb.last_error())
+                return True
+            time.sleep(2.5)      # 復活動畫 + 無敵閃爍，別馬上又判一次
+
+        self._deaths.append(now)
+        window = self.cfg.safety.death_window_minutes * 60
+        if window > 0:
+            self._deaths = [t for t in self._deaths if now - t <= window]
+        if len(self._deaths) >= self.cfg.safety.max_deaths:
+            self._panic(
+                frame,
+                f"{self.cfg.safety.death_window_minutes:g} 分鐘內死了 "
+                f"{len(self._deaths)} 次（達 max_deaths）——復活點一直被送死，"
+                "停機等人來看（換巡邏路線、加強補血、或這張圖不適合掛）",
+                return_home=False)
+        return True
 
     def _on_advisor_abnormal(self, note: str) -> None:
         self.safety.paused = True
@@ -410,6 +492,7 @@ class Runner:
         if self.cfg.safety.max_runtime_minutes > 0:
             self.log.info("最長運行 %g 分鐘後自動收工",
                           self.cfg.safety.max_runtime_minutes)
+        self._focus_game()
         self._attach_game_process()
         self.advisor.start()
         self.status.running = True
@@ -441,12 +524,26 @@ class Runner:
                     frame = self.capture.grab()
 
                 if self.cfg.safety.black_screen_pause and is_black_screen(frame):
-                    save_anomaly(frame, "畫面全黑（斷線/換頻道/讀圖）", self.log)
-                    self.alerts.ping("warn", "畫面全黑（斷線/換頻道/讀圖）")
-                    self.log.warning("偵測到黑屏，自動暫停（按 %s 繼續）",
-                                     self.cfg.safety.pause_key)
-                    self.safety.paused = True
+                    # 換圖（走進傳送門）的淡出也是全黑，一兩秒就過去——要黑得
+                    # 夠久才當成斷線暫停，不然巡邏路過傳送門整晚就停在那了
+                    if self._black_since is None:
+                        self._black_since = now
+                    if now - self._black_since >= self.cfg.safety.black_screen_seconds:
+                        save_anomaly(frame, "畫面全黑（斷線/換頻道/讀圖）", self.log)
+                        self.alerts.ping("warn", "畫面全黑（斷線/換頻道/讀圖）")
+                        self.log.warning("畫面持續全黑 %.0f 秒，自動暫停（按 %s 繼續）",
+                                         now - self._black_since,
+                                         self.cfg.safety.pause_key)
+                        self.safety.paused = True
+                        self._black_since = None
+                    else:
+                        self.executor.stop_movement()   # 換圖途中別按著方向鍵
+                    time.sleep(0.2)
                     continue
+                if self._black_since is not None:
+                    self.log.info("畫面全黑 %.1f 秒後恢復（多半是走進傳送門換圖），繼續",
+                                  now - self._black_since)
+                    self._black_since = None
 
                 with self.metrics.stage("perceive"):
                     state = self.perceiver.perceive(frame, now)
@@ -458,6 +555,13 @@ class Runner:
                 if len(state.others) > self._prev_others:
                     self.alerts.ping("ding", f"小地圖出現其他玩家（{len(state.others)} 人）")
                 self._prev_others = len(state.others)
+
+                # 死亡復活要排在 exp_stall / decide 之前：死了 exp 當然不會漲，
+                # 也不該讓 HP=0 觸發 Panic 停機——先試著復活繼續
+                if self._handle_death(state, frame, now):
+                    if self.safety.stop:      # 熔斷觸發了 Panic
+                        break
+                    continue
 
                 self.exp.update(state.exp, now)
                 if self.exp.stalled(now):

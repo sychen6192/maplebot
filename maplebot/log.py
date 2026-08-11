@@ -6,7 +6,23 @@ from datetime import datetime
 LOG_DIR = "logs"
 
 
+def console_safe() -> None:
+    """印不出來的字元降級成 '?'，而不是讓整個程式炸掉。
+
+    繁中 Windows 終端機預設 cp950，印 ✅/❌ 這類 emoji 會直接
+    UnicodeEncodeError。保留終端機原本的編碼（中文才不會變亂碼），
+    只把 encode 錯誤策略改成 replace。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(errors="replace")
+            except Exception:
+                pass
+
+
 def setup(name: str = "maplebot", level: int = logging.INFO) -> logging.Logger:
+    console_safe()
     os.makedirs(LOG_DIR, exist_ok=True)
     logger = logging.getLogger(name)
     if logger.handlers:
