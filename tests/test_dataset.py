@@ -136,3 +136,114 @@ def test_prepare_dataset_requires_classes(tmp_path):
     raw.mkdir()
     with pytest.raises(FileNotFoundError):
         prepare_dataset(str(raw), str(tmp_path / "out"))
+
+
+# ---- 描邊自動標註（免模板的老師）----
+
+@pytest.fixture
+def outline_raw(tmp_path):
+    """3 張影像：亮背景上放黑邊 sprite（描邊偵測認得的形狀）。
+
+    UI 那塊固定畫在同一個位置——它就是「不排除的話會被學成怪」的東西。
+    """
+    raw = tmp_path / "oraw"
+    raw.mkdir()
+    for i, spots in enumerate([[(300, 300)], [(500, 400), (700, 300)], []]):
+        img = np.full((520, 790, 3), 150, dtype=np.uint8)
+        for (x, y) in spots:
+            cv2.rectangle(img, (x, y), (x + 34, y + 30), (0, 0, 0), 3)   # 黑描邊
+            cv2.rectangle(img, (x + 3, y + 3), (x + 31, y + 27), (90, 180, 90), -1)
+        cv2.rectangle(img, (10, 10), (44, 40), (0, 0, 0), 3)             # 固定 UI
+        cv2.imwrite(str(raw / f"f{i}.jpg"), img, [cv2.IMWRITE_JPEG_QUALITY, 100])
+    return str(raw)
+
+
+def test_outline_autolabel_writes_labels(outline_raw):
+    from maplebot.dataset import autolabel_outline_dir
+    res = autolabel_outline_dir(outline_raw, black_level=40, min_area=100,
+                                min_size=(10, 10), ui_dir="does/not/exist")
+    assert res.images == 3
+    assert res.boxes >= 3                    # 至少把三隻怪標到
+    assert res.classes == ["mob"]
+    with open(os.path.join(outline_raw, "classes.txt"), encoding="utf-8") as f:
+        assert f.read().strip() == "mob"
+
+
+def test_outline_autolabel_excludes_ui_regions(outline_raw):
+    """UI 每幀都在同一個位置，不排除就會被學成一隻怪。"""
+    from maplebot.dataset import autolabel_outline_dir
+    before = autolabel_outline_dir(outline_raw, black_level=40, min_area=100,
+                                   min_size=(10, 10), ui_dir="does/not/exist")
+    after = autolabel_outline_dir(outline_raw, black_level=40, min_area=100,
+                                  min_size=(10, 10), ui_dir="does/not/exist",
+                                  exclude=[(0, 0, 60, 60)])
+    assert after.boxes == before.boxes - 3   # 三張圖各少掉那顆 UI
+
+
+def test_outline_autolabel_keeps_empty_frames_as_negatives(outline_raw):
+    """沒有怪的畫面要寫出空 .txt——那是壓低誤報用的背景負樣本。"""
+    from maplebot.dataset import autolabel_outline_dir
+    autolabel_outline_dir(outline_raw, black_level=40, min_area=100,
+                          min_size=(10, 10), ui_dir="does/not/exist",
+                          exclude=[(0, 0, 60, 60)])
+    assert os.path.exists(os.path.join(outline_raw, "f2.txt"))
+    with open(os.path.join(outline_raw, "f2.txt"), encoding="utf-8") as f:
+        assert f.read().strip() == ""
+
+
+def test_outline_autolabel_boxes_are_normalized(outline_raw):
+    from maplebot.dataset import autolabel_outline_dir
+    autolabel_outline_dir(outline_raw, black_level=40, min_area=100,
+                          min_size=(10, 10), ui_dir="does/not/exist")
+    with open(os.path.join(outline_raw, "f0.txt"), encoding="utf-8") as f:
+        for line in f:
+            cls, *vals = line.split()
+            assert cls == "0"
+            assert all(0.0 <= float(v) <= 1.0 for v in vals)
+
+
+def test_outline_autolabel_unions_template_teacher(outline_raw, tmp_path):
+    """兩個老師的盲點互補，聯集要比單一個抓得多（重疊的不重複計）。"""
+    from maplebot.dataset import autolabel_outline_dir
+    # 只有模板認得的怪：沒有黑描邊，描邊老師一定看不到
+    tpl = tmp_path / "tpl"
+    tpl.mkdir()
+    sprite = np.full((26, 26, 3), 200, dtype=np.uint8)
+    cv2.circle(sprite, (13, 13), 9, (40, 90, 220), -1)
+    cv2.imwrite(str(tpl / "blob_01.png"), sprite)
+    for name in sorted(os.listdir(outline_raw)):
+        if name.endswith(".jpg"):
+            p = os.path.join(outline_raw, name)
+            img = cv2.imread(p)
+            img[60:86, 600:626] = sprite
+            cv2.imwrite(p, img, [cv2.IMWRITE_JPEG_QUALITY, 100])
+
+    only_outline = autolabel_outline_dir(
+        outline_raw, black_level=40, min_area=100, min_size=(10, 10),
+        ui_dir="none", exclude=[(0, 0, 60, 60)])
+    both = autolabel_outline_dir(
+        outline_raw, black_level=40, min_area=100, min_size=(10, 10),
+        ui_dir="none", exclude=[(0, 0, 60, 60)],
+        templates_dir=str(tpl), template_threshold=0.6)
+    assert both.boxes > only_outline.boxes
+
+
+def test_union_does_not_double_count_the_same_mob(outline_raw, tmp_path):
+    """同一隻怪被兩個老師都抓到時只能算一次，否則標註會出現重疊的重複框。"""
+    from maplebot.dataset import autolabel_outline_dir
+    tpl = tmp_path / "tpl2"
+    tpl.mkdir()
+    img = cv2.imread(os.path.join(outline_raw, "f0.jpg"))
+    cv2.imwrite(str(tpl / "same_01.png"), img[300:330, 300:334])   # 就是那隻怪
+
+    outline_only = autolabel_outline_dir(
+        outline_raw, black_level=40, min_area=100, min_size=(10, 10),
+        ui_dir="none", exclude=[(0, 0, 60, 60)])
+    with_tpl = autolabel_outline_dir(
+        outline_raw, black_level=40, min_area=100, min_size=(10, 10),
+        ui_dir="none", exclude=[(0, 0, 60, 60)],
+        templates_dir=str(tpl), template_threshold=0.7)
+    # f0 那張只有一隻怪，兩個老師都抓到也只該有一個框
+    with open(os.path.join(outline_raw, "f0.txt"), encoding="utf-8") as f:
+        assert len([ln for ln in f if ln.strip()]) == 1
+    assert with_tpl.boxes >= outline_only.boxes
