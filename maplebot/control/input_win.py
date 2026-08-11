@@ -43,9 +43,14 @@ class NullBackend:
 
     def __init__(self):
         self.history: List[Tuple[str, int]] = []
+        self.clicks: List[Tuple[int, int]] = []
 
     def send(self, scan: int, extended: bool, keyup: bool) -> bool:
         self.history.append(("up" if keyup else "down", scan))
+        return True
+
+    def click(self, x: int, y: int) -> bool:
+        self.clicks.append((x, y))
         return True
 
 
@@ -103,6 +108,22 @@ if IS_WINDOWS:
 
         last_error: int = 0
 
+        def click(self, x: int, y: int) -> bool:
+            """點擊螢幕絕對座標（用來按死亡復活對話框的「確定」）。
+
+            用 SetCursorPos + mouse_event（絕對像素座標，最直接）。跟 SendInput
+            送鍵一樣受 UIPI 管：遊戲提權、我們沒提權時點不動——但那個情況
+            開跑時就擋下來了（見 window.input_privilege_gap）。
+            """
+            if not _user32.SetCursorPos(int(x), int(y)):
+                self.last_error = ctypes.get_last_error()
+                return False
+            MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP = 0x0002, 0x0004
+            _user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+            time.sleep(0.05)
+            _user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+            return True
+
 
 class Keyboard:
     """tap / hold 介面，按鍵時間帶隨機抖動；離開前務必 release_all()。"""
@@ -139,6 +160,17 @@ class Keyboard:
 
     def last_error(self) -> int:
         return getattr(self.backend, "last_error", 0)
+
+    def click(self, x: int, y: int) -> bool:
+        """點擊螢幕絕對座標。回傳 False = 沒送出去（被 UIPI 擋等）。"""
+        fn = getattr(self.backend, "click", None)
+        if fn is None:
+            return False
+        ok = fn(x, y)
+        self.sent += 1
+        if ok is False:
+            self.failures += 1
+        return ok is not False
 
     def tap(self, key: str, seconds: Optional[float] = None) -> None:
         if seconds is None:

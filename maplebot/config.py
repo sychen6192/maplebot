@@ -124,10 +124,18 @@ class SafetyCfg:
     pause_key: str = "f9"
     critical_hp_ratio: float = 0.25
     critical_hp_frames: int = 3       # 連續幾幀都讀到低血才停機（防辨識誤判）
+    # 低血還要**持續**這麼多秒才停機。停機不是安全動作——角色會站在原地繼續
+    # 被打（實測掛整晚就是這樣死的）。這段時間裡補血照常進行，撐得回來
+    # 就繼續打，撐不回來才承認救不了。
+    critical_hp_seconds: float = 4.0
     pause_when_players: bool = True
     lost_player_timeout: float = 5.0
     sound_alerts: bool = True         # 危險事件用 winsound 嗶聲提醒
     black_screen_pause: bool = True   # 黑屏（斷線/讀圖）自動暫停
+    # 黑屏要**持續**這麼多秒才暫停。走進傳送門的換圖淡出也是全黑，但一兩秒
+    # 就結束——立刻暫停的話，巡邏路過自動傳送門就會把整晚掛機停在那裡等人。
+    # 斷線/當機是持續黑，幾秒的緩衝不影響它該觸發的暫停。
+    black_screen_seconds: float = 3.0
     exp_stall_minutes: float = 10.0   # 幾分鐘沒賺到經驗就暫停（0=不檢查）
     attack_stall_seconds: float = 12.0  # 連續攻擊這麼久位置還沒變就先去巡邏（0=不檢查）
     attack_break_seconds: float = 3.0   # 讓路給巡邏幾秒
@@ -135,6 +143,14 @@ class SafetyCfg:
     # 程式應該有個盡頭」：睡前開的 bot 不該在你醒來前一直跑，卡在某個
     # 沒人預期的狀態上耗一整個白天
     max_runtime_minutes: float = 0.0
+
+    # 死亡自動復活：偵測到死亡復活對話框就點「確定」原地復活繼續。
+    # 無人值守掛整晚，偶發死亡（被圍、lag、搶怪被拉走）不能只會停機白掛。
+    auto_revive: bool = True
+    # 熔斷：這麼多分鐘內死超過 max_deaths 次就真的停機報警——復活點一直
+    # 送死（例如復活就被圍）時，別無限復活把角色餵給怪，該叫人來看。
+    death_window_minutes: float = 10.0
+    max_deaths: int = 3
 
 
 @dataclass
@@ -165,6 +181,9 @@ class AdvisorCfg:
     model: str = "qwen2.5vl:7b"
     interval: float = 20.0
     timeout: float = 15.0
+    # 要連續幾輪都判定異常才真的暫停。VLM 偶爾會把常駐 HUD（勳章名牌、
+    # 任務面板）看成彈出視窗，一次誤判就暫停等於整晚白掛。
+    confirm: int = 2
 
 
 @dataclass
@@ -452,16 +471,23 @@ def load_config(path: str, local_path: Optional[str] = None) -> AppCfg:
     sc.critical_hp_ratio = float(s.get("critical_hp_ratio", sc.critical_hp_ratio))
     sc.critical_hp_frames = max(int(s.get("critical_hp_frames",
                                           sc.critical_hp_frames)), 1)
+    sc.critical_hp_seconds = max(float(s.get("critical_hp_seconds",
+                                             sc.critical_hp_seconds)), 0.0)
     sc.pause_when_players = bool(s.get("pause_when_players", sc.pause_when_players))
     sc.lost_player_timeout = float(s.get("lost_player_timeout", sc.lost_player_timeout))
     sc.sound_alerts = bool(s.get("sound_alerts", sc.sound_alerts))
     sc.black_screen_pause = bool(s.get("black_screen_pause", sc.black_screen_pause))
+    sc.black_screen_seconds = float(s.get("black_screen_seconds", sc.black_screen_seconds))
     sc.exp_stall_minutes = float(s.get("exp_stall_minutes", sc.exp_stall_minutes))
     sc.attack_stall_seconds = float(s.get("attack_stall_seconds", sc.attack_stall_seconds))
     sc.attack_break_seconds = max(
         float(s.get("attack_break_seconds", sc.attack_break_seconds)), 0.0)
     sc.max_runtime_minutes = max(
         float(s.get("max_runtime_minutes", sc.max_runtime_minutes)), 0.0)
+    sc.auto_revive = bool(s.get("auto_revive", sc.auto_revive))
+    sc.death_window_minutes = max(
+        float(s.get("death_window_minutes", sc.death_window_minutes)), 0.0)
+    sc.max_deaths = max(int(s.get("max_deaths", sc.max_deaths)), 1)
 
     m = data.get("monitor", {})
     mc = cfg.monitor
@@ -489,6 +515,7 @@ def load_config(path: str, local_path: Optional[str] = None) -> AppCfg:
     ac.model = str(a.get("model", ac.model))
     ac.interval = float(a.get("interval", ac.interval))
     ac.timeout = float(a.get("timeout", ac.timeout))
+    ac.confirm = max(int(a.get("confirm", ac.confirm)), 1)
     return cfg
 
 

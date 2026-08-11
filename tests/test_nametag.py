@@ -87,3 +87,35 @@ def test_loads_a_saved_template(tmp_path):
     loc = load_locator(str(tmp_path), offset=(0, -24))
     assert loc is not None
     assert loc.locate(_scene(_tag(1), at=(300, 260)), scale=1.0) is not None
+
+
+def test_second_frame_uses_local_search_and_tracks_movement():
+    """第二幀走局部搜尋（上次位置附近）也要找得到、座標要跟著角色走。"""
+    tag = _tag(1)
+    loc = NametagLocator(tag, offset=(0, 0))
+    p1 = loc.locate(_scene(tag, at=(300, 260)), scale=1.0)
+    p2 = loc.locate(_scene(tag, at=(322, 266)), scale=1.0)   # 走了一步
+    assert p1 is not None and p2 is not None
+    assert abs(p2[0] - (322 + TAG_W // 2)) <= 2
+    assert abs(p2[1] - (266 + TAG_H // 2)) <= 2
+
+
+def test_local_miss_falls_back_to_full_search():
+    """名牌大幅跳離上次位置（換頻道、被擋一陣子）時要退回全域搜尋找到它。"""
+    tag = _tag(1)
+    loc = NametagLocator(tag, offset=(0, 0))
+    assert loc.locate(_scene(tag, at=(150, 100)), scale=1.0) is not None
+    far = loc.locate(_scene(tag, at=(480, 280)), scale=1.0)  # 跳很遠
+    assert far is not None
+    assert abs(far[0] - (480 + TAG_W // 2)) <= 2
+
+
+def test_local_state_clears_when_tag_disappears():
+    """名牌整幀不見（死亡/讀圖）後再出現，仍要能重新找到。"""
+    tag = _tag(1)
+    loc = NametagLocator(tag, offset=(0, 0))
+    assert loc.locate(_scene(tag, at=(300, 260)), scale=1.0) is not None
+    blank = np.full((400, 700, 3), 90, dtype=np.uint8)
+    assert loc.locate(blank, scale=1.0) is None
+    again = loc.locate(_scene(tag, at=(200, 180)), scale=1.0)
+    assert again is not None

@@ -17,8 +17,8 @@ import cv2
 import numpy as np
 
 from .config import Region
-from .window import (GameWindow, find_game_window, grab_client, list_windows,
-                     resize_client)
+from .window import (GameWindow, bring_to_foreground, find_game_window,
+                     grab_client, list_windows, resize_client)
 
 MAX_LISTED_WINDOWS = 12
 
@@ -93,6 +93,12 @@ class WindowCapture:
                 + _open_windows_hint())
         self._win = win
         return win
+
+    def focus(self) -> bool:
+        """把遊戲視窗帶到前景。SendInput 只會打進前景視窗——遊戲不在前景，
+        每一個按鍵都會打進別的程式。"""
+        assert self._win is not None
+        return bring_to_foreground(self._win)
 
     @property
     def size(self):

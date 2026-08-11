@@ -52,13 +52,40 @@ def test_vision_failure_waits(cfg, profile):
 
 
 def test_critical_hp_panics_after_confirming(cfg, profile):
+    """低血要停機，但得先撐過搶救時間——停機本身不安全（角色會站著被打死）。"""
     rt = _rt()
     for _ in range(cfg.safety.critical_hp_frames - 1):
         assert not isinstance(fsm.decide(_state(hp=0.2), cfg, profile, rt, NOW, CENTER),
                               fsm.Panic)
-    action = fsm.decide(_state(hp=0.2), cfg, profile, rt, NOW, CENTER)
+    # 幀數夠了但時間還沒到：這段時間拿去灌藥搶救
+    assert not isinstance(fsm.decide(_state(hp=0.2), cfg, profile, rt, NOW, CENTER),
+                          fsm.Panic)
+    later = NOW + cfg.safety.critical_hp_seconds
+    action = fsm.decide(_state(hp=0.2), cfg, profile, rt, later, CENTER)
     assert isinstance(action, fsm.Panic)
     assert action.return_home is True   # 人可能回不來，該按回城卷
+
+
+def test_low_hp_is_treated_first_and_only_panics_if_it_does_not_recover(cfg, profile):
+    """血拉得回來就繼續打，不該因為「剛才低過」就停機。"""
+    rt = _rt()
+    fsm.decide(_state(hp=0.2), cfg, profile, rt, NOW, CENTER)
+    fsm.decide(_state(hp=0.2), cfg, profile, rt, NOW + 1, CENTER)
+    fsm.decide(_state(hp=0.8), cfg, profile, rt, NOW + 2, CENTER)      # 藥效上來了
+    # 再次掉到低血時計時要重來，不能沿用上一段的起點直接停機
+    action = fsm.decide(_state(hp=0.2), cfg, profile, rt,
+                        NOW + 2 + cfg.safety.critical_hp_seconds, CENTER)
+    assert not isinstance(action, fsm.Panic)
+
+
+def test_critical_hp_seconds_zero_keeps_the_old_frame_only_behaviour(cfg, profile):
+    """不想要搶救緩衝的人設 0 就回到原本「連續幾幀就停機」。"""
+    cfg.safety.critical_hp_seconds = 0.0
+    rt = _rt()
+    for _ in range(cfg.safety.critical_hp_frames - 1):
+        fsm.decide(_state(hp=0.2), cfg, profile, rt, NOW, CENTER)
+    assert isinstance(fsm.decide(_state(hp=0.2), cfg, profile, rt, NOW, CENTER),
+                      fsm.Panic)
 
 
 def test_single_bad_hp_reading_does_not_stop_the_bot(cfg, profile):
@@ -75,6 +102,7 @@ def test_single_bad_hp_reading_does_not_stop_the_bot(cfg, profile):
 
 def test_hp_frames_configurable(cfg, profile):
     cfg.safety.critical_hp_frames = 1        # 想要一幀就停也可以
+    cfg.safety.critical_hp_seconds = 0.0     # 連搶救緩衝也不要
     assert isinstance(fsm.decide(_state(hp=0.2), cfg, profile, _rt(), NOW, CENTER),
                       fsm.Panic)
 

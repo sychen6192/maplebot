@@ -12,7 +12,7 @@ import numpy as np
 
 from .brain.state import GameState
 from .config import AppCfg
-from .vision import minimap, mob_hpbar, nametag, player_bar, status
+from .vision import minimap, mob_hpbar, nametag, player_bar, revive, status
 from .vision.locate import PLAYER_NAME, load_ui_template
 from .vision.follower import FollowerFilter
 from .vision.mobs import MobDetector
@@ -84,6 +84,10 @@ class Perceiver:
         pf = self._slice(frame, "playfield")
         if pf is not None:
             scale = pf.shape[1] / REFERENCE_WIDTH
+            # 死亡偵測：HP 讀到 ≈0 才去找復活對話框（省成本、也避免活著時
+            # 誤點）。HP=0 ＋ 對話框都在 = 雙重確認才會真的去點復活。
+            if st.hp is not None and st.hp <= 0.02:
+                st.revive_button = revive.find_confirm_button(pf, scale)
             if self.nametag is not None:
                 st.player_screen = self.nametag.locate(pf, scale)
             if st.player_screen is None and vc.locate_player_bar:
@@ -93,20 +97,24 @@ class Perceiver:
             due = (interval <= 0 or self._mobs_ts is None
                    or now - self._mobs_ts >= interval)
             if due:
-                roi, ox, oy = self._search_roi(pf)
+                roi, ox, oy = self._search_roi(pf, st.player_screen)
                 roi = self._blank_overlays(roi, ox, oy)
                 # 描邊偵測要照**實際**的角色位置挖掉自己，不是畫面正中央
                 if hasattr(self.detector, "player_xy"):
                     self.detector.player_xy = (
                         (st.player_screen[0] - ox, st.player_screen[1] - oy)
                         if st.player_screen is not None else None)
+                # 門檻縮放要以**整個 playfield** 為基準：怪的 sprite 大小
+                # 跟遊戲解析度走，跟搜尋框多寬無關
+                if hasattr(self.detector, "frame_width"):
+                    self.detector.frame_width = pf.shape[1]
                 mobs = self.detector.detect(roi)
                 if vc.detect_hp_bars:
                     # 怪物頭上的血條是遊戲畫的 UI，顏色固定、不用調門檻——
                     # 專門補描邊偵測漏掉的那幾隻（見 vision/mob_hpbar.py）
                     mobs = mob_hpbar.merge(mobs, mob_hpbar.find_hp_bars(
                         roi, tolerance=vc.hp_bar_tolerance,
-                        scale=roi.shape[1] / REFERENCE_WIDTH))
+                        scale=pf.shape[1] / REFERENCE_WIDTH))
                 if ox or oy:      # 換算回 playfield 座標
                     mobs = [replace(m, cx=m.cx + ox, cy=m.cy + oy) for m in mobs]
                 if self._followers is not None:
@@ -188,13 +196,20 @@ class Perceiver:
             out[y1:y2, x1:x2] = 128
         return roi if out is None else out
 
-    def _search_roi(self, playfield: np.ndarray):
-        """只取角色周圍的攻擊範圍框；回傳 (影像, x偏移, y偏移)。"""
+    def _search_roi(self, playfield: np.ndarray, center=None):
+        """只取角色周圍的攻擊範圍框；回傳 (影像, x偏移, y偏移)。
+
+        框要跟著**角色**走，不是釘在畫面中央：鏡頭有跟隨延遲、在地圖邊緣
+        還會卡住，角色偏離中心 100~200px 是常態——框釘在中央時，角色腳邊
+        另一側的怪整排都在框外，看得到的人以為 bot 瞎了。
+        量不到角色位置才退回畫面中央。
+        """
         box = self.cfg.vision.mob_search_box
         if not box:
             return playfield, 0, 0
         h, w = playfield.shape[:2]
         bw, bh = min(box[0], w), min(box[1], h)
-        x0 = max((w - bw) // 2, 0)
-        y0 = max((h - bh) // 2, 0)
+        cx, cy = center or (w // 2, h // 2)
+        x0 = min(max(cx - bw // 2, 0), w - bw)
+        y0 = min(max(cy - bh // 2, 0), h - bh)
         return playfield[y0:y0 + bh, x0:x0 + bw], x0, y0

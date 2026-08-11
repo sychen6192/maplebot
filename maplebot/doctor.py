@@ -275,6 +275,25 @@ def check_window(cfg, finder: Optional[Callable[[str], object]] = None) -> List[
                          f"現在 {win.size[0]}x{win.size[1]}，校正當下是 {cw}x{ch}",
                          "所有 ROI 都會錯位（最常見的症狀是 HP 讀成 0% 然後莫名停機）。"
                          "把視窗調回原本大小，或重跑 tools/calibrate.py --write"))
+
+    # 按鍵權限：遊戲提權了、bot 沒有 -> SendInput 被 UIPI **默默**丟掉。
+    # 這是所有掛機失敗裡最難自己看出來的：log 顯示按了、failures 也是 0、
+    # 遊戲就是收不到。角色站在原地被圍毆、藥也喝不下去。
+    hwnd = getattr(win, "hwnd", None)
+    if hwnd:
+        from .window import current_process_elevated, window_process_elevated
+        game_elev = window_process_elevated(hwnd)
+        if game_elev is True and current_process_elevated() is False:
+            out.append(Check(
+                "按鍵權限", FAIL,
+                "遊戲以系統管理員執行，這裡卻是一般權限",
+                "Windows 的 UIPI 會默默丟掉一般權限行程送給提權視窗的按鍵"
+                "（SendInput 回報成功、遊戲收不到、角色一步都不會動）。"
+                "請用「以系統管理員身分執行」開啟終端機或 GUI 再跑"))
+        elif game_elev is True:
+            out.append(Check("按鍵權限", OK, "遊戲與 bot 都是系統管理員，可以送鍵"))
+        elif game_elev is False:
+            out.append(Check("按鍵權限", OK, "遊戲未提權，一般權限就能送鍵"))
     return out
 
 

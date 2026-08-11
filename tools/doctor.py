@@ -15,6 +15,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from maplebot import doctor  # noqa: E402
 from maplebot.config import ConfigError, load_config, load_profile  # noqa: E402
+from maplebot.log import console_safe  # noqa: E402
+
+console_safe()   # cp950 終端機印 ✅/❌ 不炸掉
 
 
 def _can_import(name: str) -> bool:
