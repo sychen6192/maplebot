@@ -243,12 +243,17 @@ class Runner:
             sx, sy = origin[0] + pfx + bx, origin[1] + pfy + by
             if hasattr(self.capture, "focus"):
                 self.capture.focus()
-            if not self.kb.click(sx, sy):
+            if self.kb.click(sx, sy):
+                time.sleep(2.5)  # 復活動畫 + 無敵閃爍，別馬上又判一次
+            else:
                 self.log.error("復活點擊送不出去（%s）——多半是提權不足，"
                                "SendInput/滑鼠都會被 UIPI 擋掉",
                                "錯誤碼 %d" % self.kb.last_error())
-                return True
-            time.sleep(2.5)      # 復活動畫 + 無敵閃爍，別馬上又判一次
+                # 失敗**也要**往下計入熔斷：提權/鎖定桌面這種環境問題重試
+                # 不會自己好。原本這裡直接 return，結果對話框還在、下一幀
+                # 又進來——警報和異常截圖以幀率狂刷一整晚，max_deaths
+                # 卻永遠數不到（只在成功路徑計數）。小睡一下壓住重試頻率
+                time.sleep(1.0)
 
         self._deaths.append(now)
         window = self.cfg.safety.death_window_minutes * 60

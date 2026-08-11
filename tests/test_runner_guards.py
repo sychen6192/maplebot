@@ -297,6 +297,21 @@ def test_too_many_deaths_triggers_panic_stop(tmp_path, shot):
     assert "max_deaths" in r._stop_reason
 
 
+def test_failed_revive_click_still_counts_toward_the_breaker(tmp_path, shot):
+    """點擊送不出去（提權不足/桌面鎖定）重試不會自己好：每次**嘗試**都要
+    計入熔斷。原本失敗路徑直接 return，對話框還在、下一幀又重來——警報
+    以幀率刷一整晚，max_deaths 永遠數不到。"""
+    r = _live_runner(tmp_path, shot, safety={"max_deaths": 3, "death_window_minutes": 10})
+    r.backend.click = lambda x, y: False        # 模擬 SetCursorPos 失敗
+    frame = np.zeros((200, 300, 3), dtype=np.uint8)
+    for i in range(2):
+        assert r._handle_death(_dead_state(), frame, now=float(i)) is True
+        assert r.safety.stop is False
+    r._handle_death(_dead_state(), frame, now=2.0)
+    assert r.safety.stop is True
+    assert "max_deaths" in r._stop_reason
+
+
 def test_old_deaths_fall_out_of_the_window(tmp_path, shot):
     """死亡間隔夠久（超過視窗）就不該累積成熔斷——偶發死亡不算連環送死。"""
     r = _live_runner(tmp_path, shot, safety={"max_deaths": 2, "death_window_minutes": 5})
