@@ -245,7 +245,7 @@ class _StubCapture:
 
 def _dead_state():
     from maplebot.brain.state import GameState
-    st = GameState(ts=0.0, hp=0.0, player=(50, 50))
+    st = GameState(ts=0.0, hp=0.0, minimap_xy=(50, 50))
     st.revive_button = (150, 110)      # playfield 座標
     return st
 
@@ -275,7 +275,7 @@ def test_revive_clicks_the_button_in_screen_coords(tmp_path, shot):
 def test_no_revive_button_is_a_noop(tmp_path, shot):
     from maplebot.brain.state import GameState
     r = _live_runner(tmp_path, shot)
-    st = GameState(ts=0.0, hp=0.0, player=(50, 50))    # 沒有 revive_button
+    st = GameState(ts=0.0, hp=0.0, minimap_xy=(50, 50))    # 沒有 revive_button
     assert r._handle_death(st, np.zeros((200, 300, 3), np.uint8), now=1.0) is False
     assert r.backend.clicks == []
 

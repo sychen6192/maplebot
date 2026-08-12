@@ -72,8 +72,8 @@ class Perceiver:
         mm = self._slice(frame, "minimap")
         if mm is not None:
             st.minimap_size = (mm.shape[1], mm.shape[0])
-            st.player = minimap.find_player(mm, vc, template=self.player_template)
-            st.others = minimap.find_others(mm, vc)
+            st.minimap_xy = minimap.find_player(mm, vc, template=self.player_template)
+            st.other_players = minimap.find_others(mm, vc)
 
         for name, default_color in (("hp", "red"), ("mp", "blue"), ("exp", "yellow")):
             roi = self._slice(frame, f"{name}_bar")
@@ -90,21 +90,21 @@ class Perceiver:
             if st.hp is not None and st.hp <= 0.02:
                 st.revive_button = revive.find_confirm_button(pf, scale)
             if self.nametag is not None:
-                st.player_screen = self.nametag.locate(pf, scale)
-            if st.player_screen is None and vc.locate_player_bar:
-                st.player_screen = player_bar.find_player_bar(
+                st.screen_xy = self.nametag.locate(pf, scale)
+            if st.screen_xy is None and vc.locate_player_bar:
+                st.screen_xy = player_bar.find_player_bar(
                     pf, scale=scale, mask_out=self._overlays())
             interval = vc.mob_interval
             due = (interval <= 0 or self._mobs_ts is None
                    or now - self._mobs_ts >= interval)
             if due:
-                roi, ox, oy = self._search_roi(pf, st.player_screen)
+                roi, ox, oy = self._search_roi(pf, st.screen_xy)
                 roi = self._blank_overlays(roi, ox, oy)
                 # 描邊偵測要照**實際**的角色位置挖掉自己，不是畫面正中央
                 if hasattr(self.detector, "player_xy"):
                     self.detector.player_xy = (
-                        (st.player_screen[0] - ox, st.player_screen[1] - oy)
-                        if st.player_screen is not None else None)
+                        (st.screen_xy[0] - ox, st.screen_xy[1] - oy)
+                        if st.screen_xy is not None else None)
                 # 門檻縮放要以**整個 playfield** 為基準：怪的 sprite 大小
                 # 跟遊戲解析度走，跟搜尋框多寬無關
                 if hasattr(self.detector, "frame_width"):
@@ -121,9 +121,9 @@ class Perceiver:
                 if self._followers is not None:
                     # 傳整個 playfield（不是搜尋框）給它量鏡頭位移：背景紋理越多越準
                     mobs, self.last_followers = self._followers.filter(
-                        mobs, pf, self._player_moved(st.player))
-                if st.player_screen is not None:
-                    mobs = self._drop_self(mobs, st.player_screen, pf.shape[1])
+                        mobs, pf, self._player_moved(st.minimap_xy))
+                if st.screen_xy is not None:
+                    mobs = self._drop_self(mobs, st.screen_xy, pf.shape[1])
                 self._mobs_cache = mobs
                 self._mobs_ts = now
             st.mobs = self._mobs_cache

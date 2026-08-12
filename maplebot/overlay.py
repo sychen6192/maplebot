@@ -16,7 +16,7 @@ RED = (0, 0, 255)
 YELLOW = (0, 255, 255)
 WHITE = (255, 255, 255)
 GRAY = (150, 150, 150)      # 跟隨物（寵物）：偵測到但不攻擊
-MAGENTA = (255, 0, 255)     # 組隊紅條量到的角色位置
+MAGENTA = (255, 0, 255)     # 角色定位（名牌或組隊紅條）量到的位置
 CYAN = (255, 200, 0)        # 攻擊範圍框
 ORANGE = (0, 165, 255)      # 效能警示
 
@@ -27,7 +27,7 @@ def pct(v) -> str:
     return f"{v:.0%}" if v is not None else "?"
 
 
-def draw_attack_box(canvas, cfg, profile, player_screen=None) -> None:
+def draw_attack_box(canvas, cfg, profile, screen_xy=None) -> None:
     """把攻擊範圍框畫出來——「range_px 該設多少」用看的比用猜的快。
 
     短劍砍不到卻一直揮、或是明明構得到卻不打，看這個框跟怪的相對位置就知道。
@@ -37,8 +37,8 @@ def draw_attack_box(canvas, cfg, profile, player_screen=None) -> None:
     if "playfield" not in cfg.regions:
         return
     fx, fy, fw, fh = cfg.regions["playfield"]
-    if player_screen:                       # 組隊紅條量到的真實角色位置
-        cx, cy = fx + player_screen[0], fy + player_screen[1]
+    if screen_xy:                       # 角色定位量到的真實位置（名牌 -> 組隊紅條）
+        cx, cy = fx + screen_xy[0], fy + screen_xy[1]
         cv2.drawMarker(canvas, (cx, cy), MAGENTA, cv2.MARKER_CROSS, 22, 2)
         cv2.putText(canvas, "player", (cx + 10, cy - 8), FONT, 0.4, MAGENTA, 1)
     else:
@@ -57,7 +57,7 @@ def annotate(frame, state, action, cfg, fps=None, followers=(), profile=None,
     """把辨識結果畫上去（畫在原尺寸畫面，座標讀值才準）。"""
     canvas = frame.copy()
     if profile is not None:
-        draw_attack_box(canvas, cfg, profile, state.player_screen)
+        draw_attack_box(canvas, cfg, profile, state.screen_xy)
 
     for name, (x, y, w, h) in cfg.regions.items():
         cv2.rectangle(canvas, (x, y), (x + w, y + h), WHITE, 1)
@@ -65,12 +65,12 @@ def annotate(frame, state, action, cfg, fps=None, followers=(), profile=None,
 
     if "minimap" in cfg.regions:
         mx, my = cfg.regions["minimap"][:2]
-        if state.player:
-            px, py = state.player
+        if state.minimap_xy:
+            px, py = state.minimap_xy
             cv2.circle(canvas, (mx + px, my + py), 4, GREEN, 2)
             cv2.putText(canvas, f"({px},{py})", (mx + px + 6, my + py),
                         FONT, 0.4, GREEN, 1)
-        for ox, oy in state.others:
+        for ox, oy in state.other_players:
             cv2.circle(canvas, (mx + ox, my + oy), 4, RED, 2)
 
     if "playfield" in cfg.regions:

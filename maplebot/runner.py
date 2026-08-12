@@ -172,12 +172,12 @@ class Runner:
                 "再重跑 tools/calibrate.py 只框紅色血條本體。"
                 "已存一張畫面到 logs/anomalies/ 方便對照")
             return False
-        if state.player is None:
+        if state.minimap_xy is None:
             self.log.warning("開場找不到小地圖玩家黃點——確認 regions.minimap 只框地圖畫布本體，"
                              "或調整 vision.color_tolerance。先照跑，但巡邏可能不會動")
         self.log.info("開場自檢通過：HP %.0f%%｜%s｜怪 %d",
                       state.hp * 100,
-                      f"玩家 {state.player}" if state.player else "找不到玩家點",
+                      f"玩家 {state.minimap_xy}" if state.minimap_xy else "找不到玩家點",
                       len(state.mobs))
         return True
 
@@ -434,7 +434,7 @@ class Runner:
         st = self.status
         st.ticks = self.stats.ticks
         st.hp, st.mp, st.exp = state.hp, state.mp, state.exp
-        st.player, st.mobs, st.others = state.player, len(state.mobs), len(state.others)
+        st.player, st.mobs, st.others = state.minimap_xy, len(state.mobs), len(state.other_players)
         st.followers = len(self.perceiver.last_followers)
         st.action = type(action).__name__
         st.reason = getattr(action, "reason", "")
@@ -557,9 +557,9 @@ class Runner:
                     self.advisor.latest_frame = frame
                 self.stats.ticks += 1
 
-                if len(state.others) > self._prev_others:
-                    self.alerts.ping("ding", f"小地圖出現其他玩家（{len(state.others)} 人）")
-                self._prev_others = len(state.others)
+                if len(state.other_players) > self._prev_others:
+                    self.alerts.ping("ding", f"小地圖出現其他玩家（{len(state.other_players)} 人）")
+                self._prev_others = len(state.other_players)
 
                 # 死亡復活要排在 exp_stall / decide 之前：死了 exp 當然不會漲，
                 # 也不該讓 HP=0 觸發 Panic 停機——先試著復活繼續
@@ -573,7 +573,7 @@ class Runner:
                     self._on_exp_stalled(frame, now)
                     continue
 
-                if self.watchdog.update(state.player is not None, now):
+                if self.watchdog.update(state.minimap_xy is not None, now):
                     self._on_player_lost()
                     continue
 
@@ -589,7 +589,7 @@ class Runner:
                         self.stats.ticks,
                         f"{state.hp:.0%}" if state.hp is not None else "?",
                         f"{state.mp:.0%}" if state.mp is not None else "?",
-                        state.player, len(state.mobs), len(state.others),
+                        state.minimap_xy, len(state.mobs), len(state.other_players),
                         type(action).__name__, why)
                 self._check_idle(action, now)
                 self._notice_followers()

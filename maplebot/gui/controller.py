@@ -189,7 +189,7 @@ class Controller:
 
         def sample(now: float):
             state = perceiver.perceive(capture.grab(), now)
-            return state.player if state.player else (None, None)
+            return state.minimap_xy if state.minimap_xy else (None, None)
 
         self.recorder = Recorder(sample, KeyWatcher())
         self._rec_stop.clear()

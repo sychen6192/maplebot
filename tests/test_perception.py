@@ -48,8 +48,8 @@ def test_perceive_full_state(cfg, frame, tmp_path):
 
     st = Perceiver(cfg, det).perceive(frame, now=1.0)
 
-    assert st.player is not None
-    assert abs(st.player[0] - 29) <= 1 and abs(st.player[1] - 19) <= 1
+    assert st.minimap_xy is not None
+    assert abs(st.minimap_xy[0] - 29) <= 1 and abs(st.minimap_xy[1] - 19) <= 1
     assert st.hp == pytest.approx(0.7, abs=0.02)
     assert st.mp == pytest.approx(1.0, abs=0.02)
     assert st.exp is None                       # 沒設定 exp_bar 區域
@@ -325,14 +325,14 @@ class _MobAtDetector:
 def test_party_bar_gives_the_character_position(cfg, frame):
     p = Perceiver(cfg, _BlindDetector())
     st = p.perceive(_with_party_bar(frame), now=1.0)
-    assert st.player_screen is not None
-    assert abs(st.player_screen[0] - 145) <= 8      # 血條左上 + 偏移
-    assert st.player_screen[1] > 90                 # 角色在血條下面
+    assert st.screen_xy is not None
+    assert abs(st.screen_xy[0] - 145) <= 8      # 血條左上 + 偏移
+    assert st.screen_xy[1] > 90                 # 角色在血條下面
 
 
 def test_no_party_bar_leaves_it_unknown(cfg, frame):
     """沒組隊就沒紅條，決策層退回畫面中央（原本的行為）。"""
-    assert Perceiver(cfg, _BlindDetector()).perceive(frame, now=1.0).player_screen is None
+    assert Perceiver(cfg, _BlindDetector()).perceive(frame, now=1.0).screen_xy is None
 
 
 def test_the_character_itself_is_not_reported_as_a_mob(cfg, frame):
@@ -351,7 +351,7 @@ def test_a_real_mob_next_to_the_character_still_counts(cfg, frame):
 def test_player_bar_lookup_can_be_turned_off(cfg, frame):
     cfg.vision.locate_player_bar = False
     st = Perceiver(cfg, _BlindDetector()).perceive(_with_party_bar(frame), now=1.0)
-    assert st.player_screen is None
+    assert st.screen_xy is None
 
 
 def _with_nametag(frame, x=200, y=210):
@@ -377,21 +377,21 @@ def _save_nametag(cfg, frame, x=200, y=210):
 def test_nametag_locates_the_character(cfg, frame):
     shot = _save_nametag(cfg, frame)
     st = Perceiver(cfg, _BlindDetector()).perceive(shot, now=1.0)
-    assert st.player_screen is not None
-    assert abs(st.player_screen[0] - 220) <= 3     # 名牌中心 x
+    assert st.screen_xy is not None
+    assert abs(st.screen_xy[0] - 220) <= 3     # 名牌中心 x
 
 
 def test_nametag_wins_over_the_party_bar(cfg, frame):
     """名牌不用進遊戲組隊就有，兩個都抓得到時以它為準。"""
     shot = _with_party_bar(_save_nametag(cfg, frame, x=60, y=210), x=250, y=170)
     st = Perceiver(cfg, _BlindDetector()).perceive(shot, now=1.0)
-    assert st.player_screen is not None
-    assert abs(st.player_screen[0] - 80) <= 3      # 名牌那邊，不是紅條那邊
+    assert st.screen_xy is not None
+    assert abs(st.screen_xy[0] - 80) <= 3      # 名牌那邊，不是紅條那邊
 
 
 def test_party_bar_still_used_without_a_nametag_template(cfg, frame):
     st = Perceiver(cfg, _BlindDetector()).perceive(_with_party_bar(frame), now=1.0)
-    assert st.player_screen is not None
+    assert st.screen_xy is not None
 
 
 def test_ui_overlays_are_not_searched_for_mobs(cfg, frame):

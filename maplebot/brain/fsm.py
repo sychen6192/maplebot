@@ -430,10 +430,10 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
     if not state.vision_ok:
         return Wait("讀不到畫面狀態（HP 條或小地圖玩家點）")
 
-    assert state.hp is not None and state.player is not None
+    assert state.hp is not None and state.minimap_xy is not None
     # 攻擊範圍要以**角色**為中心，不是畫面中心：鏡頭有跟隨延遲、走到地圖邊緣
     # 還會卡住，實測角色可以偏離畫面中心 200px 以上。量不到就退回畫面中心
-    center_x, center_y = state.player_screen or playfield_center
+    center_x, center_y = state.screen_xy or playfield_center
     pat = profile.patrol
 
     # 單一幀讀到低血就停機太危險——血條被特效蓋住、擷取抖一下都會誤判。
@@ -472,8 +472,8 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
             and _potion_due(rt, "mp", mp_pot.cooldown, now):
         return DrinkPotion("mp", mp_pot.key)
 
-    if cfg.safety.pause_when_players and state.others:
-        return Wait(f"小地圖出現 {len(state.others)} 位其他玩家，暫停動作", seconds=1.0)
+    if cfg.safety.pause_when_players and state.other_players:
+        return Wait(f"小地圖出現 {len(state.other_players)} 位其他玩家，暫停動作", seconds=1.0)
 
     # 掛在繩子上時方向鍵和技能鍵都會讓角色掉下來，所以垂直移動途中不 buff 不打怪
     if not rt.climbing:
@@ -507,7 +507,7 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
             # MP 不夠就換下一個技能；都放不出來就繼續巡邏等回魔，不站著空揮
             if _mp_below(state, sk.min_mp):
                 continue
-            if _attack_stalled(rt, state.player, now, pat.stuck_px,
+            if _attack_stalled(rt, state.minimap_xy, now, pat.stuck_px,
                                cfg.safety.attack_stall_seconds):
                 rt.attack_break_until = now + cfg.safety.attack_break_seconds
                 rt.attack_breaks += 1
@@ -555,7 +555,7 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
             # 實測就發生過追怪一路衝過門把自己傳去隔壁圖。
             lo, hi = _route_x_bounds(waypoints_for_bounds(pat, rt),
                                      state.minimap_size, pat.tolerance)
-            px = state.player[0]
+            px = state.minimap_xy[0]
             if near:
                 target = min(near, key=lambda m: abs(m.cx - center_x))
                 direction = 1 if target.cx >= center_x else -1
@@ -572,7 +572,7 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
 
     waypoints = pat.waypoints
     if pat.auto:
-        probing = _auto_patrol(rt, state.player, pat, now)
+        probing = _auto_patrol(rt, state.minimap_xy, pat, now)
         if probing is not None:
             return probing
         waypoints = rt.auto.waypoints or []
@@ -581,7 +581,7 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
 
     wp = waypoints[rt.wp_index % len(waypoints)]
     target = resolve_waypoint_x(wp, state.minimap_size)
-    dist = target - state.player[0]
+    dist = target - state.minimap_xy[0]
     target_y = resolve_waypoint_y(wp, state.minimap_size)
 
     # 站得比巡邏層高的時候，**先下來再說**，不用等 x 對準。
@@ -591,24 +591,24 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
     # 往上爬則相反：一定要先站到繩子前面，所以留在 x 對準之後。
     # 只對 descend: jump 這樣做——抓繩下降本來就得站在繩子上。
     if target_y is not None and wp.descend == "jump":
-        drop = target_y - state.player[1]        # 小地圖 y 往下變大
+        drop = target_y - state.minimap_xy[1]        # 小地圖 y 往下變大
         if drop > pat.y_tolerance:
-            return _climb(rt, state.player, pat, wp, drop, len(waypoints))
+            return _climb(rt, state.minimap_xy, pat, wp, drop, len(waypoints))
 
     tol = wp.tolerance if wp.tolerance is not None else pat.tolerance
     if abs(dist) > tol:
         # x 還沒對準（也可能是爬繩途中被打掉、位置跑掉了）-> 先走回去
         rt.pause_climb()
-        if _check_stuck(rt, state.player, now, pat.stuck_px, pat.stuck_seconds):
+        if _check_stuck(rt, state.minimap_xy, now, pat.stuck_px, pat.stuck_seconds):
             rt.escape_direction *= -1
             return Escape(rt.escape_direction, pat.jump_key)
         seconds = max(min(abs(dist) * pat.step_seconds_per_px, pat.max_step_seconds), 0.08)
         return Move(1 if dist > 0 else -1, seconds, target)
 
     if target_y is not None:
-        dy = target_y - state.player[1]
+        dy = target_y - state.minimap_xy[1]
         if abs(dy) > pat.y_tolerance:
-            return _climb(rt, state.player, pat, wp, dy, len(waypoints))
+            return _climb(rt, state.minimap_xy, pat, wp, dy, len(waypoints))
 
     rt.next_waypoint(len(waypoints))
     if wp.keys:

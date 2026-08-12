@@ -52,8 +52,8 @@ def _place_away_from_game(cap, disp_w, disp_h) -> None:
 
 def _report(state, action, followers=(), detector=None):
     print(f"  HP {_pct(state.hp)} | MP {_pct(state.mp)} | EXP {_pct(state.exp)}")
-    print(f"  玩家小地圖座標: {state.player}｜其他玩家: {len(state.others)}")
-    print(f"  角色畫面位置: {state.player_screen or '（沒抓到組隊紅條，退回畫面中央）'}")
+    print(f"  玩家小地圖座標: {state.minimap_xy}｜其他玩家: {len(state.other_players)}")
+    print(f"  角色畫面位置: {state.screen_xy or '（名牌與組隊紅條都沒抓到，退回畫面中央）'}")
     print(f"  偵測到怪物: {len(state.mobs)}")
     for mob in state.mobs[:5]:
         print(f"    - {mob.name} ({mob.cx},{mob.cy}) {mob.w}x{mob.h} "
@@ -127,8 +127,8 @@ def main() -> int:
                     if prev_hp is not None and state.hp < prev_hp - 0.3:
                         hp_drops += 1      # 一幀掉超過 30% = 幾乎確定是誤讀
                     prev_hp = state.hp
-                if state.player:
-                    x, y = state.player
+                if state.minimap_xy:
+                    x, y = state.minimap_xy
                     pos = int(x / mm_w * 30) if mm_w else 0
                     bar = "".join("●" if i == pos else "─" for i in range(30))
                     print(f"\r  x={x:4d} y={y:4d} [{bar}] "

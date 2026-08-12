@@ -30,9 +30,9 @@ def profile():
     return p
 
 
-def _state(hp=0.9, mp=0.9, player=(60, 30), others=(), mobs=(), minimap_size=(130, 60)):
-    return GameState(ts=NOW, hp=hp, mp=mp, player=player, minimap_size=minimap_size,
-                     others=list(others), mobs=list(mobs))
+def _state(hp=0.9, mp=0.9, minimap_xy=(60, 30), other_players=(), mobs=(), minimap_size=(130, 60)):
+    return GameState(ts=NOW, hp=hp, mp=mp, minimap_xy=minimap_xy, minimap_size=minimap_size,
+                     other_players=list(other_players), mobs=list(mobs))
 
 
 def _rt(buffed=True):
@@ -47,7 +47,7 @@ def _mob(cx, cy=260):
 
 
 def test_vision_failure_waits(cfg, profile):
-    st = GameState(ts=NOW, hp=None, player=None)
+    st = GameState(ts=NOW, hp=None, minimap_xy=None)
     assert isinstance(fsm.decide(st, cfg, profile, _rt(), NOW, CENTER), fsm.Wait)
 
 
@@ -126,14 +126,14 @@ def test_low_mp_drinks_mp_potion(cfg, profile):
 
 
 def test_other_players_pause(cfg, profile):
-    st = _state(others=[(10, 10)], mobs=[_mob(420)])
+    st = _state(other_players=[(10, 10)], mobs=[_mob(420)])
     action = fsm.decide(st, cfg, profile, _rt(), NOW, CENTER)
     assert isinstance(action, fsm.Wait)
 
 
 def test_other_players_ignored_when_disabled(cfg, profile):
     cfg.safety.pause_when_players = False
-    st = _state(others=[(10, 10)], mobs=[_mob(420)])
+    st = _state(other_players=[(10, 10)], mobs=[_mob(420)])
     action = fsm.decide(st, cfg, profile, _rt(), NOW, CENTER)
     assert isinstance(action, fsm.Attack)
 
@@ -165,21 +165,21 @@ def test_mob_out_of_vertical_range_ignored(cfg, profile):
 
 
 def test_patrol_moves_toward_waypoint(cfg, profile):
-    action = fsm.decide(_state(player=(60, 30)), cfg, profile, _rt(), NOW, CENTER)
+    action = fsm.decide(_state(minimap_xy=(60, 30)), cfg, profile, _rt(), NOW, CENTER)
     assert isinstance(action, fsm.Move)
     assert action.direction == -1 and action.target_x == 40  # 60 -> 40 往左
 
 
 def test_patrol_advances_waypoint_on_arrival(cfg, profile):
     rt = _rt()
-    action = fsm.decide(_state(player=(41, 30)), cfg, profile, rt, NOW, CENTER)
+    action = fsm.decide(_state(minimap_xy=(41, 30)), cfg, profile, rt, NOW, CENTER)
     assert isinstance(action, fsm.Wait)
     assert rt.wp_index == 1  # 切到下一個巡邏點
 
 
 def test_relative_waypoint_resolution(cfg, profile):
     profile.patrol.waypoints = [Waypoint(0.5)]  # 小地圖寬 130 -> x=65
-    action = fsm.decide(_state(player=(20, 30)), cfg, profile, _rt(), NOW, CENTER)
+    action = fsm.decide(_state(minimap_xy=(20, 30)), cfg, profile, _rt(), NOW, CENTER)
     assert isinstance(action, fsm.Move)
     assert action.target_x == 65 and action.direction == 1
 
@@ -187,7 +187,7 @@ def test_relative_waypoint_resolution(cfg, profile):
 def test_waypoint_keys_run_on_arrival(cfg, profile):
     profile.patrol.waypoints = [Waypoint(40, keys=["alt"]), Waypoint(95)]
     rt = _rt()
-    action = fsm.decide(_state(player=(41, 30)), cfg, profile, rt, NOW, CENTER)
+    action = fsm.decide(_state(minimap_xy=(41, 30)), cfg, profile, rt, NOW, CENTER)
     assert isinstance(action, fsm.RunKeys)
     assert action.keys == ["alt"]
     assert rt.wp_index == 1  # 已切到下一點，keys 只會跑一次
@@ -196,21 +196,21 @@ def test_waypoint_keys_run_on_arrival(cfg, profile):
 def test_stuck_triggers_escape(cfg, profile):
     rt = _rt()
     pos = (60, 30)  # 離目標 40 還很遠，位置一直不動
-    a1 = fsm.decide(_state(player=pos), cfg, profile, rt, NOW, CENTER)
+    a1 = fsm.decide(_state(minimap_xy=pos), cfg, profile, rt, NOW, CENTER)
     assert isinstance(a1, fsm.Move)
-    a2 = fsm.decide(_state(player=pos), cfg, profile, rt, NOW + 2.0, CENTER)
+    a2 = fsm.decide(_state(minimap_xy=pos), cfg, profile, rt, NOW + 2.0, CENTER)
     assert isinstance(a2, fsm.Move)  # 還沒超過 stuck_seconds
-    a3 = fsm.decide(_state(player=pos), cfg, profile, rt, NOW + 4.5, CENTER)
+    a3 = fsm.decide(_state(minimap_xy=pos), cfg, profile, rt, NOW + 4.5, CENTER)
     assert isinstance(a3, fsm.Escape)
     assert a3.jump_key == "alt"
-    a4 = fsm.decide(_state(player=pos), cfg, profile, rt, NOW + 4.6, CENTER)
+    a4 = fsm.decide(_state(minimap_xy=pos), cfg, profile, rt, NOW + 4.6, CENTER)
     assert isinstance(a4, fsm.Move)  # 脫困後重新計時，不會連發
 
 
 def test_moving_player_never_escapes(cfg, profile):
     rt = _rt()
     for i, x in enumerate(range(90, 50, -5)):  # 一路有在動
-        action = fsm.decide(_state(player=(x, 30)), cfg, profile, rt,
+        action = fsm.decide(_state(minimap_xy=(x, 30)), cfg, profile, rt,
                             NOW + i * 2.0, CENTER)
         assert isinstance(action, fsm.Move)
 
@@ -401,7 +401,7 @@ def _auto(profile):
 
 def _drive(cfg, profile, rt, xs):
     """依序餵入一連串小地圖 x，收集每個 tick 的決策。"""
-    return [fsm.decide(_state(player=(x, 30)), cfg, profile, rt, NOW + i * 0.5, CENTER)
+    return [fsm.decide(_state(minimap_xy=(x, 30)), cfg, profile, rt, NOW + i * 0.5, CENTER)
             for i, x in enumerate(xs)]
 
 
@@ -441,7 +441,7 @@ def test_combat_gap_does_not_fake_a_wall(cfg, profile):
     那段時間角色在打怪，本來就不會前進。"""
     rt = _rt()
     prof = _auto(profile)
-    st = _state(player=(50, 30))
+    st = _state(minimap_xy=(50, 30))
 
     a1 = fsm.decide(st, cfg, prof, rt, NOW, CENTER)
     assert isinstance(a1, fsm.Probe)
@@ -456,14 +456,14 @@ def test_wall_detected_when_genuinely_stuck(cfg, profile):
     """真的撞牆（持續探邊但位置不動）還是要判定得出來。"""
     rt = _rt()
     prof = _auto(profile)
-    st = _state(player=(50, 30))
+    st = _state(minimap_xy=(50, 30))
     for i in range(6):                       # 連續探邊，每 0.4 秒一次
         fsm.decide(st, cfg, prof, rt, NOW + i * 0.4, CENTER)
     assert rt.auto.right == 50               # 這一側量到了
 
 
 def test_auto_patrol_still_attacks_while_calibrating(cfg, profile):
-    st = _state(player=(60, 30), mobs=[_mob(420)])
+    st = _state(minimap_xy=(60, 30), mobs=[_mob(420)])
     action = fsm.decide(st, cfg, _auto(profile), _rt(), NOW, CENTER)
     assert isinstance(action, fsm.Attack)
 
@@ -474,7 +474,7 @@ def test_auto_patrol_still_attacks_while_calibrating(cfg, profile):
 def test_waypoint_without_y_ignores_height(cfg, profile):
     """單層地圖的舊 profile 行為不變：y 差再多也算抵達。"""
     rt = _rt()
-    action = fsm.decide(_state(player=(41, 999)), cfg, profile, rt, NOW, CENTER)
+    action = fsm.decide(_state(minimap_xy=(41, 999)), cfg, profile, rt, NOW, CENTER)
     assert isinstance(action, fsm.Wait) and rt.wp_index == 1
 
 
@@ -482,9 +482,9 @@ def test_waypoint_tolerance_override(cfg, profile):
     """爬繩點的抓取窗口只有 ±1~2px：waypoint 可以覆寫 x 容差。
     全域 tolerance=4 時 x 差 2 已算到位，但 tolerance: 1 的點要走到差 1 以內。"""
     profile.patrol.waypoints = [Waypoint(40, y=20, tolerance=1)]
-    action = fsm.decide(_state(player=(42, 50)), cfg, profile, _rt(), NOW, CENTER)
+    action = fsm.decide(_state(minimap_xy=(42, 50)), cfg, profile, _rt(), NOW, CENTER)
     assert isinstance(action, fsm.Move)          # 還差 2px：繼續對位
-    action = fsm.decide(_state(player=(41, 50)), cfg, profile, _rt(), NOW, CENTER)
+    action = fsm.decide(_state(minimap_xy=(41, 50)), cfg, profile, _rt(), NOW, CENTER)
     assert isinstance(action, fsm.Climb)         # 差 1px：可以爬了
 
 
@@ -492,7 +492,7 @@ def test_climbs_up_when_x_aligned_but_y_too_low(cfg, profile):
     """起步的往上爬要帶跳：繩底常懸在半身高，站著按上永遠抓不到。"""
     profile.patrol.waypoints = [Waypoint(40, y=20)]
     rt = _rt()
-    action = fsm.decide(_state(player=(41, 50)), cfg, profile, rt, NOW, CENTER)
+    action = fsm.decide(_state(minimap_xy=(41, 50)), cfg, profile, rt, NOW, CENTER)
     assert isinstance(action, fsm.Climb)
     assert action.direction == -1 and action.key == "up"
     assert action.jump_key == profile.patrol.jump_key
@@ -504,12 +504,12 @@ def test_climb_up_stops_jumping_once_moving(cfg, profile):
     震下來（實測三層繩就是這樣無限循環的）。爬升途中短暫停滯也一樣不跳。"""
     profile.patrol.waypoints = [Waypoint(40, y=20)]
     rt = _rt()
-    fsm.decide(_state(player=(41, 50)), cfg, profile, rt, NOW, CENTER)
-    action = fsm.decide(_state(player=(41, 44)), cfg, profile, rt, NOW + 0.5, CENTER)
+    fsm.decide(_state(minimap_xy=(41, 50)), cfg, profile, rt, NOW, CENTER)
+    action = fsm.decide(_state(minimap_xy=(41, 44)), cfg, profile, rt, NOW + 0.5, CENTER)
     assert isinstance(action, fsm.Climb) and action.direction == -1
     assert action.jump_key == ""
     # 爬升途中 y 卡一拍（每步升幅本來就只比 stall_px 高一點）：耐心，不跳
-    action = fsm.decide(_state(player=(41, 44)), cfg, profile, rt, NOW + 1.0, CENTER)
+    action = fsm.decide(_state(minimap_xy=(41, 44)), cfg, profile, rt, NOW + 1.0, CENTER)
     assert isinstance(action, fsm.Climb) and action.jump_key == ""
 
 
@@ -517,35 +517,35 @@ def test_climb_up_jumps_again_if_still_at_start_height(cfg, profile):
     """跳了卻還停在起點高度＝根本沒抓到（或抓了又掉回地板），要再跳。"""
     profile.patrol.waypoints = [Waypoint(40, y=20)]
     rt = _rt()
-    fsm.decide(_state(player=(41, 50)), cfg, profile, rt, NOW, CENTER)
-    action = fsm.decide(_state(player=(41, 50)), cfg, profile, rt, NOW + 0.5, CENTER)
+    fsm.decide(_state(minimap_xy=(41, 50)), cfg, profile, rt, NOW, CENTER)
+    action = fsm.decide(_state(minimap_xy=(41, 50)), cfg, profile, rt, NOW + 0.5, CENTER)
     assert isinstance(action, fsm.Climb) and action.direction == -1
     assert action.jump_key == profile.patrol.jump_key
 
 
 def test_descends_by_rope_by_default(cfg, profile):
     profile.patrol.waypoints = [Waypoint(40, y=60)]
-    action = fsm.decide(_state(player=(41, 20)), cfg, profile, _rt(), NOW, CENTER)
+    action = fsm.decide(_state(minimap_xy=(41, 20)), cfg, profile, _rt(), NOW, CENTER)
     assert isinstance(action, fsm.Climb)
     assert action.direction == 1 and action.key == "down" and action.jump_key == ""
 
 
 def test_descends_by_jump_when_requested(cfg, profile):
     profile.patrol.waypoints = [Waypoint(40, y=60, descend="jump")]
-    action = fsm.decide(_state(player=(41, 20)), cfg, profile, _rt(), NOW, CENTER)
+    action = fsm.decide(_state(minimap_xy=(41, 20)), cfg, profile, _rt(), NOW, CENTER)
     assert isinstance(action, fsm.Climb) and action.jump_key == "alt"
 
 
 def test_relative_waypoint_y_resolution(cfg, profile):
     profile.patrol.waypoints = [Waypoint(0.5, y=0.5)]  # 小地圖 130x60 -> (65, 30)
-    action = fsm.decide(_state(player=(65, 50)), cfg, profile, _rt(), NOW, CENTER)
+    action = fsm.decide(_state(minimap_xy=(65, 50)), cfg, profile, _rt(), NOW, CENTER)
     assert isinstance(action, fsm.Climb) and action.direction == -1
 
 
 def test_arrival_requires_both_axes(cfg, profile):
     profile.patrol.waypoints = [Waypoint(40, y=20), Waypoint(95)]
     rt = _rt()
-    action = fsm.decide(_state(player=(41, 22)), cfg, profile, rt, NOW, CENTER)
+    action = fsm.decide(_state(minimap_xy=(41, 22)), cfg, profile, rt, NOW, CENTER)
     assert isinstance(action, fsm.Wait)
     assert rt.wp_index == 1 and rt.climbing is False
 
@@ -556,7 +556,7 @@ def test_climb_stall_escapes_then_gives_up(cfg, profile):
     profile.patrol.climb_retries = 1
     rt = _rt()
     pos = (41, 50)  # x 對準了，y 卻爬不動
-    seq = [fsm.decide(_state(player=pos), cfg, profile, rt, NOW + i, CENTER)
+    seq = [fsm.decide(_state(minimap_xy=pos), cfg, profile, rt, NOW + i, CENTER)
            for i in range(8)]
     assert [type(a).__name__ for a in seq] == [
         "Climb", "Climb", "Climb", "Escape",   # 第 1 次重試
@@ -572,7 +572,7 @@ def test_climb_retries_survive_realignment(cfg, profile):
     rt = _rt()
     rt.climbing = True
     rt.climb_retries = 1
-    action = fsm.decide(_state(player=(60, 50)), cfg, profile, rt, NOW, CENTER)
+    action = fsm.decide(_state(minimap_xy=(60, 50)), cfg, profile, rt, NOW, CENTER)
     assert isinstance(action, fsm.Move)   # x 跑掉了 -> 先走回繩子下面
     assert rt.climbing is False
     assert rt.climb_retries == 1          # 但重試次數保留
@@ -583,7 +583,7 @@ def test_climbing_suppresses_attack(cfg, profile):
     profile.patrol.waypoints = [Waypoint(40, y=20)]
     rt = _rt()
     rt.climbing = True
-    st = _state(player=(41, 50), mobs=[_mob(420)])
+    st = _state(minimap_xy=(41, 50), mobs=[_mob(420)])
     assert isinstance(fsm.decide(st, cfg, profile, rt, NOW, CENTER), fsm.Climb)
 
 
@@ -591,7 +591,7 @@ def test_climbing_suppresses_buff(cfg, profile):
     profile.patrol.waypoints = [Waypoint(40, y=20)]
     rt = fsm.Runtime()  # buff 從沒上過，平常這時會 CastBuff
     rt.climbing = True
-    action = fsm.decide(_state(player=(41, 50)), cfg, profile, rt, NOW, CENTER)
+    action = fsm.decide(_state(minimap_xy=(41, 50)), cfg, profile, rt, NOW, CENTER)
     assert isinstance(action, fsm.Climb)
 
 
@@ -600,7 +600,7 @@ def test_climbing_still_drinks_potion(cfg, profile):
     profile.patrol.waypoints = [Waypoint(40, y=20)]
     rt = _rt()
     rt.climbing = True
-    action = fsm.decide(_state(hp=0.4, player=(41, 50)), cfg, profile, rt, NOW, CENTER)
+    action = fsm.decide(_state(hp=0.4, minimap_xy=(41, 50)), cfg, profile, rt, NOW, CENTER)
     assert isinstance(action, fsm.DrinkPotion)
 
 
@@ -627,7 +627,7 @@ def test_attacking_while_the_character_moves_is_never_interrupted(cfg, profile):
     rt = _rt()
     t = NOW
     for i in range(60):
-        st = _state(player=(60 + i, 30), mobs=[_mob(400)])
+        st = _state(minimap_xy=(60 + i, 30), mobs=[_mob(400)])
         assert isinstance(fsm.decide(st, cfg, profile, rt, t, CENTER), fsm.Attack)
         t += 0.5
     assert rt.attack_breaks == 0
@@ -746,7 +746,7 @@ def test_attack_range_follows_the_character_not_the_screen(cfg, profile):
                           score=1, name="m")])
     assert not isinstance(fsm.decide(st, cfg, profile, _rt(), NOW, CENTER), fsm.Attack)
 
-    st.player_screen = (CENTER[0] + 200, CENTER[1])   # 角色其實偏右 200px
+    st.screen_xy = (CENTER[0] + 200, CENTER[1])   # 角色其實偏右 200px
     assert isinstance(fsm.decide(st, cfg, profile, _rt(), NOW, CENTER), fsm.Attack)
 
 
@@ -757,14 +757,14 @@ def test_the_range_is_symmetric_around_the_character(cfg, profile):
     for side in (-1, 1):
         st = _state(mobs=[Mob(cx=player[0] + side * 80, cy=player[1],
                               w=20, h=20, score=1, name="m")])
-        st.player_screen = player
+        st.screen_xy = player
         assert isinstance(fsm.decide(st, cfg, profile, _rt(), NOW, CENTER),
                           fsm.Attack), side
 
 
 def test_falls_back_to_the_screen_centre_without_a_party_bar(cfg, profile):
     st = _state(mobs=[_mob(CENTER[0] + 10)])
-    assert st.player_screen is None
+    assert st.screen_xy is None
     assert isinstance(fsm.decide(st, cfg, profile, _rt(), NOW, CENTER), fsm.Attack)
 
 
@@ -784,7 +784,7 @@ def test_drops_down_without_waiting_to_line_up_x():
     """
     cfg, p = AppCfg(), _floor_profile()
     rt = fsm.Runtime()
-    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(104, 80))   # 高一層、x 差很遠
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, minimap_xy=(104, 80))   # 高一層、x 差很遠
     action = fsm.decide(state, cfg, p, rt, 0.0, (400, 300))
     assert isinstance(action, fsm.Climb), action
     assert action.direction == 1               # 往下
@@ -797,7 +797,7 @@ def test_still_lines_up_x_before_climbing_a_rope():
     p = Profile()
     p.patrol.waypoints = [Waypoint(x=68, y=20)]
     rt = fsm.Runtime()
-    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(30, 90))
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, minimap_xy=(30, 90))
     assert isinstance(fsm.decide(state, cfg, p, rt, 0.0, (400, 300)), fsm.Move)
 
 
@@ -807,14 +807,14 @@ def test_rope_descent_still_needs_x_first():
     p = Profile()
     p.patrol.waypoints = [Waypoint(x=68, y=90, descend="rope")]
     rt = fsm.Runtime()
-    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(104, 80))
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, minimap_xy=(104, 80))
     assert isinstance(fsm.decide(state, cfg, p, rt, 0.0, (400, 300)), fsm.Move)
 
 
 def test_on_the_patrol_floor_it_just_walks():
     cfg, p = AppCfg(), _floor_profile()
     rt = fsm.Runtime()
-    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(104, 90))
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, minimap_xy=(104, 90))
     assert isinstance(fsm.decide(state, cfg, p, rt, 0.0, (400, 300)), fsm.Move)
 
 
@@ -834,7 +834,7 @@ def _mob_at(cx, cy, w=40, h=40):
 def test_walks_towards_a_mob_it_cannot_reach_yet():
     """看得到怪卻構不到時，原本會照巡邏路線走掉——畫面上站著五隻一隻都沒打。"""
     cfg, p = AppCfg(), _chase_profile()
-    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(70, 90),
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, minimap_xy=(70, 90),
                       mobs=[_mob_at(600, 300)])          # 中心右邊 200px，打不到
     action = fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300))
     assert isinstance(action, fsm.Chase), action
@@ -843,7 +843,7 @@ def test_walks_towards_a_mob_it_cannot_reach_yet():
 
 def test_chase_prefers_the_nearest_mob():
     cfg, p = AppCfg(), _chase_profile()
-    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(70, 90),
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, minimap_xy=(70, 90),
                       mobs=[_mob_at(600, 300), _mob_at(280, 300)])
     action = fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300))
     assert isinstance(action, fsm.Chase) and action.direction == -1
@@ -852,7 +852,7 @@ def test_chase_prefers_the_nearest_mob():
 def test_does_not_chase_mobs_on_another_floor():
     """樓上樓下的怪追過去也打不到，只會被拉離巡邏路線。"""
     cfg, p = AppCfg(), _chase_profile()
-    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(70, 90),
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, minimap_xy=(70, 90),
                       mobs=[_mob_at(600, 60)])           # 水平構得到、但高很多
     assert isinstance(fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300)),
                       fsm.Move)
@@ -860,7 +860,7 @@ def test_does_not_chase_mobs_on_another_floor():
 
 def test_does_not_chase_beyond_the_limit():
     cfg, p = AppCfg(), _chase_profile(chase_px=100)
-    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(70, 90),
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, minimap_xy=(70, 90),
                       mobs=[_mob_at(760, 300)])
     assert isinstance(fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300)),
                       fsm.Move)
@@ -868,7 +868,7 @@ def test_does_not_chase_beyond_the_limit():
 
 def test_chase_off_by_default_keeps_the_old_behaviour():
     cfg, p = AppCfg(), _chase_profile(chase_px=0)
-    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(70, 90),
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, minimap_xy=(70, 90),
                       mobs=[_mob_at(600, 300)])
     assert isinstance(fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300)),
                       fsm.Move)
@@ -879,18 +879,18 @@ def test_chase_commitment_survives_detection_flicker():
     互搶方向（往左、往右、往左…），角色原地抖動，實測 150 秒只打了 2 刀。"""
     cfg, p = AppCfg(), _chase_profile()
     rt = fsm.Runtime()
-    st = GameState(ts=0.0, hp=1.0, mp=1.0, player=(70, 90),
+    st = GameState(ts=0.0, hp=1.0, mp=1.0, minimap_xy=(70, 90),
                    mobs=[_mob_at(280, 300)])             # 左邊的怪 -> 往左追
     first = fsm.decide(st, cfg, p, rt, NOW, (400, 300))
     assert isinstance(first, fsm.Chase) and first.direction == -1
 
     # 下一幀怪閃沒了：承諾期內要照原方向繼續走，不能回頭照巡邏路線走掉
-    gone = GameState(ts=0.0, hp=1.0, mp=1.0, player=(70, 90), mobs=[])
+    gone = GameState(ts=0.0, hp=1.0, mp=1.0, minimap_xy=(70, 90), mobs=[])
     action = fsm.decide(gone, cfg, p, rt, NOW + 0.13, (400, 300))
     assert isinstance(action, fsm.Chase) and action.direction == -1
 
     # 換一幀變成右邊有怪（偵測抖動/多隻交錯）：承諾期內方向也不變
-    swapped = GameState(ts=0.0, hp=1.0, mp=1.0, player=(70, 90),
+    swapped = GameState(ts=0.0, hp=1.0, mp=1.0, minimap_xy=(70, 90),
                         mobs=[_mob_at(600, 300)])
     action = fsm.decide(swapped, cfg, p, rt, NOW + 0.26, (400, 300))
     assert isinstance(action, fsm.Chase) and action.direction == -1
@@ -900,7 +900,7 @@ def test_chase_stops_at_route_right_edge():
     """追怪不能追出路線端點太多：訓練場 I 右邊 x≈245 是自動傳送門，
     實測追擊一路衝過門把自己傳去隔壁圖。"""
     cfg, p = AppCfg(), _chase_profile()          # 巡邏點 12..130
-    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(140, 90),
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, minimap_xy=(140, 90),
                       mobs=[_mob_at(600, 300)])  # 右邊有怪，但已在邊界上
     action = fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300))
     assert isinstance(action, fsm.Move)
@@ -908,7 +908,7 @@ def test_chase_stops_at_route_right_edge():
 
 def test_chase_stops_at_route_left_edge():
     cfg, p = AppCfg(), _chase_profile()
-    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(2, 90),
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, minimap_xy=(2, 90),
                       mobs=[_mob_at(100, 300)])  # 怪在畫面左側
     action = fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300))
     assert isinstance(action, fsm.Move)
@@ -916,7 +916,7 @@ def test_chase_stops_at_route_left_edge():
 
 def test_chase_inside_bounds_still_works():
     cfg, p = AppCfg(), _chase_profile()
-    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(120, 90),
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, minimap_xy=(120, 90),
                       mobs=[_mob_at(600, 300)])
     action = fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300))
     assert isinstance(action, fsm.Chase) and action.direction == 1
@@ -925,10 +925,10 @@ def test_chase_inside_bounds_still_works():
 def test_chase_commitment_expires_back_to_patrol():
     cfg, p = AppCfg(), _chase_profile()
     rt = fsm.Runtime()
-    st = GameState(ts=0.0, hp=1.0, mp=1.0, player=(70, 90),
+    st = GameState(ts=0.0, hp=1.0, mp=1.0, minimap_xy=(70, 90),
                    mobs=[_mob_at(280, 300)])
     fsm.decide(st, cfg, p, rt, NOW, (400, 300))
-    gone = GameState(ts=0.0, hp=1.0, mp=1.0, player=(70, 90), mobs=[])
+    gone = GameState(ts=0.0, hp=1.0, mp=1.0, minimap_xy=(70, 90), mobs=[])
     action = fsm.decide(gone, cfg, p, rt,
                         NOW + fsm.CHASE_COMMIT_SECONDS + 0.1, (400, 300))
     assert isinstance(action, fsm.Move)
@@ -936,7 +936,7 @@ def test_chase_commitment_expires_back_to_patrol():
 
 def test_attacking_still_wins_over_chasing():
     cfg, p = AppCfg(), _chase_profile()
-    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(70, 90),
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, minimap_xy=(70, 90),
                       mobs=[_mob_at(430, 300), _mob_at(600, 300)])
     assert isinstance(fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300)),
                       fsm.Attack)
@@ -956,7 +956,7 @@ def test_emergency_potion_takes_over_when_hp_is_really_low():
     """一般補血一瓶只回一點點——實測 530 血一瓶回 44，被圍住時每秒一瓶
     追不上掉血速度，就會一路掉到危險線停機。血更低時要改按大瓶。"""
     cfg, p = AppCfg(), _potion_profile()
-    state = GameState(ts=0.0, hp=0.30, mp=1.0, player=(70, 90))
+    state = GameState(ts=0.0, hp=0.30, mp=1.0, minimap_xy=(70, 90))
     action = fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300))
     assert isinstance(action, fsm.DrinkPotion)
     assert action.key == "d"
@@ -964,7 +964,7 @@ def test_emergency_potion_takes_over_when_hp_is_really_low():
 
 def test_normal_potion_used_when_hp_is_only_a_bit_low():
     cfg, p = AppCfg(), _potion_profile()
-    state = GameState(ts=0.0, hp=0.55, mp=1.0, player=(70, 90))
+    state = GameState(ts=0.0, hp=0.55, mp=1.0, minimap_xy=(70, 90))
     action = fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300))
     assert isinstance(action, fsm.DrinkPotion) and action.key == "s"
 
@@ -974,7 +974,7 @@ def test_the_two_potions_have_separate_cooldowns():
     cfg, p = AppCfg(), _potion_profile()
     rt = fsm.Runtime()
     rt.note_potion("hp_emergency", NOW)
-    state = GameState(ts=0.0, hp=0.30, mp=1.0, player=(70, 90))
+    state = GameState(ts=0.0, hp=0.30, mp=1.0, minimap_xy=(70, 90))
     action = fsm.decide(state, cfg, p, rt, NOW + 0.6, (400, 300))
     assert isinstance(action, fsm.DrinkPotion) and action.key == "s"
 
@@ -983,7 +983,7 @@ def test_no_emergency_potion_configured_keeps_the_old_behaviour():
     cfg = AppCfg()
     p = _potion_profile()
     del p.potions["hp_emergency"]
-    state = GameState(ts=0.0, hp=0.30, mp=1.0, player=(70, 90))
+    state = GameState(ts=0.0, hp=0.30, mp=1.0, minimap_xy=(70, 90))
     action = fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300))
     assert isinstance(action, fsm.DrinkPotion) and action.key == "s"
 
@@ -993,7 +993,7 @@ def test_ranged_class_backs_off_when_a_mob_gets_too_close():
     cfg, p = AppCfg(), _chase_profile()
     p.attack.range_px = 150          # 遠程：射程長
     p.keep_away_px = 60
-    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(70, 90),
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, minimap_xy=(70, 90),
                       mobs=[_mob_at(430, 300)])          # 中心右邊 30px，太近
     action = fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300))
     assert isinstance(action, fsm.Chase) and action.away
@@ -1004,7 +1004,7 @@ def test_ranged_class_attacks_once_it_has_room():
     cfg, p = AppCfg(), _chase_profile()
     p.attack.range_px = 150
     p.keep_away_px = 60
-    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(70, 90),
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, minimap_xy=(70, 90),
                       mobs=[_mob_at(520, 300)])          # 120px 遠，夠開
     assert isinstance(fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300)),
                       fsm.Attack)
@@ -1014,7 +1014,7 @@ def test_melee_class_never_backs_off():
     """近戰貼臉本來就是它要的，keep_away_px 設 0 關掉。"""
     cfg, p = AppCfg(), _chase_profile()
     p.keep_away_px = 0
-    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(70, 90),
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, minimap_xy=(70, 90),
                       mobs=[_mob_at(410, 300)])
     assert isinstance(fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300)),
                       fsm.Attack)
