@@ -12,7 +12,8 @@ import numpy as np
 
 from .brain.state import GameState
 from .config import AppCfg
-from .vision import minimap, mob_hpbar, nametag, player_bar, revive, status
+from .vision import (minimap, mob_hpbar, nametag, player_bar, playfield,
+                     revive, status)
 from .vision.locate import PLAYER_NAME, load_ui_template
 from .vision.follower import FollowerFilter
 from .vision.mobs import MobDetector
@@ -148,53 +149,20 @@ class Perceiver:
         return True
 
     def _drop_self(self, mobs, player_xy, frame_width):
-        """把落在角色身上的偵測結果丟掉。
-
-        描邊偵測是照**畫面中央**挖掉自己的，但鏡頭有跟隨延遲、走到地圖邊緣還會
-        卡住，角色其實常常不在正中央——那時角色自己就會被當成一隻怪打。
-        """
-        scale = frame_width / REFERENCE_WIDTH
-        bw, bh = self.cfg.vision.outline_player_box
-        bw, bh = int(bw * scale), int(bh * scale)
-        px, py = player_xy
-        return [m for m in mobs
-                if abs(m.cx - px) > bw // 2 or abs(m.cy - py) > bh // 2]
+        """把落在角色身上的偵測結果丟掉（規則見 vision/playfield.py）。"""
+        return playfield.drop_at(mobs, player_xy,
+                                 self.cfg.vision.outline_player_box,
+                                 frame_width / REFERENCE_WIDTH)
 
     def _overlays(self):
-        """playfield 上疊著的 UI 區塊（換算成 playfield 座標）。
-
-        小地圖通常疊在主畫面左上角，上面的其他玩家紅點會被誤認成組隊紅條。
-        """
-        pf = self.cfg.regions.get("playfield")
-        mm = self.cfg.regions.get("minimap")
-        if pf is None or mm is None:
-            return []
-        return [(mm[0] - pf[0], mm[1] - pf[1], mm[2], mm[3])]
+        return playfield.overlay_rects(self.cfg.regions)
 
     def _blank_overlays(self, roi: np.ndarray, ox: int, oy: int) -> np.ndarray:
-        """把疊在主畫面上的 UI 塗成中灰再拿去找怪。
-
-        小地圖面板的標題文字、聊天視窗的字都有黑色描邊，描邊偵測分不出那是
-        文字還是怪——實測小地圖標題那一條會固定變成一隻「怪」。塗中灰而不是
-        塗黑：黑的話反而變成一整塊符合條件的黑塊。
-        """
-        rects = self.cfg.vision.mob_exclude
-        if not rects:
-            return roi
+        """把疊在主畫面上的 UI 塗成中灰再拿去找怪。"""
         pf = self.cfg.regions.get("playfield", (0, 0, 0, 0))
-        h, w = roi.shape[:2]
-        out = None
-        for x, y, rw, rh in rects:
-            # client 座標 -> playfield -> 搜尋框
-            x0, y0 = x - pf[0] - ox, y - pf[1] - oy
-            x1, y1 = max(x0, 0), max(y0, 0)
-            x2, y2 = min(x0 + rw, w), min(y0 + rh, h)
-            if x2 <= x1 or y2 <= y1:
-                continue
-            if out is None:
-                out = roi.copy()
-            out[y1:y2, x1:x2] = 128
-        return roi if out is None else out
+        # 搜尋框左上角在 client 區的座標：playfield 原點 + 搜尋框在 playfield 內的偏移
+        return playfield.blank_rects(roi, self.cfg.vision.mob_exclude,
+                                     (pf[0] + ox, pf[1] + oy))
 
     def _search_roi(self, playfield: np.ndarray, center=None):
         """只取角色周圍的攻擊範圍框；回傳 (影像, x偏移, y偏移)。

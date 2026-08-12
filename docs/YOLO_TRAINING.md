@@ -1,4 +1,4 @@
-# YOLO 怪物偵測訓練指南（RTX 5090）
+# YOLO 怪物偵測訓練指南
 
 把感知層從模板匹配升級成 YOLO 的完整流程。跑完之後，怪物偵測從
 「對動作幀敏感、會被重疊干擾」變成毫秒級、對變化魯棒的偵測器，
@@ -21,13 +21,19 @@
 標好，再訓練一個又快又小的 YOLO「學生」。**人工標註不是必要步驟**——它只是
 想再擠一點準度時的選配精修。
 
-老師有三種：
+老師有這幾種：
 
 | 老師 | 指令 | 適合 |
 |---|---|---|
-| **描邊 ∪ 模板**（建議） | `tools/autolabel_outline.py` | 兩個老師聯集，盲點互補：描邊怕怪跟草叢黏在一起、模板怕沒見過的動作幀。**換地圖不用重截模板**（描邊對任何怪都成立），有模板就順便一起用 |
-| **模板匹配** | `tools/auto_pipeline.py` | 只想用模板、而且模板已經蒐集齊全時。楓谷 sprite 每幀像素幾乎相同，命中率很高 |
-| **GroundingDINO**（大模型） | `tools/label_gdino.py` | 完全不想截模板。但它是拿真實照片訓練的，對卡通 sprite 語意很模糊——實測標籤會混成 `"slime npc signboard"` 這種複合詞而被 reject 過濾掉。**先 `--test` 試一張** |
+| **描邊 ∪ 模板**（建議） | `tools/autolabel_outline.py` | 兩個老師聯集，盲點互補：描邊怕怪跟草叢黏在一起、模板怕沒見過的動作幀。**換地圖不用重截模板**（描邊對任何怪都成立），有模板就順便一起用。實測召回率明顯高於單一老師 |
+| **描邊**（預設，免模板） | `tools/auto_pipeline.py` | **你現在就跑得動的那個偵測器**，一行指令跑完標註→切分→訓練。不用截任何模板，換地圖直接標。代價：它不知道怪的種類，全部標成一類 `mob` |
+| **模板匹配** | `tools/auto_pipeline.py --teacher template` | 已經截過模板時用。楓谷 sprite 每幀像素幾乎相同，命中率很高，而且標出來有怪種資訊 |
+| **GroundingDINO**（大模型） | `tools/label_gdino.py` | 完全不想截模板、又想要語意標籤。但它是拿真實照片訓練的，對卡通 sprite 語意很模糊——實測標籤會混成 `"slime npc signboard"` 這種複合詞而被 reject 過濾掉。**先 `--test` 試一張** |
+
+兩條描邊路線的差別：`auto_pipeline.py` 走 `teachers.py` 的老師介面，偵測器由
+`make_detector` 依 config 建立（跟 bot 執行時同一個函式），還附 `--preview`
+看標註、`--check` 只標不練；`autolabel_outline.py` 是直接開參數的標註專用工具，
+多了模板聯集與 `--exclude`。
 
 最短路徑（描邊 ∪ 模板）：
 
@@ -47,7 +53,17 @@ python tools/autolabel_outline.py --exclude 0,0,320,400 --exclude 1700,1130,859,
 想用大模型老師就把中間換成 `label_gdino -> prepare_dataset -> train_yolo`。
 想再精修才需要 labelImg（見文末「選配：人工精修」）。
 
+> **老師抓不到的，學生也學不到。** 用描邊老師之前，先跑
+> `python tools/debug_view.py --snapshot check.png` 把 `outline_*` 門檻調到
+> 畫面上真的框得到怪。自動標註不會無中生有，它只是把你現在的偵測結果
+> 「蒸餾」成一個更快更穩的模型。
+
 ## 0. 環境準備（一次性，在有 GPU 的那台）
+
+顯卡不用很強。這是單類別、遊戲畫面的小資料集，**3060 Ti（8GB）綽綽有餘**：
+yolo11n + 500 張 + 80 epochs 大約 15~25 分鐘（5090 是 2~4 分鐘）。
+VRAM 不夠再加 `--batch 16`。
+
 
 用 [uv](https://docs.astral.sh/uv/) 開虛擬環境最省事——不需要先有 pip，
 連 Python 都能幫你裝：
@@ -84,22 +100,6 @@ python -c "import torch; print(torch.__version__, torch.cuda.is_available(), tor
 
 > 遊戲機那台**不需要**這些，裝原本的 `requirements.txt` 就好。
 
-兩個常見狀況：
-
-- **`cuda.is_available()` 是 False，或跑起來報 `no kernel image available`**：
-  RTX 5090 是 Blackwell（sm_120），需要夠新的 CUDA build。裝明確版本：
-  ```bash
-  pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu128
-  ```
-- **headless Linux 出現 `libGL.so.1: cannot open shared object file`**：
-  ultralytics 依賴的 `opencv-python` 需要 GUI 函式庫。二選一：
-  ```bash
-  sudo apt install -y libgl1 libglib2.0-0            # 有 sudo
-  pip uninstall -y opencv-python && pip install opencv-python-headless   # 沒 sudo
-  ```
-
-> 遊戲機那台**不需要**這些，裝原本的 `requirements.txt` 就好。
-
 ## 1. 蒐集畫面（遊戲機）
 
 ```bash
@@ -110,24 +110,57 @@ python tools/collect_dataset.py --interval 2 --count 400
   你會去的每張地圖、以及**一部分完全沒怪的空景**（負樣本，壓誤報用）
 - 工具會自動跳過與上一張幾乎相同的幀（`--min-diff 0` 可關）
 - 建議量：單一地圖 300~500 張就能練出堪用模型；跨 2~4 張地圖 600~800 張更穩
+- **自己跟自己組隊**再蒐集。角色頭上那條組隊紅條是離線標註唯一能拿來定位
+  角色的東西；量不到就只能假設「角色在畫面正中央」，而那是錯的
+  （見下面「角色被標成怪」）
 
-把 `datasets/raw/` 連同 `data/templates/mobs/` 一起 scp 到有 GPU 的機器。
+> **預設存 PNG 不是隨便選的。** 描邊老師靠的就是 sprite 的**純黑**描邊，
+> 而 JPEG 會把純黑壓成 (3,2,4) 這種值——實測一張圖的純黑像素從 476 掉到 306，
+> 背景有雜訊時只剩 7 個；組隊紅條也會碎成好幾塊導致定位失敗。
+> 代價是檔案大 5~10 倍（300 張約 200MB）。硬碟真的很緊才用 `--format jpg`，
+> 並搭配 `tools/autolabel.py --scan-black` 把門檻調高。
+
+把 `datasets/raw/` scp 到有 GPU 的機器（用模板老師的話連 `data/templates/mobs/` 一起）。
 
 ## 2. 一鍵：自動標註 + 訓練（GPU 機器）
+
+**先看一眼老師標得對不對**——這是唯一一次還來得及回頭的機會：
+
+```bash
+python tools/auto_pipeline.py --check      # 只標註 + 輸出預覽，不訓練
+```
+
+打開 `datasets/raw/_preview/`：黃框就是會拿去訓練的標註。
+框對了就拿掉 `--check` 正式跑：
 
 ```bash
 python tools/auto_pipeline.py
 # 想更準（怪小隻/背景花）：python tools/auto_pipeline.py --model yolo11s.pt --epochs 120
-# 不分怪種、全部當一類：  python tools/auto_pipeline.py --single-class
+# 已經有模板、想要怪種資訊： python tools/auto_pipeline.py --teacher template
 ```
 
-一條指令跑完：用模板老師自動標註 → 切 train/val → 訓練 → 印出權重路徑與
-要貼進 config 的兩行。全程零人工標註。
+一條指令跑完：用描邊老師自動標註 → 切 train/val → 訓練 → 印出權重路徑與
+要貼進 config 的兩行。全程零人工標註、零模板。
 
 - 已內建遊戲畫面特化參數：關閉旋轉/上下翻轉/透視增強（2D 橫向卷軸用不到），
   保留左右翻轉（怪會轉向）
-- 5090 參考速度：yolo11n + 500 張 + 80 epochs ≈ **2~4 分鐘**
+- 參考速度：yolo11n + 500 張 + 80 epochs，3060 Ti ≈ **15~25 分鐘**、5090 ≈ **2~4 分鐘**
 - 終端的 `mAP50` 是主要指標，遊戲精靈圖通常能到 **0.9+**
+
+### 描邊老師標太少 / 標太多
+
+標註跑完會印出描邊偵測的統計（跟 `tools/debug_view.py` 是同一份）。
+框數不對就先掃一遍門檻，不用猜：
+
+```bash
+python tools/autolabel.py --scan-black
+#   --black-level   0  ->  0 個框（平均每張 0.0）      <- JPEG 把純黑壓掉了
+#   --black-level  15  ->  874 個框（平均每張 2.2）
+python tools/autolabel.py --black-level 15 --preview 6   # 挑一個再看預覽
+```
+
+數字一路往上衝不是好事，那表示開始把背景當怪了。挑「跟你眼睛看到的怪數量
+最接近」的那個值。
 
 ### 想用大模型老師（免模板）
 
@@ -180,6 +213,9 @@ python tools/label_gdino.py --test shot.jpg --prompt "monster" \
 python tools/autolabel.py              # 只標註、不訓練，產生可校對的 .txt
 pip install labelImg && labelImg datasets/raw datasets/raw/classes.txt
 ```
+
+> `datasets/raw/_preview/` 是預覽圖（畫著黃框），放在子資料夾裡，
+> 不會被 labelImg 或訓練撿走。
 
 - 左側切到 **YOLO** 格式；`W` 畫框、`D` 下一張、開 Auto Save Mode
 - 只改三種：漏框補上、誤框刪掉、框太鬆拉緊
@@ -297,8 +333,36 @@ python tools/check_remote.py
 
 | 症狀 | 解法 |
 |---|---|
-| `torch.cuda.is_available()` 是 False | 重裝 cu128 版 PyTorch（見步驟 0），並確認驅動 ≥ 570 |
+| `torch.cuda.is_available()` 是 False | 重裝對應 CUDA 版的 PyTorch（見步驟 0），並確認驅動夠新 |
 | `no kernel image is available` | 同上——裝到舊 CUDA 版的 wheel 了 |
+| 描邊老師一個框都標不到 | `tools/autolabel.py --scan-black`；多半是 JPEG 把純黑壓掉了 |
+| **角色被標成怪**（見下） | 組隊、改用 PNG 蒐集、或調大 `outline_player_box` |
 | 訓練 mAP 高但實戰漏抓 | 蒐集時畫面不夠多樣；補「實戰漏抓當下」的截圖進資料集重練 |
 | 誤報多 | 調高 `yolo_confidence`（0.6~0.7），或加負樣本重練 |
-| VRAM 爆（不太可能發生在 5090） | `--batch 32` 手動指定 |
+| VRAM 爆 | `--batch 16`（3060 Ti 8GB 通常不用） |
+
+### 角色被標成怪
+
+自動標註最貴的一種錯：每一張訓練圖都多一個「角色是怪」的框，學生會學得
+非常牢，上線後就一直打自己。
+
+程式已經擋了兩層——先量出角色**實際**位置（名牌或組隊紅條）再把那一塊挖掉，
+挖不到才退回「畫面正中央」。但楓谷的鏡頭有跟隨延遲、走到地圖邊緣還會卡住，
+**角色常常不在正中央**（實測 1920 視窗可以差 200px 以上），所以退回中央那條路
+本來就會標錯。
+
+標註跑完會直接告訴你有幾張沒量到：
+
+```
+角色定位：312/400 張量到（名牌或組隊紅條）；其餘 88 張是照畫面正中央挖掉自己的。
+```
+
+三個辦法，由好到差：
+
+1. **進遊戲自己跟自己組隊**（角色頭上才會出現那條紅條），重新蒐集
+2. **用 PNG 蒐集**：`collect_dataset.py --format png`（預設就是）。
+   JPEG 會把紅條壓到碎成好幾塊，量不到
+3. 把 `outline_player_box` 調大（例如 `[220, 200]`）——寧可多挖掉一塊背景，
+   也不要把角色標進去
+
+改完用 `python tools/autolabel.py --preview 6` 確認角色那一隻沒有黃框。

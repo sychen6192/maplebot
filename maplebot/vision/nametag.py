@@ -135,9 +135,17 @@ def _text_mask(gray: np.ndarray) -> np.ndarray:
 
 def load_locator(ui_dir: str, offset: Tuple[int, int] = DEFAULT_OFFSET,
                  threshold: float = MATCH_THRESHOLD) -> Optional[NametagLocator]:
-    """載入使用者截的角色特徵模板；沒有就回 None（呼叫端退回組隊紅條）。"""
+    """載入使用者截的角色特徵模板；沒有就回 None（呼叫端退回組隊紅條）。
+
+    先問檔案在不在再讀：沒截模板是**正常情況**（預設就沒有），但 cv2.imread
+    讀不到檔會往 stderr 印 "can't open/read file: check file path/integrity"，
+    看起來像出事了。
+    """
     for name in FEATURE_NAMES:
-        img = cv2.imread(os.path.join(ui_dir, name), cv2.IMREAD_COLOR)
+        path = os.path.join(ui_dir, name)
+        if not os.path.exists(path):
+            continue
+        img = cv2.imread(path, cv2.IMREAD_COLOR)
         if img is not None:
             return NametagLocator(img, offset, threshold)
     return None
