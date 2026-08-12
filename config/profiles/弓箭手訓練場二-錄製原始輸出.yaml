@@ -1,0 +1,144 @@
+# 弓箭手訓練場 II —— GUI 錄製直接產出的結果，**還不能直接用**。
+#
+# 42 個點裡有 21 個不同的 y。這張圖沒有 21 層樓：爬繩途中小地圖 y 是一格一格
+# 變的，中途每個高度都被記成一層樓（看 104->100->96->92->88 那段就是一次爬繩）。
+# route.py 已經要求「y 要停住幾筆才算到位」，但慢慢爬的時候每個中途高度都會
+# 停超過那個門檻，所以還是漏過去了——這份留著當實際樣本，修好之後拿它驗證。
+#
+# 要現在就掛的話，先把中途的高度刪掉只留真正的樓層，或整段換成 waypoints: auto。
+name: 弓箭手訓練場二（錄製原始輸出，尚未整理）
+templates_dir: data/templates/mobs
+panic_return_key: ''
+patrol:
+  waypoints:
+  - x: 42
+    y: 104
+  - x: 42
+    y: 100
+  - x: 40
+    y: 96
+  - x: 40
+    y: 92
+  - x: 40
+    y: 88
+  - x: 28
+    y: 88
+  - x: 82
+    y: 88
+  - x: 68
+    y: 88
+  - x: 66
+    y: 84
+  - x: 64
+    y: 80
+  - x: 64
+    y: 76
+  - x: 76
+    y: 76
+  - x: 77
+    y: 73
+  - x: 34
+    y: 73
+  - x: 50
+    y: 73
+  - x: 50
+    y: 70
+  - x: 52
+    y: 66
+  - x: 52
+    y: 62
+  - x: 52
+    y: 58
+  - x: 40
+    y: 58
+  - x: 74
+    y: 58
+  - x: 68
+    y: 58
+  - x: 68
+    y: 54
+  - x: 68
+    y: 50
+  - x: 68
+    y: 46
+  - x: 71
+    y: 43
+  - x: 42
+    y: 43
+  - x: 60
+    y: 43
+  - descend: jump
+    x: 60
+    y: 46
+  - descend: jump
+    x: 60
+    y: 52
+  - descend: jump
+    x: 60
+    y: 58
+  - descend: jump
+    x: 60
+    y: 64
+  - descend: jump
+    x: 60
+    y: 68
+  - descend: jump
+    x: 60
+    y: 74
+  - descend: jump
+    x: 60
+    y: 80
+  - descend: jump
+    x: 60
+    y: 84
+  - descend: jump
+    x: 60
+    y: 88
+  - descend: jump
+    x: 60
+    y: 92
+  - x: 60
+    y: 96
+  - x: 60
+    y: 100
+  - x: 60
+    y: 104
+  - x: 80
+    y: 104
+  tolerance: 4
+  y_tolerance: 2
+  step_seconds_per_px: 0.02
+  max_step_seconds: 0.45
+  stuck_seconds: 4.0
+  stuck_px: 3
+  jump_key: alt
+  climb_up_key: up
+  climb_down_key: down
+loot:
+  key: z
+  every: 3.0
+  taps: 3
+  after_combat: 6.0
+attack:
+  key: ctrl
+  min_mp: 0.0
+  min_mobs: 1
+  type: directional
+  range_px: 55
+  vertical_range_px: 35
+  cast_seconds: 0.45
+  repeat: 1
+  cooldown: 0.1
+buffs: []
+potions:
+  hp:
+    key: pageup
+    below_ratio: 0.7
+    cooldown: 0.5
+  mp:
+    key: pagedown
+    below_ratio: 0.3
+    cooldown: 1.0
+attack_auto_scale: true
+chase_px: 280
+keep_away_px: 0

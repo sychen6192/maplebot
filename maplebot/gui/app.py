@@ -9,7 +9,7 @@
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from . import settings
+from . import keys, settings
 from .controller import Controller
 
 REFRESH_MS = 200        # UI 更新頻率（bot 的迴圈頻率是另一回事）
@@ -67,6 +67,52 @@ class App(tk.Tk):
         self.vars[key] = var
         ttk.Entry(parent, textvariable=var, width=width).grid(
             row=row, column=1, sticky="w", pady=1)
+        return var
+
+    def _key_entry(self, parent, var, width=8):
+        """按鍵欄位：點一下，然後按下你要綁的那個鍵。
+
+        原本要自己打字（"pageup"、"ctrl"），打錯了不會有人告訴你，
+        要等 bot 跑起來按鍵沒反應才發現。
+        """
+        ent = ttk.Entry(parent, textvariable=var, width=width,
+                        state="readonly", cursor="hand2", justify="center")
+        ent.bind("<Button-1>", lambda _e: self._capture_key(ent, var))
+        ent.bind("<Button-3>", lambda _e: var.set(""))      # 右鍵清空
+        return ent
+
+    def _capture_key(self, widget, var):
+        if getattr(widget, "_capturing", False):
+            return
+        previous = var.get()
+        widget._capturing = True
+        var.set("按一個鍵…")
+        widget.focus_set()
+
+        def done(event):
+            widget.unbind("<Key>", bind_id)
+            widget._capturing = False
+            if event.keysym == "Escape":        # 取消，保留原本綁的鍵
+                var.set(previous)
+                return "break"
+            name = keys.keysym_to_key(event.keysym)
+            if name is None:
+                var.set(previous)
+                self.ctl.log.warning(
+                    "這個鍵送不進遊戲（%s），沒有綁定。數字鍵盤與 Caps/Num Lock "
+                    "這類鍵不支援", event.keysym)
+            else:
+                var.set(name)
+            return "break"
+
+        bind_id = widget.bind("<Key>", done)
+
+    def _labeled_key(self, parent, row, text, key, width=8):
+        ttk.Label(parent, text=text).grid(row=row, column=0, sticky="w", pady=1)
+        var = tk.StringVar()
+        self.vars[key] = var
+        self._key_entry(parent, var, width).grid(row=row, column=1,
+                                                 sticky="w", pady=1)
         return var
 
     def _checkbox(self, parent, row, text, key):
@@ -141,7 +187,7 @@ class App(tk.Tk):
     def _build_attack(self, parent) -> None:
         box = ttk.LabelFrame(parent, text="打怪設定", padding=PAD)
         box.pack(fill="x", pady=(0, PAD))
-        self._labeled(box, 0, "攻擊按鍵", "attack_key")
+        self._labeled_key(box, 0, "攻擊按鍵", "attack_key")
         ttk.Label(box, text="技能型態").grid(row=1, column=0, sticky="w")
         self.vars["attack_type"] = tk.StringVar()
         ttk.Combobox(box, textvariable=self.vars["attack_type"], width=12,
@@ -151,10 +197,10 @@ class App(tk.Tk):
         self._labeled(box, 3, "打怪距離（像素）", "attack_range")
         self._labeled(box, 4, "垂直距離（像素）", "attack_vrange")
         self._labeled(box, 5, "連發次數", "attack_repeat")
-        self._labeled(box, 6, "撿物按鍵", "loot_key")
-        self._labeled(box, 7, "跳躍按鍵", "jump_key")
-        self._labeled(box, 8, "上爬 / 下爬", "climb_up_key")
-        self._labeled(box, 9, "　（下）", "climb_down_key")
+        self._labeled_key(box, 6, "撿物按鍵", "loot_key")
+        self._labeled_key(box, 7, "跳躍按鍵", "jump_key")
+        self._labeled_key(box, 8, "上爬 / 下爬", "climb_up_key")
+        self._labeled_key(box, 9, "　（下）", "climb_down_key")
         ttk.Label(box, text="巡邏點（auto = 開場自己量）").grid(
             row=10, column=0, columnspan=2, sticky="w", pady=(4, 0))
         self.vars["waypoints"] = tk.StringVar()
@@ -170,7 +216,7 @@ class App(tk.Tk):
             self.buff_vars.append((key, every))
             col = (i % 2) * 3
             row = i // 2
-            ttk.Entry(box, textvariable=key, width=5).grid(row=row, column=col, pady=1)
+            self._key_entry(box, key, width=6).grid(row=row, column=col, pady=1)
             ttk.Label(box, text="每").grid(row=row, column=col + 1)
             ttk.Entry(box, textvariable=every, width=5).grid(row=row, column=col + 2,
                                                              padx=(0, 8))
@@ -178,15 +224,15 @@ class App(tk.Tk):
     def _build_safety(self, parent) -> None:
         box = ttk.LabelFrame(parent, text="藥水與安全", padding=PAD)
         box.pack(fill="x")
-        self._labeled(box, 0, "HP 藥按鍵", "hp_key")
+        self._labeled_key(box, 0, "HP 藥按鍵", "hp_key")
         self._labeled(box, 1, "低於 % 時吃", "hp_below")
-        self._labeled(box, 2, "MP 藥按鍵", "mp_key")
+        self._labeled_key(box, 2, "MP 藥按鍵", "mp_key")
         self._labeled(box, 3, "低於 % 時吃", "mp_below")
         self._labeled(box, 4, "危險血量 %", "critical_hp")
         self._labeled(box, 5, "連續幾幀才停機", "critical_hp_frames")
         self._labeled(box, 6, "幾分沒經驗就停", "exp_stall_minutes")
         self._labeled(box, 7, "最長掛幾分鐘（0=不限）", "max_runtime_minutes")
-        self._labeled(box, 8, "回城卷按鍵", "panic_return_key")
+        self._labeled_key(box, 8, "回城卷按鍵", "panic_return_key")
         self._checkbox(box, 9, "有其他玩家時暫停", "pause_when_players")
         self._checkbox(box, 10, "危險事件嗶聲", "sound_alerts")
         self._checkbox(box, 11, "濾掉寵物（需鏡頭會捲動）", "filter_followers")

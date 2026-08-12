@@ -29,7 +29,7 @@
   自動暫停 + 截圖存證 + 聲音警報、**遊戲當掉自動停手**、最長運行時間
 - **掛機可觀測性**：`tools/doctor.py` 開跑前一次講完所有會失敗的地方；跑的時候量
   **分段耗時**（慢在擷取還是辨識）；收工自動產生報告（Markdown + JSON + 曲線圖）
-- **可測性**：431 個 pytest（合成影像 + 真實截圖真值），整條主迴圈可用一張截圖 dry-run
+- **可測性**：585 個 pytest（合成影像 + 真實截圖真值），整條主迴圈可用一張截圖 dry-run
 - **ML 擴充**：YOLO 訓練管線（蒐集→自動預標註→校對→訓練→部署）、ONNX 匯出
   （掛機那台不用裝 PyTorch）與本地 VLM 督導層
 
@@ -99,10 +99,18 @@ uv venv && .venv\Scripts\activate && uv pip install -r requirements.txt
 **圖形介面（最快）**
 
 ```bash
-python gui.py
+python gui.py --profile config/profiles/你的地圖.yaml
 # 視窗裡照順序按：重新校正 ROI -> 辨識自檢 -> 開始錄製（走一趟）-> 停止錄製
 #                -> 儲存設定 -> 開始打怪
 ```
+
+`--profile` 不要省：不指定的話動到的是範例檔 example.yaml，按「儲存設定」
+就會把你的設定寫進去。
+
+按鍵欄位（攻擊鍵、藥水鍵、buff 鍵…）**點一下再按下那個鍵就綁定**，不用自己
+打 `pageup`、`ctrl` 這種名字——打錯了不會有人告訴你，要等 bot 跑起來按鍵沒
+反應才發現。Esc 取消、右鍵清空；送不進遊戲的鍵（數字鍵盤、Caps Lock）會當場
+擋掉並說明原因。
 
 **命令列**
 

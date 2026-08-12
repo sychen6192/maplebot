@@ -90,7 +90,7 @@ def main() -> int:
         print(f"playfield ROI: {list(region)}")
     else:
         frame = cap.grab()
-        print("⚠ config 沒有 regions.playfield，改送整個視窗畫面。"
+        print("警告：config 沒有 regions.playfield，改送整個視窗畫面。"
               "請先跑 tools/calibrate.py 校正")
 
     # 報告「實際會送出去」的內容（RemoteMobDetector 會先縮到 remote_max_width）
@@ -109,7 +109,7 @@ def main() -> int:
 
     ratio = w / shrunk.shape[1]
     if ratio >= 2.5:
-        print(f"⚠ 縮了 {ratio:.1f} 倍：畫面上 30px 的怪會變成 {30 / ratio:.0f}px，"
+        print(f"警告：縮了 {ratio:.1f} 倍：畫面上 30px 的怪會變成 {30 / ratio:.0f}px，"
               "YOLO 可能認不出來。")
         print("  建議把遊戲視窗調小（經典版 800x600 最單純），"
               "或把 vision.remote_max_width 調高到 1280")
@@ -156,7 +156,7 @@ def main() -> int:
     for m in mobs[:5]:
         print(f"  - {m.name} ({m.cx},{m.cy}) {m.w}x{m.h} score={m.score:.2f}")
     if det.failures:
-        print(f"⚠ 有 {det.failures} 次請求失敗")
+        print(f"警告：有 {det.failures} 次請求失敗")
     return 0
 
 

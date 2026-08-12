@@ -95,7 +95,7 @@ def main() -> int:
               "（黃框=會拿去訓練，先打開看一眼）")
 
     if lab.boxes < 50:
-        print("⚠ 框太少（建議 200 個以上）。多蒐集一些畫面，"
+        print("[!] 框太少（建議 200 個以上）。多蒐集一些畫面，"
               + ("或跑 python tools/autolabel.py --scan-black 調描邊門檻"
                  if args.teacher == "outline"
                  else "或把 --threshold 調低（例如 0.6）") + "再跑一次")

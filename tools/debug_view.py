@@ -147,7 +147,7 @@ def main() -> int:
                   f"{'（小地圖 ROI 或顏色參數要調）' if lost else ''}")
             print(f"HP 最低讀值: {hp_min:.0%}｜單幀突降 >30%: {hp_drops} 次")
             if hp_drops:
-                print("⚠ 血條讀值不穩：重跑 tools/calibrate.py 只框紅色條本體"
+                print("警告：血條讀值不穩：重跑 tools/calibrate.py 只框紅色條本體"
                       "（不要含數字、外框、旁邊的 UI）。")
                 print("  暫時解法：safety.critical_hp_frames 調大（預設 3），"
                       "或 safety.critical_hp_ratio 調低")
