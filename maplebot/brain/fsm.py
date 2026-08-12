@@ -35,6 +35,9 @@ from typing import Dict, List, Optional, Tuple, Union
 from ..config import REFERENCE_WIDTH, AppCfg, PatrolCfg, Profile, Waypoint
 from .state import GameState
 
+# 追擊方向的承諾期（秒）：期間內偵測閃爍/目標換邊都不改方向，見 decide() 追擊段
+CHASE_COMMIT_SECONDS = 0.45
+
 
 @dataclass
 class Wait:
@@ -159,6 +162,7 @@ class Runtime:
     last_potion: Dict[str, float] = field(default_factory=dict)
     last_attack: float = 0.0
     low_hp_streak: int = 0              # 連續幾幀讀到低於危險線
+    low_hp_since: Optional[float] = None  # 這一段低血是什麼時候開始的
     last_skill: Dict[int, float] = field(default_factory=dict)   # 每個技能各自的冷卻
     last_loot: float = 0.0
     stuck_pos: Optional[Tuple[int, int]] = None
@@ -171,8 +175,11 @@ class Runtime:
     auto: AutoPatrol = field(default_factory=AutoPatrol)
     climbing: bool = False              # 正在垂直移動 -> 讓路給攻擊與 buff
     climb_prev_y: Optional[int] = None
+    climb_start_y: Optional[int] = None  # 這一趟爬繩的起點高度（判斷抓到了沒）
     climb_stalls: int = 0
     climb_retries: int = 0
+    chase_dir: int = 0                  # 追擊方向承諾（防止與巡邏互搶抖動）
+    chase_until: float = 0.0
 
     def note_buff(self, index: int, now: float) -> None:
         self.last_buff[index] = now
@@ -189,6 +196,7 @@ class Runtime:
         免得「爬不動 -> 脫困 -> 位置跑掉 -> 重新對位」把計數歸零變成無限迴圈。"""
         self.climbing = False
         self.climb_prev_y = None
+        self.climb_start_y = None
         self.climb_stalls = 0
 
     def next_waypoint(self, total: int) -> None:
@@ -324,7 +332,10 @@ def _climb(rt: Runtime, player: Tuple[int, int], pat: PatrolCfg, wp: Waypoint,
     連續失敗超過 climb_retries 就放棄這個巡邏點，免得永遠卡在繩子前面。
     """
     y = player[1]
-    if rt.climb_prev_y is not None and abs(y - rt.climb_prev_y) <= pat.climb_stall_px:
+    first = rt.climb_prev_y is None
+    if first:
+        rt.climb_start_y = y
+    if not first and abs(y - rt.climb_prev_y) <= pat.climb_stall_px:
         rt.climb_stalls += 1
     else:
         rt.climb_stalls = 0
@@ -342,9 +353,42 @@ def _climb(rt: Runtime, player: Tuple[int, int], pat: PatrolCfg, wp: Waypoint,
 
     rt.climbing = True
     if dy < 0:                       # 小地圖 y 變小 = 往上，只能靠繩子
-        return Climb(-1, pat.climb_up_key, pat.climb_seconds)
+        # 繩底常常懸在半身高（訓練場二→三層的繩就是），站在底下按上永遠
+        # 抓不到，要**跳起來抓**——但只在「還停在起點高度」時跳（沒抓到，
+        # 或抓了又掉回地板）。已經爬升之後就不能再跳：實測在繩上補跳會把
+        # 角色從繩上震下來，爬升途中的短暫停滯（每步升幅本來就只比
+        # climb_stall_px 高一點）交給耐心，不要跳。
+        near_start = rt.climb_start_y is not None \
+            and y >= rt.climb_start_y - pat.climb_stall_px
+        jump = pat.jump_key if (first or near_start) else ""
+        return Climb(-1, pat.climb_up_key, pat.climb_seconds, jump_key=jump)
     jump_key = pat.jump_key if wp.descend == "jump" else ""
     return Climb(1, pat.climb_down_key, pat.climb_seconds, jump_key=jump_key)
+
+
+CHASE_BOUND_MARGIN = 6   # 追擊可以越過路線端點多少 px（再多就折返）
+
+
+def waypoints_for_bounds(pat: PatrolCfg, rt: Runtime) -> List[Waypoint]:
+    """算追擊邊界要用的巡邏點：auto 模式用量出來的那組。"""
+    if pat.auto and rt.auto.waypoints:
+        return rt.auto.waypoints
+    return pat.waypoints
+
+
+def _route_x_bounds(waypoints: List[Waypoint],
+                    minimap_size: Optional[Tuple[int, int]],
+                    tolerance: int) -> Tuple[float, float]:
+    if not waypoints:
+        return float("-inf"), float("inf")
+    xs = [resolve_waypoint_x(w, minimap_size) for w in waypoints]
+    margin = CHASE_BOUND_MARGIN + tolerance
+    return min(xs) - margin, max(xs) + margin
+
+
+def _chase_out_of_bounds(player_x: int, direction: int,
+                         lo: float, hi: float) -> bool:
+    return (direction > 0 and player_x >= hi) or (direction < 0 and player_x <= lo)
 
 
 def _attack_stalled(rt: Runtime, player: Tuple[int, int], now: float,
@@ -394,13 +438,22 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
 
     # 單一幀讀到低血就停機太危險——血條被特效蓋住、擷取抖一下都會誤判。
     # 真實血量不會一幀掉到底，所以要求連續幾幀都讀到才算數。
+    #
+    # 但「低血就停機」本身也是個陷阱：停機之後角色**站在原地繼續被打**，
+    # 掛整晚的結局就是屍體（實測掛整晚就是這樣死的）。所以血量
+    # 見底時要先灌藥搶救，連續撐了 critical_hp_seconds 還是拉不回來，
+    # 才承認救不了而停機——那時停機才真的是止血。
     if state.hp <= cfg.safety.critical_hp_ratio:
         rt.low_hp_streak += 1
-        if rt.low_hp_streak >= cfg.safety.critical_hp_frames:
-            return Panic(f"HP 剩 {state.hp:.0%}，連續 {rt.low_hp_streak} 幀"
-                         f"低於危險線 {cfg.safety.critical_hp_ratio:.0%}")
+        if rt.low_hp_since is None:
+            rt.low_hp_since = now
+        long_enough = now - rt.low_hp_since >= cfg.safety.critical_hp_seconds
+        if rt.low_hp_streak >= cfg.safety.critical_hp_frames and long_enough:
+            return Panic(f"HP 剩 {state.hp:.0%}，連續 {now - rt.low_hp_since:.0f} 秒"
+                         f"低於危險線 {cfg.safety.critical_hp_ratio:.0%}，補血追不上")
     else:
         rt.low_hp_streak = 0
+        rt.low_hp_since = None
 
     # 緊急回血：血更低的時候改按另一個鍵（大瓶／全補藥）。
     # 一般補血一瓶只回一點點——實測 530 血的角色一瓶回 44，被圍住時
@@ -492,10 +545,30 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
             near = [m for m in state.mobs
                     if abs(m.cx - center_x) <= reach + m.w // 2
                     and abs(m.cy - center_y) <= vertical + m.h // 2]
+            # 信心門檻邊緣的怪一幀有一幀沒有，追擊會和巡邏每 tick 互搶方向
+            #（追擊往左、巡邏往右），角色原地抖動誰也沒贏——實測 150 秒只
+            # 攻擊了 2 次。所以追擊方向有短暫承諾期：期間內目標閃沒了就
+            # 照原方向繼續走，目標換邊也先走完再說。
+            #
+            # 追擊不得越出巡邏路線的 x 範圍（外加一點餘裕）：路線端點刻意
+            # 避開的東西（訓練場 I 右邊 x≈245 的自動傳送門）追擊也要避開——
+            # 實測就發生過追怪一路衝過門把自己傳去隔壁圖。
+            lo, hi = _route_x_bounds(waypoints_for_bounds(pat, rt),
+                                     state.minimap_size, pat.tolerance)
+            px = state.player[0]
             if near:
                 target = min(near, key=lambda m: abs(m.cx - center_x))
-                return Chase(1 if target.cx >= center_x else -1,
-                             pat.max_step_seconds)
+                direction = 1 if target.cx >= center_x else -1
+                if now < rt.chase_until and rt.chase_dir:
+                    direction = rt.chase_dir
+                else:
+                    rt.chase_dir = direction
+                    rt.chase_until = now + CHASE_COMMIT_SECONDS
+                if not _chase_out_of_bounds(px, direction, lo, hi):
+                    return Chase(direction, pat.max_step_seconds)
+            elif now < rt.chase_until and rt.chase_dir \
+                    and not _chase_out_of_bounds(px, rt.chase_dir, lo, hi):
+                return Chase(rt.chase_dir, pat.max_step_seconds)
 
     waypoints = pat.waypoints
     if pat.auto:
@@ -522,7 +595,8 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
         if drop > pat.y_tolerance:
             return _climb(rt, state.player, pat, wp, drop, len(waypoints))
 
-    if abs(dist) > pat.tolerance:
+    tol = wp.tolerance if wp.tolerance is not None else pat.tolerance
+    if abs(dist) > tol:
         # x 還沒對準（也可能是爬繩途中被打掉、位置跑掉了）-> 先走回去
         rt.pause_climb()
         if _check_stuck(rt, state.player, now, pat.stuck_px, pat.stuck_seconds):

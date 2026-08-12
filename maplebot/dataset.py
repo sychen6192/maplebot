@@ -20,7 +20,10 @@ import cv2
 import yaml
 
 from .teachers import TemplateTeacher, class_from_template_name  # noqa: F401
-from .vision.mobs import Mob
+from .vision import mob_hpbar
+from .vision.mobs import Mob, TemplateMobDetector
+from .vision.nametag import load_locator
+from .vision.outline_mobs import OutlineMobDetector
 
 IMG_EXTS = (".jpg", ".jpeg", ".png")
 
@@ -155,6 +158,94 @@ class PrepareResult:
     negatives: int = 0        # 沒有任何框的背景影像
     classes: List[str] = field(default_factory=list)
     yaml_path: str = ""
+
+
+def _overlaps(mob: Mob, rect: Tuple[int, int, int, int]) -> bool:
+    x, y, w, h = rect
+    return (abs(mob.cx - (x + w // 2)) <= (w + mob.w) // 2
+            and abs(mob.cy - (y + h // 2)) <= (h + mob.h) // 2)
+
+
+def autolabel_outline_dir(images_dir: str, black_level: int = 16,
+                          min_area: int = 150, max_area: int = 20000,
+                          close_kernel: int = 20, min_size: Tuple[int, int] = (12, 12),
+                          max_size: Tuple[int, int] = (160, 160),
+                          max_aspect: float = 3.2,
+                          player_box: Tuple[int, int] = (100, 140),
+                          ui_dir: str = "data/templates/ui",
+                          exclude: List[Tuple[int, int, int, int]] = None,
+                          class_name: str = "mob",
+                          templates_dir: str = "",
+                          template_threshold: float = 0.62,
+                          progress=None) -> AutoLabelResult:
+    """用**描邊偵測**當自動標註老師（不需要模板，換地圖直接能用）。
+
+    比模板老師通用：模板老師每換一張圖、每多一種怪都要重截模板，而描邊
+    偵測靠 sprite 的黑邊，對任何怪都成立。實測這張圖的紅寶/藍寶/綠水靈
+    /菇菇全部標得到。
+
+    這裡刻意把面積門檻放得比**執行時**寬鬆：標註寧可多標一點讓模型自己
+    學（漏標會教模型「這是背景」，比多標傷害大）。執行時的門檻要保守，
+    是因為誤判會讓角色對著地形猛揮。
+
+    角色自己用名牌定位挖掉；UI（小地圖、快捷鍵盤、公告）用 exclude 排除
+    ——它們固定出現在同一個位置，不排除的話模型會學成「那裡有隻怪」。
+
+    給了 templates_dir 就**同時**跑模板匹配並聯集起來（重疊的用 IoU 併掉）。
+    兩個老師的盲點剛好互補：描邊怕怪跟草叢黏在一起（黑邊連成一片被濾掉），
+    模板怕沒見過的動作幀；聯集的召回率明顯高於任一個。
+    """
+    det = OutlineMobDetector(black_level=black_level, min_area=min_area,
+                             max_area=max_area, close_kernel=close_kernel,
+                             player_box=player_box, min_size=min_size,
+                             max_size=max_size, max_aspect=max_aspect,
+                             auto_scale=True)
+    tpl = None
+    if templates_dir and os.path.isdir(templates_dir):
+        tpl = TemplateMobDetector(templates_dir, template_threshold)
+        if not tpl.templates:
+            tpl = None
+    nametag = load_locator(ui_dir)
+    rects = list(exclude or [])
+
+    res = AutoLabelResult(classes=[class_name])
+    paths = list_images(images_dir)
+    for index, path in enumerate(paths, 1):
+        if progress:
+            progress(index, len(paths), res.boxes)
+        img = cv2.imread(path, cv2.IMREAD_COLOR)
+        if img is None:
+            continue
+        res.images += 1
+        h, w = img.shape[:2]
+        det.frame_width = w
+        player_xy = nametag.locate(img, w / 790.0) if nametag else None
+        det.player_xy = player_xy
+        mobs = det.detect(img)
+        if tpl is not None:
+            extra = tpl.detect(img)
+            if player_xy is not None:
+                # 模板偵測沒有「挖掉角色」的機制，自己擋一次：角色被標成怪的話
+                # 模型會學成「看到角色就是怪」，執行時就對著自己猛揮
+                pw, ph = player_box
+                sc = w / 790.0
+                extra = [m for m in extra
+                         if abs(m.cx - player_xy[0]) > pw * sc / 2
+                         or abs(m.cy - player_xy[1]) > ph * sc / 2]
+            mobs = mob_hpbar.merge(mobs, extra)
+        mobs = [m for m in mobs if not any(_overlaps(m, r) for r in rects)]
+        lines = [yolo_line(0, m, w, h) for m in mobs]
+        with open(os.path.splitext(path)[0] + ".txt", "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + ("\n" if lines else ""))
+        if lines:
+            res.labeled += 1
+            res.boxes += len(lines)
+        else:
+            res.unlabeled_files.append(os.path.basename(path))
+
+    with open(os.path.join(images_dir, "classes.txt"), "w", encoding="utf-8") as f:
+        f.write(class_name + "\n")
+    return res
 
 
 def prepare_dataset(raw_dir: str, out_dir: str, val_fraction: float = 0.15,

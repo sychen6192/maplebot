@@ -39,6 +39,13 @@ MATCH_THRESHOLD = 0.85
 # 限制搜尋範圍同時省時間、也擋掉離譜的誤匹配。
 SEARCH_MARGIN = 0.15
 
+# 找到過一次之後，下一幀只搜上次位置附近這個半徑（以 790px 寬為基準）。
+# 角色一個 tick 走不到 30px（2560 畫面、8fps），60*scale 的窗綽綽有餘；
+# 搜尋面積從整個中央區掉到 ~1/8，matchTemplate 的成本跟著掉一個量級
+# ——實測 2560x1440 下 perceive 平均 81ms，這是最大的單一成本。
+# 局部沒中（名牌被怪擋住、鏡頭大跳）就退回全域搜尋，行為不變、只是變快。
+LOCAL_RADIUS = 60
+
 
 class NametagLocator:
     """載入一次模板，之後每幀用遮罩模板匹配找角色。"""
@@ -53,6 +60,25 @@ class NametagLocator:
         self.offset = offset
         self.threshold = threshold
         self.last_score = 0.0
+        # 上次命中的模板左上角（playfield 座標）——下一幀先搜這附近
+        self._last_hit: Optional[Tuple[int, int]] = None
+
+    def _match_in(self, playfield_bgr: np.ndarray, x0: int, y0: int,
+                  x1: int, y1: int) -> Optional[Tuple[int, int]]:
+        """在指定窗內做遮罩模板匹配；回傳模板左上角的 playfield 座標。"""
+        th, tw = self.template.shape[:2]
+        roi = cv2.cvtColor(playfield_bgr[y0:y1, x0:x1], cv2.COLOR_BGR2GRAY)
+        if roi.shape[0] < th or roi.shape[1] < tw:
+            return None
+        res = cv2.matchTemplate(roi, self.template, cv2.TM_SQDIFF_NORMED,
+                                mask=self.mask)
+        # 遮罩匹配在退化的區塊會算出 inf/nan，不清掉會被 minMaxLoc 選中
+        res = np.nan_to_num(res, nan=1.0, posinf=1.0, neginf=1.0)
+        diff, _, loc, _ = cv2.minMaxLoc(res)      # SQDIFF：越小越像
+        self.last_score = 1.0 - float(diff)
+        if self.last_score < self.threshold:
+            return None
+        return (x0 + loc[0], y0 + loc[1])
 
     def locate(self, playfield_bgr: np.ndarray,
                scale: float = 1.0) -> Optional[Tuple[int, int]]:
@@ -62,25 +88,24 @@ class NametagLocator:
         if h < th or w < tw:
             return None
 
-        x0 = int(w * SEARCH_MARGIN)
-        y0 = int(h * SEARCH_MARGIN)
-        x1 = max(w - x0, x0 + tw)
-        y1 = max(h - y0, y0 + th)
-        roi = cv2.cvtColor(playfield_bgr[y0:y1, x0:x1], cv2.COLOR_BGR2GRAY)
-        if roi.shape[0] < th or roi.shape[1] < tw:
+        hit = None
+        if self._last_hit is not None:
+            r = max(int(LOCAL_RADIUS * scale), 2 * max(tw, th))
+            lx, ly = self._last_hit
+            hit = self._match_in(playfield_bgr,
+                                 max(lx - r, 0), max(ly - r, 0),
+                                 min(lx + tw + r, w), min(ly + th + r, h))
+        if hit is None:
+            # 局部沒中（第一幀、名牌被擋、鏡頭大跳）-> 全域（畫面中央區）
+            x0 = int(w * SEARCH_MARGIN)
+            y0 = int(h * SEARCH_MARGIN)
+            hit = self._match_in(playfield_bgr, x0, y0,
+                                 max(w - x0, x0 + tw), max(h - y0, y0 + th))
+        self._last_hit = hit
+        if hit is None:
             return None
-
-        res = cv2.matchTemplate(roi, self.template, cv2.TM_SQDIFF_NORMED,
-                                mask=self.mask)
-        # 遮罩匹配在退化的區塊會算出 inf/nan，不清掉會被 minMaxLoc 選中
-        res = np.nan_to_num(res, nan=1.0, posinf=1.0, neginf=1.0)
-        diff, _, loc, _ = cv2.minMaxLoc(res)      # SQDIFF：越小越像
-        score = 1.0 - float(diff)
-        self.last_score = score
-        if score < self.threshold:
-            return None
-        cx = x0 + loc[0] + tw // 2 + int(round(self.offset[0] * scale))
-        cy = y0 + loc[1] + th // 2 + int(round(self.offset[1] * scale))
+        cx = hit[0] + tw // 2 + int(round(self.offset[0] * scale))
+        cy = hit[1] + th // 2 + int(round(self.offset[1] * scale))
         return (cx, cy)
 
 

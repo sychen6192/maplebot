@@ -167,3 +167,155 @@ def test_a_broken_report_does_not_break_the_run(tmp_path, shot):
     r.max_ticks = 2
     r.run()                                  # 不該丟例外
     assert r.status.running is False
+
+
+# ---- 黑屏：換圖淡出（短暫）vs 斷線（持續）----
+
+class _FadeCapture:
+    """前幾次 grab 正常（讓開場自檢過），之後全黑——模擬傳送門淡出/斷線。"""
+    method = "image"
+
+    def __init__(self, shot, black_from=3, black_until=10 ** 9):
+        self._img = cv2.imread(shot)
+        self._grabs = 0
+        self.black_from = black_from
+        self.black_until = black_until
+
+    @property
+    def size(self):
+        h, w = self._img.shape[:2]
+        return (w, h)
+
+    def grab(self, region=None):
+        self._grabs += 1
+        black = self.black_from <= self._grabs <= self.black_until
+        img = np.zeros_like(self._img) if black else self._img
+        if region is None:
+            return img.copy()
+        x, y, w, h = region
+        return img[y:y + h, x:x + w].copy()
+
+
+def test_a_brief_blackout_does_not_pause(tmp_path, shot):
+    """黑不滿門檻秒數（換圖淡出）絕不能把整晚掛機停在傳送門口。"""
+    r = _runner(tmp_path, shot, safety={"black_screen_seconds": 60.0})
+    r.capture = _FadeCapture(shot)          # 自檢後開始全黑
+    r.max_seconds = 0.8
+    r.run()
+    assert r.safety.paused is False
+
+
+def test_a_persistent_blackout_pauses(tmp_path, shot):
+    """黑超過門檻（斷線/當機）還是要暫停——緩衝不能把保護整個關掉。"""
+    r = _runner(tmp_path, shot, safety={"black_screen_seconds": 0.1})
+    r.capture = _FadeCapture(shot)
+    r.max_seconds = 1.5
+    r.run()
+    assert r.safety.paused is True
+
+
+def test_blackout_recovery_resumes_ticking(tmp_path, shot):
+    """黑幾幀後畫面回來（換圖完成）：不暫停、tick 繼續前進。"""
+    r = _runner(tmp_path, shot, safety={"black_screen_seconds": 60.0})
+    r.capture = _FadeCapture(shot, black_from=3, black_until=4)
+    r.max_seconds = 0.8
+    r.run()
+    assert r.safety.paused is False
+    assert r.stats.ticks > 2
+
+
+# ---- 死亡自動復活 ----
+
+class _StubCapture:
+    """會回報 origin 的擷取樁，記錄 focus 呼叫次數。"""
+    method = "image"
+    origin = (100, 200)
+    size = (300, 300)
+
+    def __init__(self):
+        self.focused = 0
+
+    def focus(self):
+        self.focused += 1
+        return True
+
+    def grab(self, region=None):
+        return np.zeros((200, 300, 3), dtype=np.uint8)
+
+
+def _dead_state():
+    from maplebot.brain.state import GameState
+    st = GameState(ts=0.0, hp=0.0, player=(50, 50))
+    st.revive_button = (150, 110)      # playfield 座標
+    return st
+
+
+def _live_runner(tmp_path, shot, **cfg_extra):
+    """dry_run=False 的 runner，換上會記錄點擊的鍵盤與會回報 origin 的擷取。"""
+    r = _runner(tmp_path, shot, **cfg_extra)
+    r.dry_run = False
+    r.executor.dry_run = False
+    r.backend = NullBackend()
+    r.kb = Keyboard(r.backend)
+    r.executor.kb = r.kb
+    r.capture = _StubCapture()
+    return r
+
+
+def test_revive_clicks_the_button_in_screen_coords(tmp_path, shot):
+    r = _live_runner(tmp_path, shot)
+    frame = np.zeros((200, 300, 3), dtype=np.uint8)
+    handled = r._handle_death(_dead_state(), frame, now=1.0)
+    assert handled is True
+    # origin(100,200) + playfield(0,80) + button(150,110) = (250, 390)
+    assert r.backend.clicks == [(250, 390)]
+    assert r.capture.focused >= 1
+
+
+def test_no_revive_button_is_a_noop(tmp_path, shot):
+    from maplebot.brain.state import GameState
+    r = _live_runner(tmp_path, shot)
+    st = GameState(ts=0.0, hp=0.0, player=(50, 50))    # 沒有 revive_button
+    assert r._handle_death(st, np.zeros((200, 300, 3), np.uint8), now=1.0) is False
+    assert r.backend.clicks == []
+
+
+def test_auto_revive_can_be_disabled(tmp_path, shot):
+    r = _live_runner(tmp_path, shot, safety={"auto_revive": False})
+    assert r._handle_death(_dead_state(), np.zeros((200, 300, 3), np.uint8), 1.0) is False
+    assert r.backend.clicks == []
+
+
+def test_too_many_deaths_triggers_panic_stop(tmp_path, shot):
+    r = _live_runner(tmp_path, shot, safety={"max_deaths": 3, "death_window_minutes": 10})
+    frame = np.zeros((200, 300, 3), dtype=np.uint8)
+    for i in range(2):
+        r._handle_death(_dead_state(), frame, now=float(i))
+        assert r.safety.stop is False       # 前兩次只復活，不停機
+    r._handle_death(_dead_state(), frame, now=2.0)
+    assert r.safety.stop is True            # 第三次熔斷停機
+    assert "max_deaths" in r._stop_reason
+
+
+def test_failed_revive_click_still_counts_toward_the_breaker(tmp_path, shot):
+    """點擊送不出去（提權不足/桌面鎖定）重試不會自己好：每次**嘗試**都要
+    計入熔斷。原本失敗路徑直接 return，對話框還在、下一幀又重來——警報
+    以幀率刷一整晚，max_deaths 永遠數不到。"""
+    r = _live_runner(tmp_path, shot, safety={"max_deaths": 3, "death_window_minutes": 10})
+    r.backend.click = lambda x, y: False        # 模擬 SetCursorPos 失敗
+    frame = np.zeros((200, 300, 3), dtype=np.uint8)
+    for i in range(2):
+        assert r._handle_death(_dead_state(), frame, now=float(i)) is True
+        assert r.safety.stop is False
+    r._handle_death(_dead_state(), frame, now=2.0)
+    assert r.safety.stop is True
+    assert "max_deaths" in r._stop_reason
+
+
+def test_old_deaths_fall_out_of_the_window(tmp_path, shot):
+    """死亡間隔夠久（超過視窗）就不該累積成熔斷——偶發死亡不算連環送死。"""
+    r = _live_runner(tmp_path, shot, safety={"max_deaths": 2, "death_window_minutes": 5})
+    frame = np.zeros((200, 300, 3), dtype=np.uint8)
+    r._handle_death(_dead_state(), frame, now=0.0)
+    r._handle_death(_dead_state(), frame, now=10 * 60.0)   # 10 分鐘後，早已出窗
+    assert r.safety.stop is False

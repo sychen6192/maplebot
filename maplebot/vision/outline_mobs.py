@@ -55,6 +55,11 @@ class OutlineMobDetector:
         # 角色在畫面上的位置（playfield 座標），由 Perceiver 每 tick 更新。
         # None = 沿用「角色在畫面正中央」的舊假設。
         self.player_xy: Optional[Tuple[int, int]] = None
+        # 門檻縮放的基準寬度。只給偵測器看搜尋框（mob_search_box）時，
+        # 怪的 sprite 大小取決於**整個遊戲畫面**的解析度，不是搜尋框的寬度：
+        # 2560 畫面裁 1000px 的框，怪還是 2560 尺度的大小。不設的話門檻會
+        # 按框寬縮（min_area 3150 變 480），雜訊全變成怪、大隻怪反而被丟掉。
+        self.frame_width: Optional[int] = None
         # 上一次偵測的篩選統計。「抓到的怪比想像中少」時，這才分得出是
         # 「黑色遮罩根本沒抓到」還是「抓到了但被門檻篩掉」——兩者要調的旋鈕不同。
         self.last_stats: dict = {}
@@ -85,7 +90,7 @@ class OutlineMobDetector:
             return []
         h, w = playfield_bgr.shape[:2]
         min_area, max_area, close_kernel, player_box, min_size, max_size = \
-            self._scaled(w)
+            self._scaled(self.frame_width or w)
 
         if self.black_level <= 0:
             mask = np.all(playfield_bgr == 0, axis=2)

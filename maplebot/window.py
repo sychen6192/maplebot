@@ -5,6 +5,7 @@
 - 螢幕座標擷取（mss，見 capture.py）：抓螢幕上那塊區域，會拍到擋在前面的視窗
 """
 import sys
+import time
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
@@ -202,6 +203,102 @@ def grab_client(win: GameWindow) -> Optional[np.ndarray]:
 def focus(win: GameWindow) -> None:
     if IS_WINDOWS:
         user32.SetForegroundWindow(win.hwnd)
+
+
+def window_process_elevated(hwnd: int) -> Optional[bool]:
+    """這個視窗所屬的行程有沒有提權（系統管理員）。查不到回 None。"""
+    if not IS_WINDOWS:
+        return None
+    try:
+        kernel32 = ctypes.windll.kernel32
+        advapi32 = ctypes.windll.advapi32
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if not pid.value:
+            return None
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        hproc = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,
+                                     False, pid.value)
+        if not hproc:
+            return None
+        try:
+            TOKEN_QUERY, TokenElevation = 0x0008, 20
+            token = wintypes.HANDLE()
+            if not advapi32.OpenProcessToken(hproc, TOKEN_QUERY,
+                                             ctypes.byref(token)):
+                return None
+            try:
+                elev = wintypes.DWORD()
+                ret = wintypes.DWORD()
+                if not advapi32.GetTokenInformation(
+                        token, TokenElevation, ctypes.byref(elev),
+                        ctypes.sizeof(elev), ctypes.byref(ret)):
+                    return None
+                return bool(elev.value)
+            finally:
+                kernel32.CloseHandle(token)
+        finally:
+            kernel32.CloseHandle(hproc)
+    except Exception:
+        return None
+
+
+def current_process_elevated() -> Optional[bool]:
+    """自己（Python）有沒有提權。"""
+    if not IS_WINDOWS:
+        return None
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return None
+
+
+def input_privilege_gap(hwnd: int) -> bool:
+    """遊戲提權了、我們沒有——SendInput 會被 UIPI **默默**丟掉的那種組合。
+
+    這是掛機失敗裡最惡毒的一種：SendInput 回報成功、log 一切正常，
+    遊戲卻一個鍵都收不到。角色站在原地被怪圍毆，藥也喝不下去。
+    """
+    return window_process_elevated(hwnd) is True and \
+        current_process_elevated() is False
+
+
+def bring_to_foreground(win: GameWindow) -> bool:
+    """把遊戲視窗帶到前景，回報有沒有成功。
+
+    SendInput 打進的是**前景**視窗。bot 從終端機/GUI 啟動時焦點在終端機上，
+    所有按鍵會打進終端機而不是遊戲——log 顯示一切正常、角色卻一步都沒動。
+    這跟 UIPI 被擋不一樣：SendInput 回報成功、failures 也是 0，完全無聲。
+
+    背景行程直接呼叫 SetForegroundWindow 會被 Windows 擋掉（防偷焦點），
+    擋掉時把自己的執行緒跟目前前景視窗的執行緒 AttachThreadInput 綁一起
+    再呼叫一次——這是視窗自動化的標準作法。
+    """
+    if not IS_WINDOWS:
+        return True
+    if user32.GetForegroundWindow() == win.hwnd:
+        return True
+    SW_RESTORE = 9
+    if user32.IsIconic(win.hwnd):
+        user32.ShowWindow(win.hwnd, SW_RESTORE)
+    user32.SetForegroundWindow(win.hwnd)
+    time.sleep(0.15)
+    if user32.GetForegroundWindow() == win.hwnd:
+        return True
+
+    fg = user32.GetForegroundWindow()
+    kernel32 = ctypes.windll.kernel32
+    fg_tid = user32.GetWindowThreadProcessId(fg, None)
+    my_tid = kernel32.GetCurrentThreadId()
+    attached = bool(user32.AttachThreadInput(my_tid, fg_tid, True)) if fg_tid else False
+    try:
+        user32.BringWindowToTop(win.hwnd)
+        user32.SetForegroundWindow(win.hwnd)
+    finally:
+        if attached:
+            user32.AttachThreadInput(my_tid, fg_tid, False)
+    time.sleep(0.15)
+    return user32.GetForegroundWindow() == win.hwnd
 
 
 def virtual_screen() -> Tuple[int, int, int, int]:

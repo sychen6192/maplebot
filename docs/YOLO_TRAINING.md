@@ -21,19 +21,33 @@
 標好，再訓練一個又快又小的 YOLO「學生」。**人工標註不是必要步驟**——它只是
 想再擠一點準度時的選配精修。
 
-老師有三種，挑一個：
+老師有這幾種：
 
 | 老師 | 指令 | 適合 |
 |---|---|---|
-| **描邊**（預設，免模板） | `tools/auto_pipeline.py` | **你現在就跑得動的那個偵測器**。不用截任何模板，換地圖直接標。代價：它不知道怪的種類，全部標成一類 `mob` |
-| **模板匹配** | `tools/auto_pipeline.py --teacher template` | 已經截過模板時用。楓谷 sprite 每幀像素幾乎相同，模板在這個場景很可靠，而且標出來有怪種資訊 |
-| **GroundingDINO**（大模型） | `tools/label_gdino.py` | 完全不想截模板、又想要語意標籤。但它是拿真實照片訓練的，對卡通 sprite 不保證認得——**先 `--test` 試一張** |
+| **描邊 ∪ 模板**（建議） | `tools/autolabel_outline.py` | 兩個老師聯集，盲點互補：描邊怕怪跟草叢黏在一起、模板怕沒見過的動作幀。**換地圖不用重截模板**（描邊對任何怪都成立），有模板就順便一起用。實測召回率明顯高於單一老師 |
+| **描邊**（預設，免模板） | `tools/auto_pipeline.py` | **你現在就跑得動的那個偵測器**，一行指令跑完標註→切分→訓練。不用截任何模板，換地圖直接標。代價：它不知道怪的種類，全部標成一類 `mob` |
+| **模板匹配** | `tools/auto_pipeline.py --teacher template` | 已經截過模板時用。楓谷 sprite 每幀像素幾乎相同，命中率很高，而且標出來有怪種資訊 |
+| **GroundingDINO**（大模型） | `tools/label_gdino.py` | 完全不想截模板、又想要語意標籤。但它是拿真實照片訓練的，對卡通 sprite 語意很模糊——實測標籤會混成 `"slime npc signboard"` 這種複合詞而被 reject 過濾掉。**先 `--test` 試一張** |
 
-最短路徑（描邊老師，一行指令跑完標註→切分→訓練）：
+兩條描邊路線的差別：`auto_pipeline.py` 走 `teachers.py` 的老師介面，偵測器由
+`make_detector` 依 config 建立（跟 bot 執行時同一個函式），還附 `--preview`
+看標註、`--check` 只標不練；`autolabel_outline.py` 是直接開參數的標註專用工具，
+多了模板聯集與 `--exclude`。
+
+最短路徑（描邊 ∪ 模板）：
 
 ```
-collect_dataset  ->  auto_pipeline  ->  改 config 部署
-（邊玩邊蒐集）       （自動標註+訓練，一鍵）  （貼兩行）
+collect_dataset  ->  autolabel_outline  ->  prepare_dataset  ->  train_yolo
+（邊玩邊蒐集）        （自動標註）            （切 train/val）      （訓練）
+```
+
+實測（弓箭手訓練場 I，2560x1440）：300 張圖標出 3236 個框（10.8 隻/張），
+`--exclude` 把小地圖、快捷鍵盤、公告那幾塊固定 UI 排掉——它們每幀都在同一個
+位置，不排除的話模型會把那裡學成一隻怪。
+
+```bash
+python tools/autolabel_outline.py --exclude 0,0,320,400 --exclude 1700,1130,859,182
 ```
 
 想用大模型老師就把中間換成 `label_gdino -> prepare_dataset -> train_yolo`。

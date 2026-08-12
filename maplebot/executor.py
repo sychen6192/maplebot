@@ -146,7 +146,19 @@ class Executor:
             return
 
         if isinstance(action, fsm.Climb):
-            if action.jump_key:
+            if action.jump_key and action.direction < 0:
+                # 跳抓：繩底懸空時站著按上抓不到，按住上、跳一下、繼續按住上
+                #（落到繩上那刻就會抓住）。在繩上時 fsm 不會再帶 jump_key。
+                self.log.info("跳抓繩子：按住 %s 跳（%s）再繼續往上",
+                              action.key, action.jump_key)
+                self.kb.press(action.key)
+                try:
+                    time.sleep(self._dur(0.08))
+                    self.kb.tap(action.jump_key, self._dur(0.12))
+                    time.sleep(self._dur(max(action.seconds, 0.35)))
+                finally:
+                    self.kb.release(action.key)
+            elif action.jump_key:
                 self.log.info("下跳平台：按住 %s 再跳（%s）", action.key, action.jump_key)
                 self.kb.press(action.key)
                 try:

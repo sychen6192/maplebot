@@ -52,13 +52,40 @@ def test_vision_failure_waits(cfg, profile):
 
 
 def test_critical_hp_panics_after_confirming(cfg, profile):
+    """低血要停機，但得先撐過搶救時間——停機本身不安全（角色會站著被打死）。"""
     rt = _rt()
     for _ in range(cfg.safety.critical_hp_frames - 1):
         assert not isinstance(fsm.decide(_state(hp=0.2), cfg, profile, rt, NOW, CENTER),
                               fsm.Panic)
-    action = fsm.decide(_state(hp=0.2), cfg, profile, rt, NOW, CENTER)
+    # 幀數夠了但時間還沒到：這段時間拿去灌藥搶救
+    assert not isinstance(fsm.decide(_state(hp=0.2), cfg, profile, rt, NOW, CENTER),
+                          fsm.Panic)
+    later = NOW + cfg.safety.critical_hp_seconds
+    action = fsm.decide(_state(hp=0.2), cfg, profile, rt, later, CENTER)
     assert isinstance(action, fsm.Panic)
     assert action.return_home is True   # 人可能回不來，該按回城卷
+
+
+def test_low_hp_is_treated_first_and_only_panics_if_it_does_not_recover(cfg, profile):
+    """血拉得回來就繼續打，不該因為「剛才低過」就停機。"""
+    rt = _rt()
+    fsm.decide(_state(hp=0.2), cfg, profile, rt, NOW, CENTER)
+    fsm.decide(_state(hp=0.2), cfg, profile, rt, NOW + 1, CENTER)
+    fsm.decide(_state(hp=0.8), cfg, profile, rt, NOW + 2, CENTER)      # 藥效上來了
+    # 再次掉到低血時計時要重來，不能沿用上一段的起點直接停機
+    action = fsm.decide(_state(hp=0.2), cfg, profile, rt,
+                        NOW + 2 + cfg.safety.critical_hp_seconds, CENTER)
+    assert not isinstance(action, fsm.Panic)
+
+
+def test_critical_hp_seconds_zero_keeps_the_old_frame_only_behaviour(cfg, profile):
+    """不想要搶救緩衝的人設 0 就回到原本「連續幾幀就停機」。"""
+    cfg.safety.critical_hp_seconds = 0.0
+    rt = _rt()
+    for _ in range(cfg.safety.critical_hp_frames - 1):
+        fsm.decide(_state(hp=0.2), cfg, profile, rt, NOW, CENTER)
+    assert isinstance(fsm.decide(_state(hp=0.2), cfg, profile, rt, NOW, CENTER),
+                      fsm.Panic)
 
 
 def test_single_bad_hp_reading_does_not_stop_the_bot(cfg, profile):
@@ -75,6 +102,7 @@ def test_single_bad_hp_reading_does_not_stop_the_bot(cfg, profile):
 
 def test_hp_frames_configurable(cfg, profile):
     cfg.safety.critical_hp_frames = 1        # 想要一幀就停也可以
+    cfg.safety.critical_hp_seconds = 0.0     # 連搶救緩衝也不要
     assert isinstance(fsm.decide(_state(hp=0.2), cfg, profile, _rt(), NOW, CENTER),
                       fsm.Panic)
 
@@ -450,13 +478,49 @@ def test_waypoint_without_y_ignores_height(cfg, profile):
     assert isinstance(action, fsm.Wait) and rt.wp_index == 1
 
 
+def test_waypoint_tolerance_override(cfg, profile):
+    """爬繩點的抓取窗口只有 ±1~2px：waypoint 可以覆寫 x 容差。
+    全域 tolerance=4 時 x 差 2 已算到位，但 tolerance: 1 的點要走到差 1 以內。"""
+    profile.patrol.waypoints = [Waypoint(40, y=20, tolerance=1)]
+    action = fsm.decide(_state(player=(42, 50)), cfg, profile, _rt(), NOW, CENTER)
+    assert isinstance(action, fsm.Move)          # 還差 2px：繼續對位
+    action = fsm.decide(_state(player=(41, 50)), cfg, profile, _rt(), NOW, CENTER)
+    assert isinstance(action, fsm.Climb)         # 差 1px：可以爬了
+
+
 def test_climbs_up_when_x_aligned_but_y_too_low(cfg, profile):
+    """起步的往上爬要帶跳：繩底常懸在半身高，站著按上永遠抓不到。"""
     profile.patrol.waypoints = [Waypoint(40, y=20)]
     rt = _rt()
     action = fsm.decide(_state(player=(41, 50)), cfg, profile, rt, NOW, CENTER)
     assert isinstance(action, fsm.Climb)
-    assert action.direction == -1 and action.key == "up" and action.jump_key == ""
+    assert action.direction == -1 and action.key == "up"
+    assert action.jump_key == profile.patrol.jump_key
     assert rt.climbing is True
+
+
+def test_climb_up_stops_jumping_once_moving(cfg, profile):
+    """已經離開起點高度＝抓著繩子在爬，就不要再跳——在繩上補跳會把角色
+    震下來（實測三層繩就是這樣無限循環的）。爬升途中短暫停滯也一樣不跳。"""
+    profile.patrol.waypoints = [Waypoint(40, y=20)]
+    rt = _rt()
+    fsm.decide(_state(player=(41, 50)), cfg, profile, rt, NOW, CENTER)
+    action = fsm.decide(_state(player=(41, 44)), cfg, profile, rt, NOW + 0.5, CENTER)
+    assert isinstance(action, fsm.Climb) and action.direction == -1
+    assert action.jump_key == ""
+    # 爬升途中 y 卡一拍（每步升幅本來就只比 stall_px 高一點）：耐心，不跳
+    action = fsm.decide(_state(player=(41, 44)), cfg, profile, rt, NOW + 1.0, CENTER)
+    assert isinstance(action, fsm.Climb) and action.jump_key == ""
+
+
+def test_climb_up_jumps_again_if_still_at_start_height(cfg, profile):
+    """跳了卻還停在起點高度＝根本沒抓到（或抓了又掉回地板），要再跳。"""
+    profile.patrol.waypoints = [Waypoint(40, y=20)]
+    rt = _rt()
+    fsm.decide(_state(player=(41, 50)), cfg, profile, rt, NOW, CENTER)
+    action = fsm.decide(_state(player=(41, 50)), cfg, profile, rt, NOW + 0.5, CENTER)
+    assert isinstance(action, fsm.Climb) and action.direction == -1
+    assert action.jump_key == profile.patrol.jump_key
 
 
 def test_descends_by_rope_by_default(cfg, profile):
@@ -808,6 +872,66 @@ def test_chase_off_by_default_keeps_the_old_behaviour():
                       mobs=[_mob_at(600, 300)])
     assert isinstance(fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300)),
                       fsm.Move)
+
+
+def test_chase_commitment_survives_detection_flicker():
+    """信心邊緣的怪一幀有一幀沒有：沒有承諾期的話，追擊和巡邏會每 tick
+    互搶方向（往左、往右、往左…），角色原地抖動，實測 150 秒只打了 2 刀。"""
+    cfg, p = AppCfg(), _chase_profile()
+    rt = fsm.Runtime()
+    st = GameState(ts=0.0, hp=1.0, mp=1.0, player=(70, 90),
+                   mobs=[_mob_at(280, 300)])             # 左邊的怪 -> 往左追
+    first = fsm.decide(st, cfg, p, rt, NOW, (400, 300))
+    assert isinstance(first, fsm.Chase) and first.direction == -1
+
+    # 下一幀怪閃沒了：承諾期內要照原方向繼續走，不能回頭照巡邏路線走掉
+    gone = GameState(ts=0.0, hp=1.0, mp=1.0, player=(70, 90), mobs=[])
+    action = fsm.decide(gone, cfg, p, rt, NOW + 0.13, (400, 300))
+    assert isinstance(action, fsm.Chase) and action.direction == -1
+
+    # 換一幀變成右邊有怪（偵測抖動/多隻交錯）：承諾期內方向也不變
+    swapped = GameState(ts=0.0, hp=1.0, mp=1.0, player=(70, 90),
+                        mobs=[_mob_at(600, 300)])
+    action = fsm.decide(swapped, cfg, p, rt, NOW + 0.26, (400, 300))
+    assert isinstance(action, fsm.Chase) and action.direction == -1
+
+
+def test_chase_stops_at_route_right_edge():
+    """追怪不能追出路線端點太多：訓練場 I 右邊 x≈245 是自動傳送門，
+    實測追擊一路衝過門把自己傳去隔壁圖。"""
+    cfg, p = AppCfg(), _chase_profile()          # 巡邏點 12..130
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(140, 90),
+                      mobs=[_mob_at(600, 300)])  # 右邊有怪，但已在邊界上
+    action = fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300))
+    assert isinstance(action, fsm.Move)
+
+
+def test_chase_stops_at_route_left_edge():
+    cfg, p = AppCfg(), _chase_profile()
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(2, 90),
+                      mobs=[_mob_at(100, 300)])  # 怪在畫面左側
+    action = fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300))
+    assert isinstance(action, fsm.Move)
+
+
+def test_chase_inside_bounds_still_works():
+    cfg, p = AppCfg(), _chase_profile()
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, player=(120, 90),
+                      mobs=[_mob_at(600, 300)])
+    action = fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300))
+    assert isinstance(action, fsm.Chase) and action.direction == 1
+
+
+def test_chase_commitment_expires_back_to_patrol():
+    cfg, p = AppCfg(), _chase_profile()
+    rt = fsm.Runtime()
+    st = GameState(ts=0.0, hp=1.0, mp=1.0, player=(70, 90),
+                   mobs=[_mob_at(280, 300)])
+    fsm.decide(st, cfg, p, rt, NOW, (400, 300))
+    gone = GameState(ts=0.0, hp=1.0, mp=1.0, player=(70, 90), mobs=[])
+    action = fsm.decide(gone, cfg, p, rt,
+                        NOW + fsm.CHASE_COMMIT_SECONDS + 0.1, (400, 300))
+    assert isinstance(action, fsm.Move)
 
 
 def test_attacking_still_wins_over_chasing():
