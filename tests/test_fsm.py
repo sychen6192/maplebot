@@ -1018,3 +1018,31 @@ def test_melee_class_never_backs_off():
                       mobs=[_mob_at(410, 300)])
     assert isinstance(fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300)),
                       fsm.Attack)
+
+
+# ---- 暫停期間不該算進「撐了幾秒」----
+
+def test_low_hp_rescue_window_is_not_eaten_by_a_pause(cfg, profile):
+    """暫停十分鐘再繼續，不能一恢復就停機——那段時間一口藥都沒按。
+
+    critical_hp_seconds 的意思是「連續搶救了這麼久還是拉不回來」，
+    衡量的必須是 bot 真的在跑的時間。用牆上時鐘的話，黑屏/暫停/自動復活
+    這些跳過 tick 的路徑會把搶救時間憑空用掉，正好跟這個機制想做的相反。
+    """
+    profile.potions = {"hp": PotionCfg(key="pageup", below_ratio=0.5, cooldown=1.0)}
+    rt = fsm.Runtime()
+    low = lambda: _state(hp=0.20)
+
+    for i in range(cfg.safety.critical_hp_frames):
+        assert not isinstance(fsm.decide(low(), cfg, profile, rt, NOW + i * 0.2, CENTER),
+                              fsm.Panic)
+
+    # runner 暫停了 300 秒；bot 時鐘只走了一個 tick 的量
+    resumed = NOW + 0.2 * cfg.safety.critical_hp_frames
+    action = fsm.decide(low(), cfg, profile, rt, resumed, CENTER)
+    assert not isinstance(action, fsm.Panic), "恢復後第一個 tick 就停機，搶救時間被暫停吃掉了"
+    assert isinstance(action, fsm.DrinkPotion)
+
+    # 真的連續撐了 critical_hp_seconds 還是低血，才該停機
+    late = NOW + cfg.safety.critical_hp_seconds + 0.1
+    assert isinstance(fsm.decide(low(), cfg, profile, rt, late, CENTER), fsm.Panic)

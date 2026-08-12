@@ -91,6 +91,11 @@ class Runner:
         self._perf_warned = False
         self._black_since: Optional[float] = None   # 畫面開始全黑的時間點
         self._deaths: list = []                     # 近期復活的時間戳（熔斷用）
+        # 決策層的計時器量的是「bot 真的在跑」的時間，不是牆上時鐘。暫停與
+        # 黑屏期間主迴圈整個跳過，沒有感知也沒有動作，那段時間不能算進
+        # 「低血撐了幾秒」「多久沒賺經驗」這類條件裡（見 _bot_clock）
+        self._offline_since: Optional[float] = None
+        self._offline_total: float = 0.0
 
     # ---- 小地圖自動定位（auto-maple corner-template 法）----
 
@@ -290,6 +295,33 @@ class Runner:
         self.log.warning("連續 %.0fs 找不到玩家位置，自動暫停（按 %s 繼續）",
                          self.cfg.safety.lost_player_timeout, self.cfg.safety.pause_key)
         self.safety.paused = True
+
+    # ---- bot 時鐘 ----
+
+    def _go_offline(self, at: float) -> None:
+        """主迴圈開始跳過 tick（暫停、黑屏）。"""
+        if self._offline_since is None:
+            self._offline_since = at
+
+    def _back_online(self, at: float) -> None:
+        """恢復跑 tick；把跳過的那段從決策層的時間軸上扣掉。
+
+        不扣的話，暫停十分鐘再繼續，「HP 低於危險線已經 600 秒」會在恢復的
+        第一個 tick 就成立——一口藥都還沒按就直接停機，正好跟 critical_hp_seconds
+        想做的搶救相反。同一個問題也會讓 exp_stall 與找不到玩家的 watchdog
+        一恢復就誤觸發。
+        """
+        if self._offline_since is not None:
+            self._offline_total += at - self._offline_since
+            self._offline_since = None
+
+    def _bot_clock(self, wall: float) -> float:
+        """牆上時鐘扣掉沒有在跑的時間。給 decide/executor/exp/watchdog 用。
+
+        max_runtime_minutes 與效能取樣仍然看牆上時鐘——那些問的是「現實過了
+        多久」，不是「bot 跑了多久」。
+        """
+        return wall - self._offline_total
 
     def _check_idle(self, action, now: float) -> None:
         """一直 Wait 代表某條規則擋著，不是程式當掉——但使用者從 log 看不出來，
@@ -513,16 +545,17 @@ class Runner:
                 # 燈號會一直停在「執行中」，看起來像按了沒反應
                 self.status.paused = self.safety.paused
                 if self.safety.paused:
+                    self._go_offline(loop_start)
                     self.executor.stop_movement()
                     self.kb.release_all()
                     time.sleep(0.2)
                     continue
 
-                now = time.monotonic()
-                if self._check_runtime_limit(now):
+                wall = time.monotonic()
+                if self._check_runtime_limit(wall):
                     break
                 with self.metrics.stage("monitor"):
-                    if self._check_system(now):
+                    if self._check_system(wall):
                         break
 
                 with self.metrics.stage("capture"):
@@ -531,13 +564,14 @@ class Runner:
                 if self.cfg.safety.black_screen_pause and is_black_screen(frame):
                     # 換圖（走進傳送門）的淡出也是全黑，一兩秒就過去——要黑得
                     # 夠久才當成斷線暫停，不然巡邏路過傳送門整晚就停在那了
+                    self._go_offline(wall)
                     if self._black_since is None:
-                        self._black_since = now
-                    if now - self._black_since >= self.cfg.safety.black_screen_seconds:
+                        self._black_since = wall
+                    if wall - self._black_since >= self.cfg.safety.black_screen_seconds:
                         save_anomaly(frame, "畫面全黑（斷線/換頻道/讀圖）", self.log)
                         self.alerts.ping("warn", "畫面全黑（斷線/換頻道/讀圖）")
                         self.log.warning("畫面持續全黑 %.0f 秒，自動暫停（按 %s 繼續）",
-                                         now - self._black_since,
+                                         wall - self._black_since,
                                          self.cfg.safety.pause_key)
                         self.safety.paused = True
                         self._black_since = None
@@ -547,8 +581,11 @@ class Runner:
                     continue
                 if self._black_since is not None:
                     self.log.info("畫面全黑 %.1f 秒後恢復（多半是走進傳送門換圖），繼續",
-                                  now - self._black_since)
+                                  wall - self._black_since)
                     self._black_since = None
+                # 走到這裡才是真的有在跑：暫停/黑屏那段從決策層的時間軸扣掉
+                self._back_online(wall)
+                now = self._bot_clock(wall)
 
                 with self.metrics.stage("perceive"):
                     state = self.perceiver.perceive(frame, now)
@@ -596,7 +633,7 @@ class Runner:
                 self._notice_attack_break()
                 self._notice_bar_glitch()
                 self._publish(state, action)
-                self._sample(state, now)
+                self._sample(state, wall)   # 圖表的時間軸是現實時間，跟 _started_mono 同基準
                 if self.preview is not None:
                     self.preview.show(frame, state, action, fps=self.metrics.fps,
                                       followers=self.perceiver.last_followers,

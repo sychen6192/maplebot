@@ -319,3 +319,38 @@ def test_old_deaths_fall_out_of_the_window(tmp_path, shot):
     r._handle_death(_dead_state(), frame, now=0.0)
     r._handle_death(_dead_state(), frame, now=10 * 60.0)   # 10 分鐘後，早已出窗
     assert r.safety.stop is False
+
+
+# ---- bot 時鐘：暫停/黑屏那段不能算進決策層的計時器 ----
+
+def test_bot_clock_excludes_paused_time(tmp_path, shot):
+    """暫停十分鐘再繼續，決策層看到的時間只該前進一點點。
+
+    不扣掉的話，恢復後的第一個 tick 就會同時滿足「低血撐了 600 秒」與
+    「10 分鐘沒賺經驗」——一口藥都還沒按、一隻怪都還沒打就停機或再暫停。
+    """
+    r = _runner(tmp_path, shot)
+
+    assert r._bot_clock(1000.0) == 1000.0      # 沒暫停過 = 就是牆上時鐘
+    r._go_offline(1000.0)
+    r._go_offline(1200.0)                      # 暫停期間重複呼叫不能重設起點
+    r._back_online(1600.0)
+    assert r._offline_total == pytest.approx(600.0)
+    assert r._bot_clock(1600.0) == pytest.approx(1000.0)
+
+    # 恢復後正常跑：bot 時鐘跟著牆上時鐘等速前進
+    assert r._bot_clock(1604.0) == pytest.approx(1004.0)
+
+    # 第二段暫停要累加，不是覆蓋
+    r._go_offline(1604.0)
+    r._back_online(1610.0)
+    assert r._bot_clock(1610.0) == pytest.approx(1004.0)
+
+
+def test_back_online_without_going_offline_is_a_noop(tmp_path, shot):
+    """每個 tick 都會呼叫 _back_online，沒暫停過時不能把時間軸弄歪。"""
+    r = _runner(tmp_path, shot)
+    r._back_online(1000.0)
+    r._back_online(2000.0)
+    assert r._offline_total == 0.0
+    assert r._bot_clock(2000.0) == 2000.0
