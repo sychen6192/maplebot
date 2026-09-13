@@ -61,6 +61,11 @@ class VisionCfg:
     # 同色地形打碎成幾十個「剛好像一個點」的小塊，max_dot_pixels 因此
     # 完全擋不到它（見 vision/minimap.py 的實測）。<=1 等於關掉。
     minimap_merge_gap: int = 3
+    # 大地圖的小地圖會跟著角色捲動，角色點於是一直待在中央附近——走過半張
+    # 地圖 minimap_xy 卻幾乎沒變，錄出來的巡邏路線是空的（issue #7）。
+    # 開著會量小地圖內容的捲動量並換算成穩定的地圖座標；不捲的地圖上是恆等
+    # 轉換（實測 120 幀漂移 0.00px），所以預設開著。
+    minimap_scroll: bool = True
     # 小地圖玩家點的偵測方式：color（顏色遮罩，零設定）| yolo（訓練好的模型）。
     # 對應商業版的 CC\yellow\ 模型——它為了這顆 4x4 的黃點專門訓練了一顆
     # 3M 參數的偵測器，因為顏色門檻在同色地形的地圖上不夠用。
@@ -473,6 +478,7 @@ def load_config(path: str, local_path: Optional[str] = None) -> AppCfg:
     vc.min_dot_pixels = int(v.get("min_dot_pixels", vc.min_dot_pixels))
     vc.max_dot_pixels = int(v.get("max_dot_pixels", vc.max_dot_pixels))
     vc.minimap_merge_gap = int(v.get("minimap_merge_gap", vc.minimap_merge_gap))
+    vc.minimap_scroll = bool(v.get("minimap_scroll", vc.minimap_scroll))
     vc.minimap_detector = str(v.get("minimap_detector", vc.minimap_detector)).lower()
     if vc.minimap_detector not in ("color", "yolo"):
         raise ConfigError(

@@ -117,6 +117,13 @@ def main() -> int:
               "幀找不到小地圖玩家點，路線可能不完整——"
               "先用 tools/debug_view.py --snapshot 確認小地圖 ROI")
 
+    scroll = perceiver.minimap_scroll
+    if scroll is not None and scroll.scrolling:
+        print(f"\n注意：{scroll.explain()}")
+        print("  這張地圖的小地圖放不下整張圖，會跟著角色捲動。已自動換算成"
+              "穩定的地圖座標，所以下面的巡邏點是對的——但它們**不是**小地圖"
+              "內的座標，可能超出小地圖寬度，那是正常的。")
+
     points = compress(rec.samples, tolerance=profile.patrol.tolerance,
                       y_tolerance=profile.patrol.y_tolerance,
                       jump_key=profile.patrol.jump_key)
@@ -125,6 +132,12 @@ def main() -> int:
     if len(points) < 2:
         print("只錄到不到 2 個點——要真的左右走到底才量得出巡邏範圍；"
               "跨距太小也可能是小地圖 ROI 框錯了")
+        if scroll is not None and not scroll.scrolling and scroll.travel > 0:
+            print(f"  （小地圖有量到 {scroll.travel:.0f}px 的輕微捲動但不到判定門檻。"
+                  "如果這張地圖的小地圖其實會捲，回報一下——門檻可能訂太高）")
+        elif scroll is None:
+            print("  （vision.minimap_scroll 是關的。大地圖的小地圖會跟著角色捲動，"
+                  "關掉的話走再遠座標都不會變，錄出來就是空的——見 issue #7）")
 
     block = to_yaml_block(points)
     print("\n把下面貼進 profile（取代原本的 patrol.waypoints）：\n")
