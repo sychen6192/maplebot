@@ -57,6 +57,27 @@ class VisionCfg:
     color_tolerance: int = 60
     min_dot_pixels: int = 2
     max_dot_pixels: int = 60          # 大於此面積的色塊視為地形而非玩家點
+    # 量面積之前先把相距這麼多 px 以內的同色像素接成一塊。嚴格比色會把
+    # 同色地形打碎成幾十個「剛好像一個點」的小塊，max_dot_pixels 因此
+    # 完全擋不到它（見 vision/minimap.py 的實測）。<=1 等於關掉。
+    minimap_merge_gap: int = 3
+    # 小地圖玩家點的偵測方式：color（顏色遮罩，零設定）| yolo（訓練好的模型）。
+    # 對應商業版的 CC\yellow\ 模型——它為了這顆 4x4 的黃點專門訓練了一顆
+    # 3M 參數的偵測器，因為顏色門檻在同色地形的地圖上不夠用。
+    minimap_detector: str = "color"
+    minimap_model: str = ""            # .pt 或 .onnx
+    minimap_confidence: float = 0.4
+    minimap_imgsz: int = 0             # 0 = 用 320（小地圖很小，640 只是更慢）
+    # --- 軌跡追蹤（見 vision/track.py）---
+    # 顏色偵測每一幀都在一堆長得差不多的候選裡賭一次，賭錯不是「這幀不動」，
+    # 是安靜地回報一個完全錯的位置。角色是連續移動的，跳點不是——所以改用
+    # 「離上一幀最近」而不是「分數最高」來挑，跳太遠的整批不信。
+    track_player: bool = True
+    minimap_max_jump_px: int = 12     # 小地圖座標系，不隨畫面縮放（小地圖本來就固定大小）
+    minimap_max_coast: int = 3        # 連續沿用幾幀還是沒有可信候選才承認跟丟
+    # 角色在 playfield 上的位置同理。以 790px 寬為基準，執行時縮放（ADR 0003）
+    screen_max_jump_px: int = 90
+    screen_max_coast: int = 3
     ui_templates_dir: str = field(default_factory=lambda: UI_TEMPLATES_DIR)
     minimap_border: int = 6           # auto 定位小地圖時向內縮的邊框厚度
     bar_colors: Dict[str, str] = field(default_factory=lambda: {"hp": "red", "mp": "blue", "exp": "yellow"})
@@ -94,6 +115,14 @@ class VisionCfg:
     # 整張圖其他地方最高 0.545、旁邊那位路人的名牌連 0.537 都不到。
     nametag_threshold: float = 0.70
     mob_match_threshold: float = 0.72
+    # 怪物模板比對是否用彩色（對應商業版的 td_set_use_color）。
+    # **預設關閉**，而且不是因為彩色比較差：彩色的「命中分數」本來就比灰階低
+    # （相關性攤在三個通道上算），量到同一隻怪灰階 0.9999、彩色 0.7826——
+    # 差距其實都很大（+0.82 / +0.63），是絕對分數的尺規不一樣。
+    # 直接改預設會讓既有的 mob_match_threshold: 0.72 突然變嚴，怪全部抓不到。
+    # 要開就順便重調門檻：先用 tools/debug_view.py --snapshot 看實際分數。
+    # （UI 模板不受這個開關管，它們一律彩色——那邊量得出來是大勝，見 vision/match.py）
+    mob_match_color: bool = False
     yolo_model: str = ""              # .pt 或 .onnx（ONNX 不需要 PyTorch，見 yolo_mobs.py）
     yolo_confidence: float = 0.5
     yolo_device: str = ""             # ""=自動；"cpu" / "0" / "cuda:1" 指定裝置
@@ -195,6 +224,19 @@ class AppCfg:
     # 校正當下的 client 區大小。視窗尺寸改了 regions 就全錯，開場先擋下來
     calibrated_for: Optional[Tuple[int, int]] = None
     fps: float = 8.0
+    # 擷取搬到背景執行緒（對應商業版 thread_debug_config.json 的 capture）。
+    # **預設關閉**：主迴圈的單執行緒模型好懂也好測，這是效能選項不是必需品。
+    thread_capture: bool = False
+    # 怪物偵測搬到背景執行緒（對應 thread_debug_config.json 的偵測那幾條）。
+    # 2560x1440 實測 perceive 共 392ms，其中 detector.detect 就佔 339ms（86%）。
+    # **預設關閉**：代價是框會舊一點，而「舊的框」比「沒有框」更難察覺。
+    thread_mobs: bool = False
+    # 背景算出來的框超過這麼舊就不用（秒）。跟 frame_max_age 同樣是安全線：
+    # 怪早就死了或走開了，bot 還對著空地揮。
+    mob_max_age: float = 1.0
+    # 背景擷取到的幀超過這麼舊就不給決策層用（秒）。這是安全線不是效能參數：
+    # 擷取執行緒卡住時，照著過期畫面繼續打比停一個 tick 危險得多。
+    frame_max_age: float = 0.5
     regions: Dict[str, Region] = field(default_factory=dict)
     minimap_auto: bool = False        # regions.minimap: auto 時用角落模板自動定位
     vision: VisionCfg = field(default_factory=VisionCfg)
@@ -398,7 +440,21 @@ def load_config(path: str, local_path: Optional[str] = None) -> AppCfg:
         if not (isinstance(size, (list, tuple)) and len(size) == 2):
             raise ConfigError(f"window.calibrated_for 要是 [寬, 高]，拿到: {size!r}")
         cfg.calibrated_for = (int(size[0]), int(size[1]))
-    cfg.fps = float(data.get("loop", {}).get("fps", cfg.fps))
+    loop = data.get("loop", {})
+    cfg.fps = float(loop.get("fps", cfg.fps))
+    threads = loop.get("threads") or {}
+    if not isinstance(threads, dict):
+        raise ConfigError(f"loop.threads 要是 mapping，拿到: {threads!r}")
+    cfg.thread_capture = bool(threads.get("capture", cfg.thread_capture))
+    cfg.thread_mobs = bool(threads.get("mobs", cfg.thread_mobs))
+    cfg.frame_max_age = float(loop.get("frame_max_age", cfg.frame_max_age))
+    if cfg.frame_max_age <= 0:
+        raise ConfigError(
+            f"loop.frame_max_age 必須是正數（秒），拿到: {cfg.frame_max_age!r}")
+    cfg.mob_max_age = float(loop.get("mob_max_age", cfg.mob_max_age))
+    if cfg.mob_max_age <= 0:
+        raise ConfigError(
+            f"loop.mob_max_age 必須是正數（秒），拿到: {cfg.mob_max_age!r}")
 
     regions = data.get("regions") or {}
     if not isinstance(regions, dict):
@@ -416,6 +472,21 @@ def load_config(path: str, local_path: Optional[str] = None) -> AppCfg:
     vc.color_tolerance = int(v.get("color_tolerance", vc.color_tolerance))
     vc.min_dot_pixels = int(v.get("min_dot_pixels", vc.min_dot_pixels))
     vc.max_dot_pixels = int(v.get("max_dot_pixels", vc.max_dot_pixels))
+    vc.minimap_merge_gap = int(v.get("minimap_merge_gap", vc.minimap_merge_gap))
+    vc.minimap_detector = str(v.get("minimap_detector", vc.minimap_detector)).lower()
+    if vc.minimap_detector not in ("color", "yolo"):
+        raise ConfigError(
+            f"vision.minimap_detector 只能是 color / yolo，拿到: {vc.minimap_detector!r}")
+    vc.minimap_model = str(v.get("minimap_model", vc.minimap_model))
+    vc.minimap_confidence = float(v.get("minimap_confidence", vc.minimap_confidence))
+    vc.minimap_imgsz = int(v.get("minimap_imgsz", vc.minimap_imgsz))
+    if vc.minimap_detector == "yolo" and not vc.minimap_model:
+        raise ConfigError("vision.minimap_detector=yolo 必須設定 vision.minimap_model")
+    vc.track_player = bool(v.get("track_player", vc.track_player))
+    vc.minimap_max_jump_px = int(v.get("minimap_max_jump_px", vc.minimap_max_jump_px))
+    vc.minimap_max_coast = int(v.get("minimap_max_coast", vc.minimap_max_coast))
+    vc.screen_max_jump_px = int(v.get("screen_max_jump_px", vc.screen_max_jump_px))
+    vc.screen_max_coast = int(v.get("screen_max_coast", vc.screen_max_coast))
     vc.ui_templates_dir = str(v.get("ui_templates_dir", vc.ui_templates_dir))
     vc.minimap_border = int(v.get("minimap_border", vc.minimap_border))
     vc.bar_colors.update(v.get("bars", {}))
@@ -448,6 +519,7 @@ def load_config(path: str, local_path: Optional[str] = None) -> AppCfg:
     vc.detect_hp_bars = bool(v.get("detect_hp_bars", vc.detect_hp_bars))
     vc.hp_bar_tolerance = int(v.get("hp_bar_tolerance", vc.hp_bar_tolerance))
     vc.mob_match_threshold = float(v.get("mob_match_threshold", vc.mob_match_threshold))
+    vc.mob_match_color = bool(v.get("mob_match_color", vc.mob_match_color))
     vc.yolo_model = str(v.get("yolo_model", vc.yolo_model))
     vc.yolo_confidence = float(v.get("yolo_confidence", vc.yolo_confidence))
     vc.yolo_device = str(v.get("yolo_device", vc.yolo_device))

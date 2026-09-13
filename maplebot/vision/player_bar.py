@@ -18,7 +18,7 @@
 純紅色、固定高度的細長條，用 HSV 遮罩加上幾何條件就能穩定抓到。抓不到就
 退回畫面中央（也就是原本的行為），所以沒組隊也不會壞掉。
 """
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -42,15 +42,15 @@ PLAYER_OFFSET = (12, 40)  # 從血條左上角到角色中心的位移
 MAX_OFFSET_RATIO = 0.35
 
 
-def find_player_bar(playfield_bgr: np.ndarray, scale: float = 1.0,
-                    mask_out=None) -> Optional[Tuple[int, int]]:
-    """回傳角色在 playfield 座標的中心位置；找不到回 None。
+def find_player_bar_candidates(playfield_bgr: np.ndarray, scale: float = 1.0,
+                               mask_out=None) -> List[Tuple[int, int, float]]:
+    """這一幀**所有**像組隊紅條的位置 `(x, y, score)`，score = 外框面積。
 
-    mask_out 是要先塗黑的矩形清單 [(x, y, w, h)]，用來蓋掉小地圖——
-    小地圖上的其他玩家紅點也是紅的。
+    跟 minimap.find_player_candidates 同樣的理由：產生與挑選分開，讓呼叫端
+    能用軌跡來挑（見 vision/track.py）。場景裡的紅色物件是靜止的，角色不是。
     """
     if playfield_bgr.size == 0:
-        return None
+        return []
     img = playfield_bgr
     if mask_out:
         img = img.copy()
@@ -68,22 +68,32 @@ def find_player_bar(playfield_bgr: np.ndarray, scale: float = 1.0,
     wmin, wmax = max(int(BAR_W[0] * scale), 2), max(int(BAR_W[1] * scale), 4)
     min_area = max(int(MIN_AREA * scale * scale), 4)
 
-    best = None
+    fh, fw = playfield_bgr.shape[:2]
+    out: List[Tuple[int, int, float]] = []
     for i in range(1, n):
         x, y, w, h, area = stats[i]
         if not (hmin <= h <= hmax and wmin <= w <= wmax):
             continue
         if area < min_area or area < MIN_FILL * w * h:
             continue
-        if best is None or w * h > best[2] * best[3]:
-            best = (x, y, w, h)
-    if best is None:
-        return None
+        px = int(x + PLAYER_OFFSET[0] * scale)
+        py = int(y + PLAYER_OFFSET[1] * scale)
+        if abs(px - fw // 2) > fw * MAX_OFFSET_RATIO or \
+                abs(py - fh // 2) > fh * MAX_OFFSET_RATIO:
+            continue           # 離中心太遠，多半是場景裡的紅色物件
+        out.append((px, py, float(w * h)))
+    return out
 
-    fh, fw = playfield_bgr.shape[:2]
-    px = int(best[0] + PLAYER_OFFSET[0] * scale)
-    py = int(best[1] + PLAYER_OFFSET[1] * scale)
-    if abs(px - fw // 2) > fw * MAX_OFFSET_RATIO or \
-            abs(py - fh // 2) > fh * MAX_OFFSET_RATIO:
-        return None            # 離中心太遠，多半是場景裡的紅色物件
-    return (px, py)
+
+def find_player_bar(playfield_bgr: np.ndarray, scale: float = 1.0,
+                    mask_out=None) -> Optional[Tuple[int, int]]:
+    """無狀態版本：回傳角色在 playfield 座標的中心位置；找不到回 None。
+
+    mask_out 是要先塗黑的矩形清單 [(x, y, w, h)]，用來蓋掉小地圖——
+    小地圖上的其他玩家紅點也是紅的。
+    """
+    cands = find_player_bar_candidates(playfield_bgr, scale, mask_out)
+    if not cands:
+        return None
+    x, y, _ = max(cands, key=lambda c: c[2])
+    return (x, y)

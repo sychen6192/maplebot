@@ -235,9 +235,29 @@ def test_shipped_default_yaml_has_no_dead_keys():
                 f"config/default.yaml 的 {section}.{key} 已經沒有對應的設定欄位了"
 
     assert set(doc.get("window") or {}) <= {"title", "capture", "calibrated_for"}
-    assert set(doc.get("loop") or {}) <= {"fps"}
+    assert set(doc.get("loop") or {}) <= {"fps", "threads", "frame_max_age", "mob_max_age"}
+    assert set((doc.get("loop") or {}).get("threads") or {}) <= {"capture", "mobs"}
     assert set(doc.get("advisor") or {}) <= {
         f.name for f in dataclasses.fields(AppCfg().advisor.__class__)}
+
+
+def test_loop_thread_keys_are_actually_read():
+    """loop.threads.capture / loop.frame_max_age 要真的進得了 AppCfg。
+
+    這是上面那個「死鍵」測試的另一半：鍵名對得上欄位不代表 load_config 有讀它。
+    被靜靜忽略的設定最難查——使用者以為開了，程式跑的是預設值。
+    """
+    import tempfile
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "c.yaml")
+        with open(p, "w", encoding="utf-8") as f:
+            f.write("loop:\n  fps: 12\n  frame_max_age: 1.25\n"
+                    "  threads:\n    capture: true\n")
+        cfg = load_config(p, local_path="/nonexistent")
+    assert cfg.fps == 12
+    assert cfg.thread_capture is True
+    assert cfg.frame_max_age == 1.25
 
 
 def test_shipped_default_yaml_agrees_with_the_code_default():

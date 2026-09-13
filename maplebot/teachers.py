@@ -25,12 +25,13 @@ from typing import List, Optional, Tuple
 import numpy as np
 
 from .config import REFERENCE_WIDTH
+from .vision import minimap as minimap_vision
 from .vision import nametag, player_bar, playfield
 from .vision.mobs import Mob, TemplateMobDetector, make_detector
 
 Labeled = List[Tuple[int, Mob]]     # [(類別編號, 框), ...]
 
-TEACHERS = ("outline", "template")
+TEACHERS = ("outline", "template", "minimap_dot")
 
 
 def class_from_template_name(name: str) -> str:
@@ -145,12 +146,82 @@ class OutlineTeacher:
         return out
 
 
+class MinimapDotTeacher:
+    """小地圖玩家點老師：**拿現在的顏色偵測來教，但只在它有把握的時候**。
+
+    這是整個 Phase 3 的關鍵設計。顏色偵測在大多數地圖上是對的，只在同色地形
+    的地圖上會壞（自由市場的黃地板）——而那正好是需要模型的地方。所以：
+    在顏色行得通的地圖上自動標註，訓出來的模型拿去跑顏色行不通的地圖。
+
+    **怎麼知道顏色這一幀有沒有把握**：看候選有幾個。只有一個候選 = 畫面上
+    沒有第二個東西跟玩家點同色 = 這個標註可信。有好幾個 = 這張地圖有同色
+    地形，顏色偵測是在賭——這種圖**整張跳過**，不產生標註。
+
+    寧可少標也不要標錯。teachers.py 開頭那句「老師抓不到的學生也學不到」
+    其實還有更糟的一半：**老師標錯的，學生會學得很牢**。自由市場那張圖如果
+    照標，等於拿「地板是玩家」去訓練。
+
+    框的大小用固定值而不是色塊的外接框：玩家點是遊戲畫的固定大小標記，
+    而色塊的外接框會隨 JPEG 雜訊與地圖底色抖動——固定框反而是更一致的真值。
+    """
+
+    def __init__(self, cfg, class_name: str = "player", box: int = 9):
+        self.cfg = cfg
+        self.vision = cfg.vision
+        self.classes = [class_name]
+        self.box = box
+        self.template = minimap_vision.load_player_template(self.vision)
+        self.images = 0
+        self.labeled = 0
+        self.ambiguous = 0          # 有好幾個候選、整張跳過的
+        self.empty = 0              # 一個候選都沒有的
+
+    def label(self, img: np.ndarray) -> Labeled:
+        """img 是**小地圖 ROI**，不是整個畫面。"""
+        self.images += 1
+        cands = minimap_vision.find_player_candidates(
+            img, self.vision, template=self.template)
+        if not cands:
+            self.empty += 1
+            return []
+        if len(cands) > 1:
+            # 顏色分不出來就不要教。這種圖正是模型該學會、而老師學不會的
+            self.ambiguous += 1
+            return []
+        x, y, _ = cands[0]
+        self.labeled += 1
+        return [(0, Mob(cx=int(x), cy=int(y), w=self.box, h=self.box,
+                        score=1.0, name=self.classes[0]))]
+
+    def reset(self) -> None:
+        self.images = self.labeled = self.ambiguous = self.empty = 0
+
+    def explain(self) -> str:
+        if not self.images:
+            return "尚未標註"
+        out = (f"小地圖玩家點：{self.images} 張 -> 標了 {self.labeled} 張"
+               f"（同色候選太多而跳過 {self.ambiguous}、完全找不到 {self.empty}）")
+        if self.template is not None:
+            out += "｜用 minimap_player.png 模板"
+        if self.ambiguous > self.labeled:
+            out += ("\n      過半的圖因為同色地形被跳過——那些正是模型該學的畫面，"
+                    "但老師教不了。先截一次玩家點模板讓老師有把握："
+                    "python tools/grab_template.py --dir data/templates/ui "
+                    "--name minimap_player")
+        if self.labeled and self.labeled < self.images * 0.3:
+            out += "\n      可用的標註偏少，多蒐集一些「沒有同色地形」的地圖畫面"
+        return out
+
+
 def make_teacher(kind: str, cfg, templates_dir: str = "",
                  threshold: Optional[float] = None, single_class: bool = False,
                  class_name: str = "mob", black_level: Optional[int] = None):
     """依名稱建立老師。cfg 是 AppCfg（描邊老師要用到 regions 與 vision）。"""
     if kind == "outline":
         return OutlineTeacher(cfg, class_name=class_name, black_level=black_level)
+    if kind == "minimap_dot":
+        return MinimapDotTeacher(cfg, class_name=class_name
+                                 if class_name != "mob" else "player")
     if kind == "template":
         if threshold is None:
             threshold = cfg.vision.mob_match_threshold

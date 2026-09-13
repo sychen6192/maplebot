@@ -53,8 +53,18 @@ def _nms(boxes: List[Tuple[int, int, int, int]], scores: List[float], iou_thr: f
 class TemplateMobDetector:
     MAX_RESULTS = 30
 
-    def __init__(self, templates_dir: str, threshold: float = 0.72):
+    def __init__(self, templates_dir: str, threshold: float = 0.72,
+                 use_color: bool = False):
+        """use_color 對應商業版 template_detector.dll 的 `td_set_use_color`。
+
+        怪的判別特徵常常就是顏色（同一隻史萊姆的綠、藍、紅版本在灰階下幾乎
+        一樣），轉灰階等於把它丟掉。**但預設仍是灰階**：彩色的命中分數天生
+        比灰階低（相關性攤在三通道上），實測同一隻怪灰階 0.9999、彩色 0.7826，
+        直接改預設會讓既有的 mob_match_threshold: 0.72 突然變嚴。開它的時候
+        要一起重調門檻。
+        """
         self.threshold = threshold
+        self.use_color = use_color
         self.templates: List[Tuple[str, np.ndarray]] = []
         pattern = os.path.join(templates_dir, "**", "*.png")
         for path in sorted(glob.glob(pattern, recursive=True)):
@@ -62,22 +72,23 @@ class TemplateMobDetector:
             if img is None:
                 continue
             name = os.path.splitext(os.path.basename(path))[0]
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            self.templates.append((name, gray))
-            self.templates.append((name, cv2.flip(gray, 1)))  # 怪物會左右轉向
+            tpl = img if use_color else cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            self.templates.append((name, tpl))
+            self.templates.append((name, cv2.flip(tpl, 1)))  # 怪物會左右轉向
 
     def detect(self, playfield_bgr: np.ndarray) -> List[Mob]:
         if not self.templates:
             return []
-        gray = cv2.cvtColor(playfield_bgr, cv2.COLOR_BGR2GRAY)
+        img = playfield_bgr if self.use_color \
+            else cv2.cvtColor(playfield_bgr, cv2.COLOR_BGR2GRAY)
         boxes: List[Tuple[int, int, int, int]] = []
         scores: List[float] = []
         names: List[str] = []
         for name, tpl in self.templates:
-            th, tw = tpl.shape
-            if gray.shape[0] < th or gray.shape[1] < tw:
+            th, tw = tpl.shape[:2]
+            if img.shape[0] < th or img.shape[1] < tw:
                 continue
-            res = cv2.matchTemplate(gray, tpl, cv2.TM_CCOEFF_NORMED)
+            res = cv2.matchTemplate(img, tpl, cv2.TM_CCOEFF_NORMED)
             ys, xs = np.where(res >= self.threshold)
             for x, y in zip(xs, ys):
                 boxes.append((int(x), int(y), tw, th))
@@ -128,4 +139,5 @@ def make_detector(vision_cfg, templates_dir: str, logger=None) -> MobDetector:
             max_width=vision_cfg.remote_max_width,
             logger=logger,
         )
-    return TemplateMobDetector(templates_dir, vision_cfg.mob_match_threshold)
+    return TemplateMobDetector(templates_dir, vision_cfg.mob_match_threshold,
+                               use_color=vision_cfg.mob_match_color)

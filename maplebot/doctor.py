@@ -308,3 +308,79 @@ def check_game_process(cfg) -> Check:
     return Check("遊戲行程監看", OK,
                  f"每 {cfg.monitor.interval:g} 秒檢查一次"
                  + ("，遊戲結束時自動停機" if cfg.monitor.stop_when_game_exits else ""))
+
+
+# 血條 ROI 框歪到什麼程度會讓讀值出錯。
+# 這個數字是照**症狀**量出來的，不是憑感覺訂的（fixture，hp_bar 寬 105）：
+#
+#   水平平移   讀值    誤差        垂直平移   讀值    誤差
+#      0      1.000   +0.000          2      1.000   +0.000
+#      5      0.952   +0.048          4      1.000   +0.000
+#     10      0.905   +0.095          6      1.000   +0.000
+#     20      0.810   +0.190          8      1.000   +0.000
+#
+# 關鍵發現：**只有水平方向會影響讀值**。bar_ratio 算的是「最右邊有填色的欄
+# 位置 / ROI 寬度」，所以 x 與寬度歪掉就直接變成比例誤差（誤差 ≈ 位移/寬度），
+# 而垂直歪掉只要還切到色條就完全不影響。用 IoU 判斷會同時被垂直方向拖累、
+# 又對水平方向不夠敏感——20px 的水平位移（讀值已經差 19%）IoU 還有 0.51。
+#
+# 0.10 是這樣訂的：喝藥門檻常設在 0.5/0.3，10% 的讀值誤差足以讓它提早或
+# 延後觸發；再小就開始被「自動偵測的框本來就比 ROI 大一兩 px」誤判。
+_BAR_MAX_RATIO_ERROR = 0.10
+
+
+def check_status_bars(cfg, frame) -> List[Check]:
+    """設定的 HP/MP/EXP ROI 跟畫面上自動找到的血條對得上嗎？
+
+    **為什麼要這一項**：`vision/statusbar.py` 的自動偵測早就寫好了，但一直
+    只有 `tools/calibrate.py` 在用——執行期完全沒有人拿它來對答案。於是
+    「ROI 平移之後讀到一個合理但錯的值」這種情況沒有任何東西擋得住：
+    框歪到外框上就永遠讀 100%（於是永遠不喝藥），框到底色就永遠讀 0%
+    （於是灌兩瓶藥再判定瀕死停機）。兩種都不會讓 bot 看起來壞掉，
+    使用者只會覺得「莫名其妙」。現有的開場自檢只擋得到後面那一種。
+
+    frame 是一張完整的遊戲畫面（client 區）。自動偵測認不出來時只警告不擋——
+    那可能只是這個客戶端的狀態列長得不一樣，不代表使用者的設定是錯的。
+    """
+    from .vision.statusbar import find_status_bars
+
+    found = find_status_bars(frame)
+    if not found:
+        return [Check("血條 ROI 交叉驗證", WARN, "畫面上自動找不到狀態列",
+                      "不一定是你的設定錯——也可能是這個客戶端的狀態列長得不一樣。"
+                      "用 python tools/debug_view.py --snapshot check.png 看一眼框在哪")]
+
+    out = []
+    for name in ("hp_bar", "mp_bar", "exp_bar"):
+        want, got = cfg.regions.get(name), found.get(name)
+        if want is None or got is None:
+            continue
+        wx, wy, ww, wh = want
+        gx, gy, gw, gh = got
+        # 讀值誤差 ≈ 左緣位移/寬度 + 寬度誤差/寬度（見上方量測）
+        err = (abs(wx - gx) + abs(ww - gw)) / float(max(gw, 1))
+        # 垂直方向不影響比例，但完全錯開就會讀成 0%——那是另一種症狀
+        missed = wy + wh <= gy or wy >= gy + gh
+
+        if missed:
+            out.append(Check(
+                f"{name} 位置", FAIL,
+                f"設定是 {tuple(want)}，但畫面上的血條在 {tuple(got)}：垂直完全錯開",
+                "ROI 整個沒框到色條，讀值會是 0%——灌兩瓶藥再判定瀕死停機。"
+                "執行 python tools/calibrate.py --write 重新框選"))
+        elif err > _BAR_MAX_RATIO_ERROR:
+            out.append(Check(
+                f"{name} 位置", FAIL,
+                f"設定是 {tuple(want)}，但畫面上的血條在 {tuple(got)}"
+                f"：水平差了 {abs(wx - gx)}px、寬度差 {abs(ww - gw)}px，"
+                f"讀值大約會偏 {err:.0%}",
+                "bar_ratio 算的是「最右邊有色的欄 / ROI 寬度」，所以水平框歪就是"
+                "直接的比例誤差。喝藥門檻常設在 50%/30%，這種偏差足以讓它提早或"
+                "延後觸發。執行 python tools/calibrate.py --write 重新框選"))
+        else:
+            out.append(Check(f"{name} 位置", OK,
+                             f"與自動偵測相符（讀值偏差約 {err:.0%}）"))
+    if not out:
+        out.append(Check("血條 ROI 交叉驗證", WARN, "設定裡沒有可比對的血條 ROI",
+                         "python tools/calibrate.py --write"))
+    return out
