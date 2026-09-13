@@ -18,6 +18,7 @@ from .vision.locate import PLAYER_NAME, load_ui_template
 from .vision.follower import FollowerFilter
 from .vision.mobs import MobDetector
 from .vision.outline_mobs import REFERENCE_WIDTH
+from .vision.track import PointTracker
 
 
 class Perceiver:
@@ -43,6 +44,13 @@ class Perceiver:
         ) if cfg.vision.filter_followers else None
         self._prev_player: Optional[tuple] = None
         self.last_followers: list = []      # 給 debug_view 畫出來用
+        # 位置的軌跡追蹤（見 vision/track.py）。單幀偵測分不出「真的點」與
+        # 「剛好長得像點的地形/UI」，但角色是連續移動的、那些東西不是。
+        # 關掉的話兩個 tracker 都設成 None，行為完全退回單幀取最強候選。
+        self._mm_track = PointTracker(cfg.vision.minimap_max_jump_px,
+                                      cfg.vision.minimap_max_coast) \
+            if cfg.vision.track_player else None
+        self._screen_track: Optional[PointTracker] = None   # scale 要等第一幀才知道
         # 被撞到時血條會閃，那一幀會讀成 0%——擋在這裡，別讓下游灌藥又停機
         self._bars = {
             name: status.BarFilter(cfg.vision.bar_max_drop,
@@ -72,7 +80,14 @@ class Perceiver:
         mm = self._slice(frame, "minimap")
         if mm is not None:
             st.minimap_size = (mm.shape[1], mm.shape[0])
-            st.minimap_xy = minimap.find_player(mm, vc, template=self.player_template)
+            cands = minimap.find_player_candidates(
+                mm, vc, template=self.player_template)
+            if self._mm_track is not None:
+                st.minimap_xy = self._mm_track.update(cands)
+                st.minimap_conf = self._mm_track.confidence
+            elif cands:
+                x, y, _ = max(cands, key=lambda c: c[2])
+                st.minimap_xy, st.minimap_conf = (x, y), 1.0
             st.other_players = minimap.find_others(mm, vc)
 
         for name, default_color in (("hp", "red"), ("mp", "blue"), ("exp", "yellow")):
@@ -89,11 +104,10 @@ class Perceiver:
             # 誤點）。HP=0 ＋ 對話框都在 = 雙重確認才會真的去點復活。
             if st.hp is not None and st.hp <= 0.02:
                 st.revive_button = revive.find_confirm_button(pf, scale)
-            if self.nametag is not None:
-                st.screen_xy = self.nametag.locate(pf, scale)
-            if st.screen_xy is None and vc.locate_player_bar:
-                st.screen_xy = player_bar.find_player_bar(
-                    pf, scale=scale, mask_out=self._overlays())
+            st.screen_xy = self._locate_character(pf, scale, vc)
+            st.screen_conf = (self._screen_track.confidence
+                              if self._screen_track is not None
+                              else (1.0 if st.screen_xy is not None else 0.0))
             interval = vc.mob_interval
             due = (interval <= 0 or self._mobs_ts is None
                    or now - self._mobs_ts >= interval)
@@ -128,6 +142,36 @@ class Perceiver:
                 self._mobs_ts = now
             st.mobs = self._mobs_cache
         return st
+
+    def _locate_character(self, pf: np.ndarray, scale: float,
+                          vc) -> Optional[tuple]:
+        """角色在 playfield 上的位置：名牌 -> 組隊紅條 -> 軌跡。
+
+        名牌自帶「上次命中點附近先搜」的區域搜尋，但那只是省時間；它跟紅條
+        都仍然可能在某一幀指到別的東西（名牌被怪擋住、場景裡有紅色物件）。
+        軌跡這一層管的是**跨幀**的合理性：一個 tick 跳半個畫面的位置不採信。
+        """
+        cands: list = []
+        if self.nametag is not None:
+            hit = self.nametag.locate(pf, scale)
+            if hit is not None:
+                # 名牌優先於紅條：分數給滿，沒有軌跡時它一定勝出
+                cands.append((hit[0], hit[1], float('inf')))
+        if not cands and vc.locate_player_bar:
+            cands = player_bar.find_player_bar_candidates(
+                pf, scale=scale, mask_out=self._overlays())
+
+        if not vc.track_player:
+            if not cands:
+                return None
+            x, y, _ = max(cands, key=lambda c: c[2])
+            return (x, y)
+
+        if self._screen_track is None:
+            self._screen_track = PointTracker(
+                vc.screen_max_jump_px * scale, vc.screen_max_coast)
+        xy = self._screen_track.update(cands)
+        return xy
 
     def _player_moved(self, player: Optional[tuple]) -> bool:
         """角色自上次計分後是否已在小地圖上移動夠遠。

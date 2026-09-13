@@ -21,6 +21,12 @@ class GameState:
     # 死亡復活對話框「確定」鈕的 playfield 座標。只在 HP≈0 時才偵測，
     # None = 沒死。Runner 看到它就點下去復活（見 vision/revive.py）
     revive_button: Optional[Tuple[int, int]] = None
+    # 這一幀的位置到底是「真的量到」還是「沿用上一幀」。1.0 = 剛量到，
+    # 往下遞減代表軌跡正在靠慣性撐著（見 vision/track.py）。
+    # 存在的理由：巡邏容忍沿用一兩幀，但「角色在畫面上哪裡」會被拿去挖掉
+    # 自己、對準攻擊範圍——沿用來的值愈舊愈不該當成事實。
+    minimap_conf: float = 0.0
+    screen_conf: float = 0.0
 
     @property
     def vision_ok(self) -> bool:

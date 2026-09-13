@@ -66,8 +66,18 @@ def _dot_blobs(mask: np.ndarray, min_px: int, max_px: int,
     return out
 
 
-def find_player(minimap_bgr: np.ndarray, cfg: VisionCfg,
-                template: Optional[np.ndarray] = None) -> Optional[Tuple[int, int]]:
+def find_player_candidates(minimap_bgr: np.ndarray, cfg: VisionCfg,
+                           template: Optional[np.ndarray] = None
+                           ) -> List[Tuple[int, int, float]]:
+    """這一幀**所有**可能是玩家點的位置 `(x, y, score)`。
+
+    產生候選與挑選候選分開，是為了讓呼叫端能用「上一幀在哪」來挑
+    （見 vision/track.py）——顏色偵測每一幀都在一堆長得差不多的東西裡賭，
+    只看單幀資訊本來就分不出來。
+
+    score 在同一次呼叫內是同一種量綱（模板路徑是比對分數 0~1，顏色路徑是
+    色塊面積），跨路徑之間不可比較，只用來在「還沒有軌跡」時挑一個起點。
+    """
     if template is not None and \
             minimap_bgr.shape[0] >= template.shape[0] and \
             minimap_bgr.shape[1] >= template.shape[1]:
@@ -75,14 +85,26 @@ def find_player(minimap_bgr: np.ndarray, cfg: VisionCfg,
         res = cv2.matchTemplate(gray, template, cv2.TM_CCOEFF_NORMED)
         _, score, _, loc = cv2.minMaxLoc(res)
         if score >= PLAYER_TEMPLATE_THRESHOLD:
-            return (loc[0] + template.shape[1] // 2, loc[1] + template.shape[0] // 2)
+            return [(loc[0] + template.shape[1] // 2,
+                     loc[1] + template.shape[0] // 2, float(score))]
 
     mask = _color_mask(minimap_bgr, cfg.minimap_player_rgb, cfg.color_tolerance)
-    blobs = _dot_blobs(mask, cfg.min_dot_pixels, cfg.max_dot_pixels,
-                       cfg.minimap_merge_gap)
-    if not blobs:
+    return [(x, y, float(area)) for x, y, area in
+            _dot_blobs(mask, cfg.min_dot_pixels, cfg.max_dot_pixels,
+                       cfg.minimap_merge_gap)]
+
+
+def find_player(minimap_bgr: np.ndarray, cfg: VisionCfg,
+                template: Optional[np.ndarray] = None) -> Optional[Tuple[int, int]]:
+    """無狀態版本：只看這一幀，取分數最高的候選。
+
+    Perceiver 走的是有軌跡的那條路（find_player_candidates + PointTracker）。
+    這個留給 tools/ 與只有一張圖可看的場合。
+    """
+    cands = find_player_candidates(minimap_bgr, cfg, template)
+    if not cands:
         return None
-    x, y, _ = max(blobs, key=lambda b: b[2])
+    x, y, _ = max(cands, key=lambda c: c[2])
     return (x, y)
 
 

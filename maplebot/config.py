@@ -61,6 +61,16 @@ class VisionCfg:
     # 同色地形打碎成幾十個「剛好像一個點」的小塊，max_dot_pixels 因此
     # 完全擋不到它（見 vision/minimap.py 的實測）。<=1 等於關掉。
     minimap_merge_gap: int = 3
+    # --- 軌跡追蹤（見 vision/track.py）---
+    # 顏色偵測每一幀都在一堆長得差不多的候選裡賭一次，賭錯不是「這幀不動」，
+    # 是安靜地回報一個完全錯的位置。角色是連續移動的，跳點不是——所以改用
+    # 「離上一幀最近」而不是「分數最高」來挑，跳太遠的整批不信。
+    track_player: bool = True
+    minimap_max_jump_px: int = 12     # 小地圖座標系，不隨畫面縮放（小地圖本來就固定大小）
+    minimap_max_coast: int = 3        # 連續沿用幾幀還是沒有可信候選才承認跟丟
+    # 角色在 playfield 上的位置同理。以 790px 寬為基準，執行時縮放（ADR 0003）
+    screen_max_jump_px: int = 90
+    screen_max_coast: int = 3
     ui_templates_dir: str = field(default_factory=lambda: UI_TEMPLATES_DIR)
     minimap_border: int = 6           # auto 定位小地圖時向內縮的邊框厚度
     bar_colors: Dict[str, str] = field(default_factory=lambda: {"hp": "red", "mp": "blue", "exp": "yellow"})
@@ -421,6 +431,11 @@ def load_config(path: str, local_path: Optional[str] = None) -> AppCfg:
     vc.min_dot_pixels = int(v.get("min_dot_pixels", vc.min_dot_pixels))
     vc.max_dot_pixels = int(v.get("max_dot_pixels", vc.max_dot_pixels))
     vc.minimap_merge_gap = int(v.get("minimap_merge_gap", vc.minimap_merge_gap))
+    vc.track_player = bool(v.get("track_player", vc.track_player))
+    vc.minimap_max_jump_px = int(v.get("minimap_max_jump_px", vc.minimap_max_jump_px))
+    vc.minimap_max_coast = int(v.get("minimap_max_coast", vc.minimap_max_coast))
+    vc.screen_max_jump_px = int(v.get("screen_max_jump_px", vc.screen_max_jump_px))
+    vc.screen_max_coast = int(v.get("screen_max_coast", vc.screen_max_coast))
     vc.ui_templates_dir = str(v.get("ui_templates_dir", vc.ui_templates_dir))
     vc.minimap_border = int(v.get("minimap_border", vc.minimap_border))
     vc.bar_colors.update(v.get("bars", {}))

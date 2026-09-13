@@ -41,6 +41,18 @@ vision:
   # 那時請改用模板：tools/grab_template.py --dir data/templates/ui \
   #   --name minimap_player
   minimap_merge_gap: 3                # <=1 關掉合併（舊行為）
+
+  # --- 位置的軌跡追蹤（見 maplebot/vision/track.py）---
+  # 顏色偵測每一幀都在一堆長得差不多的候選裡賭一次。賭錯的代價不是「這幀不動」，
+  # 是安靜地回報一個完全錯的位置，然後巡邏整晚走錯地方。角色是連續移動的、
+  # 地形跟 UI 文字不是——所以改用「離上一幀最近」而不是「面積最大」來挑，
+  # 跳太遠的整批不採信，先沿用舊值；連續撐不住才承認跟丟（回 None，交給
+  # lost_player_timeout 暫停 + 警報）。**跟丟會叫人，跳錯會安靜地錯一整晚。**
+  track_player: true
+  minimap_max_jump_px: 12   # 小地圖座標系。小地圖大小固定，所以這個值不隨畫面縮放
+  minimap_max_coast: 3      # 連續沿用幾幀還是沒有可信候選才承認跟丟
+  screen_max_jump_px: 90    # 角色在 playfield 上的位置，以 790px 寬為基準（會縮放）
+  screen_max_coast: 3
   ui_templates_dir: data/templates/ui # 小地圖角落/玩家點模板位置
   minimap_border: 6                   # auto 定位時向內縮的邊框厚度
   bars:                               # 各 bar 的顏色（見 vision/status.py 的 COLOR_PRESETS）

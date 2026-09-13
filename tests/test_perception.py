@@ -407,3 +407,71 @@ def test_ui_overlays_are_not_searched_for_mobs(cfg, frame):
     Perceiver(cfg, _Recorder()).perceive(frame, now=1.0)
     assert (seen["roi"][0:60, 0:120] == 128).all()     # 被塗掉了
     assert not (seen["roi"][0:60, 130:200] == 128).all()  # 框外沒被動到
+
+
+# --- 軌跡追蹤（見 vision/track.py）---
+
+class _BlindDet:
+    def detect(self, playfield):
+        return []
+
+
+def _with_dot(frame, mx, my):
+    """把小地圖黃點搬到 minimap ROI 內、重心落在 (mx, my)；None = 整顆拿掉。
+
+    minimap ROI 是 (10, 10, 60, 40)，3x3 的點重心在左上角 +1。
+    """
+    f = frame.copy()
+    f[28:31, 38:41] = (150, 190, 205)           # 擦掉原本的點
+    if mx is not None:
+        f[9 + my:12 + my, 9 + mx:12 + mx] = (0, 255, 255)
+    return f
+
+
+def test_a_far_candidate_cannot_steal_the_minimap_track(cfg, frame):
+    """玩家點被地形吞掉那一幀，不可以改口說角色在別的地方。
+
+    這是上一版修正留下的洞：地板碎塊合併之後，角色若站在地板上，它自己的
+    點也會一起被吞掉——find_player 於是回報次大的殘存候選，座標一口氣跳過
+    半張地圖，而下游沒有任何東西看得出那是假的。
+    """
+    p = Perceiver(cfg, _BlindDet())
+    for i in range(3):
+        st = p.perceive(_with_dot(frame, 29, 19), now=float(i))
+    assert st.minimap_xy == (29, 19) and st.minimap_conf == 1.0
+
+    # 角色點不見了，另一個候選在小地圖的另一角冒出來
+    st = p.perceive(_with_dot(frame, 3, 3), now=4.0)
+    assert st.minimap_xy == (29, 19), "跳了 26px 的候選不該被採信"
+    assert st.minimap_conf < 1.0, "沿用來的位置信心要降下來"
+
+
+def test_losing_the_dot_eventually_reports_lost_not_wrong(cfg, frame):
+    """撐不下去時要回 None（watchdog 會暫停 + 警報），不是回一個錯的位置。"""
+    cfg.vision.minimap_max_coast = 2
+    p = Perceiver(cfg, _BlindDet())
+    p.perceive(_with_dot(frame, 29, 19), now=0.0)
+    for i in range(2):
+        st = p.perceive(_with_dot(frame, None, None), now=float(i + 1))
+        assert st.minimap_xy == (29, 19)        # 先沿用
+    st = p.perceive(_with_dot(frame, None, None), now=9.0)
+    assert st.minimap_xy is None
+    assert not st.vision_ok                     # -> lost_player_timeout 接手
+
+
+def test_walking_is_followed_normally(cfg, frame):
+    """一步一步走不能被當成跳點——擋跳點不該讓正常移動也失效。"""
+    p = Perceiver(cfg, _BlindDet())
+    for step in range(0, 12, 2):
+        st = p.perceive(_with_dot(frame, 21 + step, 19), now=float(step))
+    assert st.minimap_xy == (31, 19)
+    assert st.minimap_conf == 1.0
+
+
+def test_tracking_can_be_turned_off(cfg, frame):
+    """留給「這招在我的地圖上反而更差」的人——關掉就退回單幀取最強候選。"""
+    cfg.vision.track_player = False
+    p = Perceiver(cfg, _BlindDet())
+    p.perceive(_with_dot(frame, 29, 19), now=0.0)
+    st = p.perceive(_with_dot(frame, 3, 3), now=1.0)
+    assert st.minimap_xy == (3, 3)              # 舊行為：直接改口

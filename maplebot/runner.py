@@ -85,6 +85,7 @@ class Runner:
         self._follower_warned = False
         self._attack_breaks = 0
         self._bar_warned = False
+        self._jump_warned = False
         self._started_wall = time.time()
         self._started_mono = time.monotonic()
         self._stop_reason = ""
@@ -365,6 +366,25 @@ class Runner:
             "血條讀值閃了一下（被撞到時的特效），已忽略——這種誤讀以前會被"
             "當成瀕死而停機。一直發生的話把 vision.bar_confirm_frames 調成 3")
 
+    def _notice_track_jumps(self) -> None:
+        """軌跡追蹤擋掉跳點時說一聲。
+
+        這是「小地圖座標本來會亂跳」的那個訊號。擋下來是對的，但它同時代表
+        **畫面上有東西長得跟玩家點一樣**——追蹤只擋得住跳，擋不住那個東西
+        剛好停在角色附近、或角色真的跟丟之後被它接手。會一直發生的地圖
+        （自由市場那種同色地板）該改用模板或訓練模型，不是繼續調門檻。
+        """
+        t = getattr(self.perceiver, "_mm_track", None)
+        if self._jump_warned or t is None or t.jumps == 0:
+            return
+        self._jump_warned = True
+        self.log.warning(
+            "小地圖上有 %d 次「候選點跳過半張地圖」被擋下來——這張地圖上有東西"
+            "跟玩家黃點同色（常見是自由市場那種黃地板）。目前靠軌跡撐著，但角色"
+            "真的跟丟時它會被那個東西接手。建議截一次玩家點模板："
+            "python tools/grab_template.py --dir data/templates/ui "
+            "--name minimap_player", t.jumps)
+
     def _notice_attack_break(self) -> None:
         """一直打同一個打不死的東西（寵物、隔著地形的怪）會被強制打斷。"""
         if self.rt.attack_breaks <= self._attack_breaks:
@@ -630,6 +650,7 @@ class Runner:
                         type(action).__name__, why)
                 self._check_idle(action, now)
                 self._notice_followers()
+                self._notice_track_jumps()
                 self._notice_attack_break()
                 self._notice_bar_glitch()
                 self._publish(state, action)
