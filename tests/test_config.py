@@ -235,8 +235,8 @@ def test_shipped_default_yaml_has_no_dead_keys():
                 f"config/default.yaml 的 {section}.{key} 已經沒有對應的設定欄位了"
 
     assert set(doc.get("window") or {}) <= {"title", "capture", "calibrated_for"}
-    assert set(doc.get("loop") or {}) <= {"fps", "threads", "frame_max_age"}
-    assert set((doc.get("loop") or {}).get("threads") or {}) <= {"capture"}
+    assert set(doc.get("loop") or {}) <= {"fps", "threads", "frame_max_age", "mob_max_age"}
+    assert set((doc.get("loop") or {}).get("threads") or {}) <= {"capture", "mobs"}
     assert set(doc.get("advisor") or {}) <= {
         f.name for f in dataclasses.fields(AppCfg().advisor.__class__)}
 

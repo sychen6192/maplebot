@@ -17,8 +17,8 @@ from .config import AppCfg, Profile
 from .control.input_win import Keyboard
 from .executor import Executor, Stats
 from .metrics import LoopMetrics, Series
-from .perception import Perceiver
-from .pipeline import FrameSource
+from .perception import MobJob, Perceiver
+from .pipeline import DetectorWorker, FrameSource
 from .progress import ExpTracker
 from .safety import LostPlayerWatchdog, Safety, is_black_screen, save_anomaly
 from .sysmon import SystemMonitor
@@ -76,6 +76,9 @@ class Runner:
         # 背景擷取（loop.threads.capture）。None = 主迴圈自己抓（預設）
         self.frames: Optional[FrameSource] = None
         self._stale_warned = False
+        # 背景怪物偵測（loop.threads.mobs）。None = 主迴圈自己偵測（預設）
+        self.mob_worker: Optional[DetectorWorker] = None
+        self._mob_stale_warned = False
 
         pf = cfg.region("playfield")
         self.playfield_center = (pf[2] // 2, pf[3] // 2)
@@ -565,6 +568,47 @@ class Runner:
         self.log.info("擷取改由背景執行緒負責（幀齡上限 %.2fs）",
                       self.cfg.frame_max_age)
 
+    def _start_mob_worker(self) -> None:
+        """把怪物偵測搬到背景執行緒（loop.threads.mobs: true 才會開）。
+
+        主迴圈負責「量位置」、worker 負責「找怪」：兩邊的分工不是隨便切的，
+        怪的框必須跟同一幀的角色位置綁在一起（見 perception.MobJob），
+        所以主迴圈把畫面與位置整包送進去，worker 不自己抓也不自己量。
+        """
+        if not self.cfg.thread_mobs:
+            return
+        self.mob_worker = DetectorWorker(self.perceiver.run_mob_job,
+                                         logger=self.log)
+        self.mob_worker.start()
+        self.perceiver.mob_source = self._latest_mobs
+        self.log.info("怪物偵測改由背景執行緒負責（框齡上限 %.2fs）",
+                      self.cfg.mob_max_age)
+
+    def _latest_mobs(self):
+        """給 Perceiver 取用背景算好的框；太舊就當作沒有。
+
+        舊的框比沒有框更難察覺：怪早就死了或走開了，bot 還對著空地揮，
+        而畫面上「看起來」一切正常。
+        """
+        snap, _ = self.mob_worker.latest()
+        if snap is None:
+            return None, 0.0
+        if time.monotonic() - snap.ts > self.cfg.mob_max_age:
+            return None, 0.0
+        return snap, snap.ts
+
+    def _notice_mob_lag(self, state) -> None:
+        """框一直很舊時說一聲——症狀是「打不到怪」但原因是偵測跟不上。"""
+        if self._mob_stale_warned or self.mob_worker is None:
+            return
+        if state.mobs_age <= self.cfg.mob_max_age * 0.8:
+            return
+        self._mob_stale_warned = True
+        self.log.warning(
+            "背景偵測跟不上：怪的框已經是 %.2f 秒前的畫面算的（上限 %.2fs）。"
+            "怪會打偏。設 vision.mob_search_box 只看角色周圍、或把 "
+            "loop.threads.mobs 設回 false", state.mobs_age, self.cfg.mob_max_age)
+
     def _next_frame(self) -> Optional[np.ndarray]:
         if self.frames is None:
             return self.capture.grab()
@@ -601,6 +645,7 @@ class Runner:
         self._focus_game()
         self._attach_game_process()
         self._start_frame_source()
+        self._start_mob_worker()
         self.advisor.start()
         self.status.running = True
         deadline = time.monotonic() + self.max_seconds if self.max_seconds else None
@@ -705,6 +750,12 @@ class Runner:
                         state.minimap_xy, len(state.mobs), len(state.other_players),
                         type(action).__name__, why)
                 self._check_idle(action, now)
+                if self.mob_worker is not None:
+                    # 位置是這一幀量的，畫面也是這一幀——整包送進去，
+                    # worker 那邊才不會拿到跨幀的組合
+                    self.mob_worker.submit(MobJob(frame, state.screen_xy,
+                                                  state.minimap_xy, now))
+                    self._notice_mob_lag(state)
                 self._notice_followers()
                 self._notice_track_jumps()
                 self._notice_attack_break()
@@ -748,6 +799,8 @@ class Runner:
             if not self._stop_reason and self.safety.stop:
                 self._stop_reason = f"使用者按下 {self.cfg.safety.stop_key} 停止"
             self.status.running = False
+            if self.mob_worker is not None:
+                self.mob_worker.stop()
             if self.frames is not None:
                 self.frames.stop()
             self.advisor.stop()

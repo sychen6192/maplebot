@@ -5,8 +5,8 @@
 區域超出畫面（視窗被縮小/校正錯誤）時對應欄位維持 None，
 由決策層與 watchdog 處理。
 """
-from dataclasses import replace
-from typing import Optional
+from dataclasses import dataclass, field, replace
+from typing import Callable, List, Optional, Tuple
 
 import numpy as np
 
@@ -20,6 +20,28 @@ from .vision.mobs import MobDetector
 from .vision.outline_mobs import REFERENCE_WIDTH
 from .vision.minimap_yolo import make_minimap_detector
 from .vision.track import PointTracker
+
+
+@dataclass
+class MobJob:
+    """送給偵測執行緒的一份工作：**同一幀**的畫面與那一幀量到的位置。
+
+    位置一定要跟畫面同一幀。怪的搜尋框以角色為中心、描邊偵測要照角色實際位置
+    把自己挖掉——兩者用到不同幀的位置時，挖掉「自己」會挖到空地，而角色本人
+    被當成一隻怪打整晚。
+    """
+    frame: object
+    screen_xy: Optional[Tuple[int, int]]
+    minimap_xy: Optional[Tuple[int, int]]
+    now: float
+
+
+@dataclass
+class MobSnapshot:
+    """一次偵測的結果。ts 是**來源那一幀**的時間，不是算完的時間。"""
+    mobs: List = field(default_factory=list)
+    followers: List = field(default_factory=list)
+    ts: float = 0.0
 
 
 class Perceiver:
@@ -47,6 +69,9 @@ class Perceiver:
         ) if cfg.vision.filter_followers else None
         self._prev_player: Optional[tuple] = None
         self.last_followers: list = []      # 給 debug_view 畫出來用
+        # 設了就改由外部（背景執行緒）供應怪的框，perceive 不再自己偵測。
+        # None = 主迴圈自己做（預設）。見 maplebot/pipeline.py
+        self.mob_source: Optional[Callable[[], Tuple[Optional[MobSnapshot], float]]] = None
         # 位置的軌跡追蹤（見 vision/track.py）。單幀偵測分不出「真的點」與
         # 「剛好長得像點的地形/UI」，但角色是連續移動的、那些東西不是。
         # 關掉的話兩個 tracker 都設成 None，行為完全退回單幀取最強候選。
@@ -110,39 +135,22 @@ class Perceiver:
             st.screen_conf = (self._screen_track.confidence
                               if self._screen_track is not None
                               else (1.0 if st.screen_xy is not None else 0.0))
-            interval = vc.mob_interval
-            due = (interval <= 0 or self._mobs_ts is None
-                   or now - self._mobs_ts >= interval)
-            if due:
-                roi, ox, oy = self._search_roi(pf, st.screen_xy)
-                roi = self._blank_overlays(roi, ox, oy)
-                # 描邊偵測要照**實際**的角色位置挖掉自己，不是畫面正中央
-                if hasattr(self.detector, "player_xy"):
-                    self.detector.player_xy = (
-                        (st.screen_xy[0] - ox, st.screen_xy[1] - oy)
-                        if st.screen_xy is not None else None)
-                # 門檻縮放要以**整個 playfield** 為基準：怪的 sprite 大小
-                # 跟遊戲解析度走，跟搜尋框多寬無關
-                if hasattr(self.detector, "frame_width"):
-                    self.detector.frame_width = pf.shape[1]
-                mobs = self.detector.detect(roi)
-                if vc.detect_hp_bars:
-                    # 怪物頭上的血條是遊戲畫的 UI，顏色固定、不用調門檻——
-                    # 專門補描邊偵測漏掉的那幾隻（見 vision/mob_hpbar.py）
-                    mobs = mob_hpbar.merge(mobs, mob_hpbar.find_hp_bars(
-                        roi, tolerance=vc.hp_bar_tolerance,
-                        scale=pf.shape[1] / REFERENCE_WIDTH))
-                if ox or oy:      # 換算回 playfield 座標
-                    mobs = [replace(m, cx=m.cx + ox, cy=m.cy + oy) for m in mobs]
-                if self._followers is not None:
-                    # 傳整個 playfield（不是搜尋框）給它量鏡頭位移：背景紋理越多越準
-                    mobs, self.last_followers = self._followers.filter(
-                        mobs, pf, self._player_moved(st.minimap_xy))
-                if st.screen_xy is not None:
-                    mobs = self._drop_self(mobs, st.screen_xy, pf.shape[1])
-                self._mobs_cache = mobs
-                self._mobs_ts = now
-            st.mobs = self._mobs_cache
+            if self.mob_source is None:
+                interval = vc.mob_interval
+                due = (interval <= 0 or self._mobs_ts is None
+                       or now - self._mobs_ts >= interval)
+                if due:
+                    self._mobs_cache = self._detect_mobs(
+                        pf, st.screen_xy, st.minimap_xy)
+                    self._mobs_ts = now
+                st.mobs = self._mobs_cache
+            else:
+                # 框由背景執行緒供應。它算的是**幾幀前**的畫面，所以要把幀齡
+                # 一起帶給下游——「兩隻怪」跟「半秒前有兩隻怪」不是同一件事
+                snap, _ = self.mob_source()
+                if snap is not None:
+                    st.mobs = snap.mobs
+                    st.mobs_age = max(now - snap.ts, 0.0)
         return st
 
     def _locate_character(self, pf: np.ndarray, scale: float,
@@ -174,6 +182,57 @@ class Perceiver:
                 vc.screen_max_jump_px * scale, vc.screen_max_coast)
         xy = self._screen_track.update(cands)
         return xy
+
+    def _detect_mobs(self, pf, screen_xy, minimap_xy) -> list:
+        """在一張 playfield 上找怪，回傳 playfield 座標的框。
+
+        `screen_xy` / `minimap_xy` 必須是**同一張 pf** 量到的（見 MobJob）。
+        這個方法會動到 detector 與 follower filter 的內部狀態，所以同一時間
+        只能有一個執行緒呼叫它——threads.mobs 開著時，那個執行緒是 worker，
+        主迴圈完全不碰。
+        """
+        vc = self.cfg.vision
+        roi, ox, oy = self._search_roi(pf, screen_xy)
+        roi = self._blank_overlays(roi, ox, oy)
+        # 描邊偵測要照**實際**的角色位置挖掉自己，不是畫面正中央
+        if hasattr(self.detector, "player_xy"):
+            self.detector.player_xy = (
+                (screen_xy[0] - ox, screen_xy[1] - oy)
+                if screen_xy is not None else None)
+        # 門檻縮放要以**整個 playfield** 為基準：怪的 sprite 大小
+        # 跟遊戲解析度走，跟搜尋框多寬無關
+        if hasattr(self.detector, "frame_width"):
+            self.detector.frame_width = pf.shape[1]
+        mobs = self.detector.detect(roi)
+        if vc.detect_hp_bars:
+            # 怪物頭上的血條是遊戲畫的 UI，顏色固定、不用調門檻——
+            # 專門補描邊偵測漏掉的那幾隻（見 vision/mob_hpbar.py）
+            mobs = mob_hpbar.merge(mobs, mob_hpbar.find_hp_bars(
+                roi, tolerance=vc.hp_bar_tolerance,
+                scale=pf.shape[1] / REFERENCE_WIDTH))
+        if ox or oy:      # 換算回 playfield 座標
+            mobs = [replace(m, cx=m.cx + ox, cy=m.cy + oy) for m in mobs]
+        if self._followers is not None:
+            # 傳整個 playfield（不是搜尋框）給它量鏡頭位移：背景紋理越多越準
+            mobs, self.last_followers = self._followers.filter(
+                mobs, pf, self._player_moved(minimap_xy))
+        if screen_xy is not None:
+            mobs = self._drop_self(mobs, screen_xy, pf.shape[1])
+        return mobs
+
+    def run_mob_job(self, job: MobJob) -> Optional[MobSnapshot]:
+        """背景執行緒的工作內容：把一份 MobJob 算成一批框。
+
+        刻意不自己去抓畫面、也不自己量角色位置——那兩件事已經由主迴圈在
+        同一幀上做完並包進 job 裡了。自己再量一次的話，框與角色位置會來自
+        不同幀（而且還要跟主迴圈搶定位器的內部狀態）。
+        """
+        pf = self._slice(job.frame, "playfield")
+        if pf is None:
+            return None
+        mobs = self._detect_mobs(pf, job.screen_xy, job.minimap_xy)
+        return MobSnapshot(mobs=mobs, followers=list(self.last_followers),
+                           ts=job.now)
 
     def _player_moved(self, player: Optional[tuple]) -> bool:
         """角色自上次計分後是否已在小地圖上移動夠遠。

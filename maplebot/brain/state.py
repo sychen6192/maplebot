@@ -27,6 +27,10 @@ class GameState:
     # 自己、對準攻擊範圍——沿用來的值愈舊愈不該當成事實。
     minimap_conf: float = 0.0
     screen_conf: float = 0.0
+    # 這批怪的框是幾秒前的畫面算出來的。0 = 就是這一幀（主迴圈自己偵測）。
+    # 偵測搬到背景執行緒時會 > 0——「有兩隻怪」跟「半秒前有兩隻怪」
+    # 不是同一件事，下游要分得出來。
+    mobs_age: float = 0.0
 
     @property
     def vision_ok(self) -> bool:

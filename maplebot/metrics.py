@@ -24,8 +24,11 @@ BLOCKING_STAGES = frozenset({"execute"})
 STAGE_HINTS: Dict[str, str] = {
     "capture": "擷取變慢通常是視窗太大或 window.capture 用 printwindow："
                "改小遊戲視窗，或在 config 設 window.capture: screen 比較快",
-    "perceive": "辨識變慢多半是怪物偵測：設 vision.mob_search_box（只看角色周圍）、"
-                "調高 vision.mob_interval 降低偵測頻率，或改用 yolo/onnx 路線",
+    "perceive": "辨識變慢幾乎一定是怪物偵測——2560x1440 實測 perceive 共 392ms，"
+                "其中 detector.detect 就佔 339ms（86%）。最有效的是把它搬到背景"
+                "執行緒（loop.threads.mobs: true，主迴圈剩約 53ms）；"
+                "其次是設 vision.mob_search_box 只看角色周圍、"
+                "調高 vision.mob_interval 降低頻率，或改用 yolo/onnx 路線",
     "decide": "決策是純函式，慢到會被看見很不尋常——請開 issue 附上這份報告",
     "monitor": "系統監看變慢代表 psutil 掃行程很吃力：調高 monitor.interval",
 }

@@ -167,57 +167,90 @@ def test_latest_starts_empty():
 
 
 # ---- DetectorWorker ----
+# 它吃「工作」而不是自己去抓畫面，因為怪的框必須跟同一幀的角色位置綁在一起。
 
 def test_the_worker_publishes_results():
-    src = _Source()
-    fs = FrameSource(src)
-    assert fs.start()
-    w = DetectorWorker(lambda f: int(f[0, 0, 0]), fs)
+    w = DetectorWorker(lambda job: job * 2)
     w.start()
     try:
-        assert _wait_for(lambda: w.result.get()[0] is not None)
-        assert w.result.get()[0] > 0
+        w.submit(21)
+        assert _wait_for(lambda: w.latest()[0] == 42)
     finally:
         w.stop()
-        fs.stop()
+
+
+def test_the_result_carries_the_jobs_timestamp_not_the_finish_time():
+    """下游要知道的是「這批框是哪一幀的」，不是「什麼時候算完的」。"""
+    clock = _Clock()
+    w = DetectorWorker(lambda job: job, clock=clock)
+    w.start()
+    try:
+        clock.t = 500.0
+        w.submit("a")
+        assert _wait_for(lambda: w.latest()[0] == "a")
+        clock.t = 900.0                       # 算完之後時間又走了很久
+        assert w.latest()[1] == 500.0         # 仍然是工作送進來的時間
+    finally:
+        w.stop()
+
+
+def test_a_new_job_replaces_one_that_has_not_started():
+    """排隊會累積延遲：算完的永遠是好幾輪前的畫面，而它看起來是新的。"""
+    gate = threading.Event()
+    w = DetectorWorker(lambda job: (gate.wait(2.0), job)[1])
+    w.start()
+    try:
+        w.submit("first")
+        assert _wait_for(lambda: w.dropped == 0)
+        for job in ("second", "third", "fourth"):
+            w.submit(job)
+        gate.set()
+        assert _wait_for(lambda: w.latest()[0] == "fourth")
+        assert w.dropped >= 2                 # 中間那幾份被蓋掉了
+    finally:
+        gate.set()
+        w.stop()
 
 
 def test_a_worker_error_does_not_kill_the_thread():
-    src = _Source()
-    fs = FrameSource(src)
-    assert fs.start()
+    """偵測炸掉不該讓執行緒死掉——死了主迴圈只會看到「怪永遠 0 隻」，
+    而那看起來跟「這張地圖沒怪」一模一樣。"""
     state = {"n": 0}
 
-    def flaky(frame):
+    def flaky(job):
         state["n"] += 1
         if state["n"] <= 2:
             raise RuntimeError("偵測炸了")
         return "ok"
 
-    w = DetectorWorker(flaky, fs)
+    w = DetectorWorker(flaky)
     w.start()
     try:
-        assert _wait_for(lambda: w.result.get()[0] == "ok")
+        for _ in range(3):
+            w.submit("job")
+            time.sleep(0.02)
+        assert _wait_for(lambda: w.latest()[0] == "ok")
         assert w.errors == 2
     finally:
         w.stop()
-        fs.stop()
 
 
-def test_the_worker_waits_instead_of_spinning_on_a_stale_source():
-    """來源沒有新畫面時，工作執行緒不該拿 None 去做事。"""
-    clock = _Clock()
-    src = _Source()
-    src.gate.clear()
-    fs = FrameSource(src, max_age=0.5, clock=clock)
-    fs.start(timeout=0.1)
+def test_no_work_happens_without_a_job():
     calls = []
-    w = DetectorWorker(lambda f: calls.append(1), fs)
+    w = DetectorWorker(lambda job: calls.append(job))
     w.start()
     try:
-        time.sleep(0.1)
+        time.sleep(0.12)
         assert calls == []
+        assert w.latest()[0] is None
     finally:
         w.stop()
-        src.gate.set()
-        fs.stop()
+
+
+def test_stopping_an_idle_worker_returns_promptly():
+    """停止不能等到下一次 poll——收工時多等半秒沒必要。"""
+    w = DetectorWorker(lambda job: job)
+    w.start()
+    t = time.monotonic()
+    w.stop()
+    assert time.monotonic() - t < 0.5

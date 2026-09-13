@@ -409,3 +409,75 @@ def test_frame_max_age_must_be_positive(tmp_path, shot):
     from maplebot.config import ConfigError
     with pytest.raises(ConfigError, match="frame_max_age"):
         _runner(tmp_path, shot, loop={"fps": 60, "frame_max_age": 0})
+
+
+# ---- 背景怪物偵測（loop.threads.mobs）----
+
+def test_mobs_are_detected_inline_by_default(tmp_path, shot):
+    r = _runner(tmp_path, shot)
+    r._start_mob_worker()
+    assert r.mob_worker is None
+    assert r.perceiver.mob_source is None
+
+
+def test_the_mob_worker_is_used_when_asked(tmp_path, shot):
+    r = _runner(tmp_path, shot, loop={"fps": 60, "threads": {"mobs": True}})
+    r._start_mob_worker()
+    try:
+        assert r.mob_worker is not None
+        assert r.perceiver.mob_source is not None
+    finally:
+        r.mob_worker.stop()
+
+
+def test_a_stale_snapshot_is_dropped(tmp_path, shot):
+    """舊的框比沒有框更難察覺：怪早就走開了，bot 還對著空地揮。"""
+    from maplebot.perception import MobSnapshot
+
+    r = _runner(tmp_path, shot, loop={"fps": 60, "threads": {"mobs": True},
+                                      "mob_max_age": 0.5})
+    r._start_mob_worker()
+    try:
+        r.mob_worker.result.put(MobSnapshot(mobs=["x"], ts=time.monotonic()), 0.0)
+        assert r._latest_mobs()[0] is not None
+
+        old = MobSnapshot(mobs=["x"], ts=time.monotonic() - 5.0)
+        r.mob_worker.result.put(old, 0.0)
+        assert r._latest_mobs()[0] is None
+    finally:
+        r.mob_worker.stop()
+
+
+def test_the_job_carries_this_frames_position(tmp_path, shot):
+    """送進 worker 的位置必須是**這一幀**量到的，不是上一輪留下的。"""
+    from maplebot.perception import MobJob
+
+    r = _runner(tmp_path, shot, loop={"fps": 60, "threads": {"mobs": True}})
+    r._start_mob_worker()
+    sent = []
+    r.mob_worker.submit = lambda job: sent.append(job)
+    try:
+        frame = r.capture.grab()
+        state = r.perceiver.perceive(frame, 1.0)
+        r.mob_worker.submit(MobJob(frame, state.screen_xy, state.minimap_xy, 1.0))
+        assert sent and sent[0].screen_xy == state.screen_xy
+        assert sent[0].minimap_xy == state.minimap_xy
+        assert sent[0].frame is frame
+    finally:
+        r.mob_worker.stop()
+
+
+def test_mob_max_age_must_be_positive(tmp_path, shot):
+    """0 或負數會讓每一批框都被判太舊，怪永遠是 0 隻——設定時就擋下來。"""
+    from maplebot.config import ConfigError
+    with pytest.raises(ConfigError, match="mob_max_age"):
+        _runner(tmp_path, shot, loop={"fps": 60, "mob_max_age": 0})
+
+
+def test_the_worker_is_stopped_on_shutdown(tmp_path, shot):
+    r = _runner(tmp_path, shot, loop={"fps": 60, "threads": {"mobs": True}},
+                safety={"max_runtime_minutes": 0})
+    r.max_ticks = 2
+    r.run()
+    assert r.mob_worker is not None
+    assert r.mob_worker._thread is None      # 收工時有被 join 掉
