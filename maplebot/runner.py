@@ -8,6 +8,7 @@ from typing import Optional, Tuple
 
 import numpy as np
 
+from . import doctor
 from . import report as report_mod
 from .alerts import Alerts
 from .brain import fsm
@@ -178,6 +179,14 @@ class Runner:
                 "再重跑 tools/calibrate.py 只框紅色血條本體。"
                 "已存一張畫面到 logs/anomalies/ 方便對照")
             return False
+        for chk in doctor.check_status_bars(self.cfg, frame):
+            if chk.status == doctor.FAIL:
+                save_anomaly(frame, f"開場自檢：{chk.name}", self.log)
+                self.log.error("%s：%s。%s", chk.name, chk.detail, chk.fix)
+                return False
+            if chk.status == doctor.WARN:
+                self.log.warning("%s：%s。%s", chk.name, chk.detail, chk.fix)
+
         if state.minimap_xy is None:
             self.log.warning("開場找不到小地圖玩家黃點——確認 regions.minimap 只框地圖畫布本體，"
                              "或調整 vision.color_tolerance。先照跑，但巡邏可能不會動")

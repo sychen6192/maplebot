@@ -2,6 +2,7 @@
 
   python tools/doctor.py
   python tools/doctor.py --profile config/profiles/multilevel.yaml
+  python tools/doctor.py --source shot.png    # 順便用一張截圖驗血條 ROI
 
 有任何 ❌ 就回傳 exit code 1，方便寫進批次檔或 CI。
 檢查邏輯全在 maplebot/doctor.py（純函式、有測試），這裡只負責印。
@@ -37,6 +38,9 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="maplebot 環境自檢")
     p.add_argument("--config", default="config/default.yaml")
     p.add_argument("--profile", default="config/profiles/example.yaml")
+    p.add_argument("--source", default="",
+                   help="一張遊戲截圖：拿來跟設定的血條 ROI 對答案。"
+                        "留空就跳過（那項檢查需要真的畫面）")
     args = p.parse_args(argv)
 
     rep = doctor.Report()
@@ -76,6 +80,18 @@ def main(argv=None) -> int:
         print("  " + rep.add(doctor.Check("Profile", doctor.OK, profile.name)).line())
         for c in doctor.check_profile(profile, cfg.safety.critical_hp_ratio):
             print("  " + rep.add(c).line())
+
+    if args.source:
+        _section("辨識（用 --source 的截圖驗）")
+        import cv2
+        shot = cv2.imread(args.source, cv2.IMREAD_COLOR)
+        if shot is None:
+            print("  " + rep.add(doctor.Check(
+                "截圖", doctor.FAIL, f"讀不到 {args.source}",
+                "確認路徑；用 tools/debug_view.py --snapshot 可以存一張")).line())
+        else:
+            for c in doctor.check_status_bars(cfg, shot):
+                print("  " + rep.add(c).line())
 
     window_checks = doctor.check_window(cfg)
     if window_checks:

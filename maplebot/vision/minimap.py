@@ -13,6 +13,7 @@ import cv2
 import numpy as np
 
 from ..config import VisionCfg
+from . import match
 
 PLAYER_TEMPLATE_THRESHOLD = 0.75
 
@@ -78,15 +79,13 @@ def find_player_candidates(minimap_bgr: np.ndarray, cfg: VisionCfg,
     score 在同一次呼叫內是同一種量綱（模板路徑是比對分數 0~1，顏色路徑是
     色塊面積），跨路徑之間不可比較，只用來在「還沒有軌跡」時挑一個起點。
     """
-    if template is not None and \
-            minimap_bgr.shape[0] >= template.shape[0] and \
-            minimap_bgr.shape[1] >= template.shape[1]:
-        gray = cv2.cvtColor(minimap_bgr, cv2.COLOR_BGR2GRAY)
-        res = cv2.matchTemplate(gray, template, cv2.TM_CCOEFF_NORMED)
-        _, score, _, loc = cv2.minMaxLoc(res)
-        if score >= PLAYER_TEMPLATE_THRESHOLD:
-            return [(loc[0] + template.shape[1] // 2,
-                     loc[1] + template.shape[0] // 2, float(score))]
+    if template is not None:
+        # 彩色比對：玩家黃點跟其他玩家紅點、傳送門藍點在灰階下差不多一樣亮，
+        # 比彩色跟背景的差距從 +0.055 拉到 +0.36（見 vision/match.py）
+        hit = match.match(minimap_bgr, template)
+        if hit is not None and hit[0] >= PLAYER_TEMPLATE_THRESHOLD:
+            return [(hit[1][0] + template.shape[1] // 2,
+                     hit[1][1] + template.shape[0] // 2, float(hit[0]))]
 
     mask = _color_mask(minimap_bgr, cfg.minimap_player_rgb, cfg.color_tolerance)
     return [(x, y, float(area)) for x, y, area in

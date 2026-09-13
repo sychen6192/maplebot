@@ -146,6 +146,14 @@ vision:
   locate_player_bar: true
 
   mob_match_threshold: 0.72   # template 模式用
+  # 怪物模板比對是否用彩色（對應商業版 template_detector.dll 的 td_set_use_color）。
+  # **預設關閉**，而且不是因為彩色比較差：彩色的命中分數本來就比灰階低
+  # （相關性攤在三個通道上算），實測同一隻怪灰階 0.9999、彩色 0.7826——
+  # 跟背景的差距其實兩邊都很大（+0.82 / +0.63），只是絕對分數的尺規不一樣。
+  # 直接改預設會讓上面那個 0.72 突然變嚴，怪全部抓不到。要開就一起重調門檻。
+  # （小地圖/UI 模板不受這個開關管，那邊一律彩色——量得出來是大勝，
+  #   跟背景的差距從 +0.055 拉到 +0.36，見 maplebot/vision/match.py）
+  mob_match_color: false
   yolo_model: ""                      # mob_detector=yolo 時填訓練好的 .pt 路徑
   yolo_confidence: 0.5                # yolo 與 remote 共用的信心門檻
   remote_endpoint: ""                 # 例: "http://192.168.1.50:8100/detect"

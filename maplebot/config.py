@@ -108,6 +108,14 @@ class VisionCfg:
     # 整張圖其他地方最高 0.545、旁邊那位路人的名牌連 0.537 都不到。
     nametag_threshold: float = 0.70
     mob_match_threshold: float = 0.72
+    # 怪物模板比對是否用彩色（對應商業版的 td_set_use_color）。
+    # **預設關閉**，而且不是因為彩色比較差：彩色的「命中分數」本來就比灰階低
+    # （相關性攤在三個通道上算），量到同一隻怪灰階 0.9999、彩色 0.7826——
+    # 差距其實都很大（+0.82 / +0.63），是絕對分數的尺規不一樣。
+    # 直接改預設會讓既有的 mob_match_threshold: 0.72 突然變嚴，怪全部抓不到。
+    # 要開就順便重調門檻：先用 tools/debug_view.py --snapshot 看實際分數。
+    # （UI 模板不受這個開關管，它們一律彩色——那邊量得出來是大勝，見 vision/match.py）
+    mob_match_color: bool = False
     yolo_model: str = ""              # .pt 或 .onnx（ONNX 不需要 PyTorch，見 yolo_mobs.py）
     yolo_confidence: float = 0.5
     yolo_device: str = ""             # ""=自動；"cpu" / "0" / "cuda:1" 指定裝置
@@ -468,6 +476,7 @@ def load_config(path: str, local_path: Optional[str] = None) -> AppCfg:
     vc.detect_hp_bars = bool(v.get("detect_hp_bars", vc.detect_hp_bars))
     vc.hp_bar_tolerance = int(v.get("hp_bar_tolerance", vc.hp_bar_tolerance))
     vc.mob_match_threshold = float(v.get("mob_match_threshold", vc.mob_match_threshold))
+    vc.mob_match_color = bool(v.get("mob_match_color", vc.mob_match_color))
     vc.yolo_model = str(v.get("yolo_model", vc.yolo_model))
     vc.yolo_confidence = float(v.get("yolo_confidence", vc.yolo_confidence))
     vc.yolo_device = str(v.get("yolo_device", vc.yolo_device))
