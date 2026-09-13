@@ -62,3 +62,56 @@ def test_find_two_other_players():
 
 def test_others_empty_when_clean():
     assert find_others(_minimap(), VisionCfg()) == []
+
+
+def test_real_frame_player_dot_not_on_yellow_floor(fixture_frame):
+    """真實截圖：黃色地板不可以贏過玩家點。
+
+    合成版的 test_terrain_blob_not_mistaken_for_player 沒抓到這個 bug，因為
+    它把地形畫成一整塊乾淨的黃色——那種地形 max_dot_pixels 本來就擋得掉。
+    真實畫面的地板有紋理，嚴格比色會把它打碎成 89 個 1~21px 的小塊，每一塊
+    都「剛好像一個點」，而真正的玩家點只有 5px。於是面積上限一次都沒生效，
+    「取最大的」必然挑到地板：修好之前這裡回報 (11, 45)，人其實在 (95, 11)。
+    """
+    from maplebot.config import load_config
+
+    cfg = load_config("config/default.yaml", local_path="/nonexistent")
+    x, y, w, h = cfg.regions["minimap"]
+    mm = fixture_frame[y:y + h, x:x + w]
+
+    pos = find_player(mm, cfg.vision)
+    assert pos is not None
+    # 玩家點是小地圖右上那顆亮黃菱形
+    assert abs(pos[0] - 95) <= 2 and abs(pos[1] - 11) <= 2, \
+        f"玩家點抓到 {pos}，應該在 (95, 11) 附近"
+
+
+def test_real_frame_others_are_not_terrain(fixture_frame):
+    """同一張圖的紅點：只有一個真的其他玩家，不能因為地形變出一堆。
+
+    這裡誤判的代價比黃點更直接——safety.pause_when_players 預設開著，
+    多冒出一個紅點就是整晚停在那裡等一個不存在的人走開。
+    """
+    from maplebot.config import load_config
+
+    cfg = load_config("config/default.yaml", local_path="/nonexistent")
+    x, y, w, h = cfg.regions["minimap"]
+    mm = fixture_frame[y:y + h, x:x + w]
+
+    others = find_others(mm, cfg.vision)
+    assert len(others) == 1, f"紅點抓到 {others}"
+    assert abs(others[0][0] - 93) <= 2 and abs(others[0][1] - 37) <= 2
+
+
+def test_merge_gap_off_restores_old_behaviour(fixture_frame):
+    """minimap_merge_gap <= 1 要能關掉合併——留給「新做法在我的圖上反而更差」的人。"""
+    from dataclasses import replace
+
+    from maplebot.config import load_config
+
+    cfg = load_config("config/default.yaml", local_path="/nonexistent")
+    x, y, w, h = cfg.regions["minimap"]
+    mm = fixture_frame[y:y + h, x:x + w]
+
+    off = replace(cfg.vision, minimap_merge_gap=1)
+    assert find_player(mm, off) == (11, 45)     # 舊的錯誤答案

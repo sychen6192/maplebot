@@ -33,6 +33,14 @@ vision:
   color_tolerance: 60                 # 各通道容許誤差；誤判/漏判時用 tools/debug_view.py 調
   min_dot_pixels: 2
   max_dot_pixels: 60                  # 面積大於此值的色塊視為地形，不會誤認成玩家
+  # 量面積之前先把相距這麼多 px 以內的同色像素接成一塊。
+  # 沒有這一步，max_dot_pixels 擋不到同色地形：自由市場那種黃地板在嚴格
+  # 比色下會碎成幾十個「剛好像一個點」的小塊，而且每一塊都比真正的玩家點
+  # 還大——小地圖座標就會跳到地板上，巡邏整晚走錯地方。
+  # 玩家點被同色地形包住時（站在黃地板上）會變成抓不到而不是抓錯，
+  # 那時請改用模板：tools/grab_template.py --dir data/templates/ui \
+  #   --name minimap_player
+  minimap_merge_gap: 3                # <=1 關掉合併（舊行為）
   ui_templates_dir: data/templates/ui # 小地圖角落/玩家點模板位置
   minimap_border: 6                   # auto 定位時向內縮的邊框厚度
   bars:                               # 各 bar 的顏色（見 vision/status.py 的 COLOR_PRESETS）
