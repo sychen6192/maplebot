@@ -354,3 +354,58 @@ def test_back_online_without_going_offline_is_a_noop(tmp_path, shot):
     r._back_online(2000.0)
     assert r._offline_total == 0.0
     assert r._bot_clock(2000.0) == 2000.0
+
+
+# ---- 背景擷取執行緒（loop.threads.capture）----
+# 這是效能選項，但它動到「畫面從哪來」，所以失敗模式跟上面兩條一樣不對稱：
+# 退不回同步擷取 = 整個不跑；拿過期畫面去決策 = 照著舊世界打。
+
+def test_capture_stays_on_the_main_loop_by_default(tmp_path, shot):
+    r = _runner(tmp_path, shot)
+    r._start_frame_source()
+    assert r.frames is None
+    assert r._next_frame() is not None       # 照樣拿得到畫面
+
+
+def test_the_thread_is_used_when_asked(tmp_path, shot):
+    r = _runner(tmp_path, shot, loop={"fps": 60, "threads": {"capture": True}})
+    r._start_frame_source()
+    try:
+        assert r.frames is not None
+        assert r._next_frame() is not None
+    finally:
+        if r.frames is not None:
+            r.frames.stop()
+
+
+def test_it_falls_back_when_the_thread_cannot_get_a_frame(tmp_path, shot):
+    """執行緒起不來就退回同步擷取——不能因為這個效能選項讓整個 bot 不跑。"""
+    r = _runner(tmp_path, shot, loop={"fps": 60, "threads": {"capture": True}})
+
+    class _Dead:
+        def grab(self, region=None):
+            raise RuntimeError("擷取壞了")
+
+    r.capture = _Dead()
+    r._start_frame_source()
+    assert r.frames is None                  # 沒有停在半開的狀態
+
+
+def test_a_stale_frame_is_not_handed_to_the_decision_layer(tmp_path, shot):
+    """畫面太舊時 _next_frame 要回 None，讓主迴圈跳過這個 tick。"""
+    r = _runner(tmp_path, shot, loop={"fps": 60, "threads": {"capture": True},
+                                      "frame_max_age": 0.2})
+    r._start_frame_source()
+    try:
+        assert r.frames is not None
+        r.frames.max_age = -1.0              # 任何幀都算太舊
+        assert r._next_frame() is None
+    finally:
+        r.frames.stop()
+
+
+def test_frame_max_age_must_be_positive(tmp_path, shot):
+    """0 或負數會讓每一幀都被判定太舊，bot 完全不動——設定時就擋下來。"""
+    from maplebot.config import ConfigError
+    with pytest.raises(ConfigError, match="frame_max_age"):
+        _runner(tmp_path, shot, loop={"fps": 60, "frame_max_age": 0})

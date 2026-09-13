@@ -224,6 +224,12 @@ class AppCfg:
     # 校正當下的 client 區大小。視窗尺寸改了 regions 就全錯，開場先擋下來
     calibrated_for: Optional[Tuple[int, int]] = None
     fps: float = 8.0
+    # 擷取搬到背景執行緒（對應商業版 thread_debug_config.json 的 capture）。
+    # **預設關閉**：主迴圈的單執行緒模型好懂也好測，這是效能選項不是必需品。
+    thread_capture: bool = False
+    # 背景擷取到的幀超過這麼舊就不給決策層用（秒）。這是安全線不是效能參數：
+    # 擷取執行緒卡住時，照著過期畫面繼續打比停一個 tick 危險得多。
+    frame_max_age: float = 0.5
     regions: Dict[str, Region] = field(default_factory=dict)
     minimap_auto: bool = False        # regions.minimap: auto 時用角落模板自動定位
     vision: VisionCfg = field(default_factory=VisionCfg)
@@ -427,7 +433,16 @@ def load_config(path: str, local_path: Optional[str] = None) -> AppCfg:
         if not (isinstance(size, (list, tuple)) and len(size) == 2):
             raise ConfigError(f"window.calibrated_for 要是 [寬, 高]，拿到: {size!r}")
         cfg.calibrated_for = (int(size[0]), int(size[1]))
-    cfg.fps = float(data.get("loop", {}).get("fps", cfg.fps))
+    loop = data.get("loop", {})
+    cfg.fps = float(loop.get("fps", cfg.fps))
+    threads = loop.get("threads") or {}
+    if not isinstance(threads, dict):
+        raise ConfigError(f"loop.threads 要是 mapping，拿到: {threads!r}")
+    cfg.thread_capture = bool(threads.get("capture", cfg.thread_capture))
+    cfg.frame_max_age = float(loop.get("frame_max_age", cfg.frame_max_age))
+    if cfg.frame_max_age <= 0:
+        raise ConfigError(
+            f"loop.frame_max_age 必須是正數（秒），拿到: {cfg.frame_max_age!r}")
 
     regions = data.get("regions") or {}
     if not isinstance(regions, dict):

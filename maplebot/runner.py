@@ -18,6 +18,7 @@ from .control.input_win import Keyboard
 from .executor import Executor, Stats
 from .metrics import LoopMetrics, Series
 from .perception import Perceiver
+from .pipeline import FrameSource
 from .progress import ExpTracker
 from .safety import LostPlayerWatchdog, Safety, is_black_screen, save_anomaly
 from .sysmon import SystemMonitor
@@ -72,6 +73,9 @@ class Runner:
         self.series = Series(cfg.report.sample_interval if cfg.report.enabled else 0.0)
         self.sysmon = SystemMonitor(cfg.monitor, logger)
         self.preview = preview
+        # 背景擷取（loop.threads.capture）。None = 主迴圈自己抓（預設）
+        self.frames: Optional[FrameSource] = None
+        self._stale_warned = False
 
         pf = cfg.region("playfield")
         self.playfield_center = (pf[2] // 2, pf[3] // 2)
@@ -542,6 +546,42 @@ class Runner:
         self.log.error("停止所有動作")
         self.safety.stop = True
 
+    # ---- 畫面來源 ----
+
+    def _start_frame_source(self) -> None:
+        """開背景擷取執行緒（loop.threads.capture: true 才會開）。
+
+        拿不到第一幀就退回主迴圈自己抓——不能因為執行緒沒起來就整個不跑。
+        """
+        if not self.cfg.thread_capture:
+            return
+        src = FrameSource(self.capture.grab, max_age=self.cfg.frame_max_age,
+                          logger=self.log)
+        if not src.start():
+            src.stop()
+            self.log.warning("背景擷取執行緒拿不到第一幀，退回主迴圈同步擷取")
+            return
+        self.frames = src
+        self.log.info("擷取改由背景執行緒負責（幀齡上限 %.2fs）",
+                      self.cfg.frame_max_age)
+
+    def _next_frame(self) -> Optional[np.ndarray]:
+        if self.frames is None:
+            return self.capture.grab()
+        frame, _ = self.frames.get()
+        return frame
+
+    def _notice_stale_frames(self) -> None:
+        """畫面一直太舊時說一聲——症狀是「bot 好像卡住了」但其實是擷取卡住。"""
+        if self._stale_warned or self.frames is None or self.frames.stale < 10:
+            return
+        self._stale_warned = True
+        self.log.warning(
+            "背景擷取跟不上：已經有 %d 個 tick 因為畫面太舊而跳過。"
+            "遊戲視窗被最小化、或 PrintWindow 對這個客戶端失效時會這樣。"
+            "持續發生就把 loop.threads.capture 設回 false",
+            self.frames.stale)
+
     # ---- 主迴圈 ----
 
     def run(self) -> None:
@@ -560,6 +600,7 @@ class Runner:
                           self.cfg.safety.max_runtime_minutes)
         self._focus_game()
         self._attach_game_process()
+        self._start_frame_source()
         self.advisor.start()
         self.status.running = True
         deadline = time.monotonic() + self.max_seconds if self.max_seconds else None
@@ -588,7 +629,13 @@ class Runner:
                         break
 
                 with self.metrics.stage("capture"):
-                    frame = self.capture.grab()
+                    frame = self._next_frame()
+                if frame is None:
+                    # 背景擷取還沒給出夠新的畫面。照著過期畫面決策比停一個
+                    # tick 危險得多（HP 早就掉了它還以為是滿的），所以跳過。
+                    self._notice_stale_frames()
+                    time.sleep(0.02)
+                    continue
 
                 if self.cfg.safety.black_screen_pause and is_black_screen(frame):
                     # 換圖（走進傳送門）的淡出也是全黑，一兩秒就過去——要黑得
@@ -701,6 +748,8 @@ class Runner:
             if not self._stop_reason and self.safety.stop:
                 self._stop_reason = f"使用者按下 {self.cfg.safety.stop_key} 停止"
             self.status.running = False
+            if self.frames is not None:
+                self.frames.stop()
             self.advisor.stop()
             self.executor.stop_movement()
             self.kb.release_all()
