@@ -46,6 +46,8 @@ def _dot_blobs(mask: np.ndarray, min_px: int, max_px: int,
     merge_gap <= 1 等於關掉這個合併（回到舊行為）。
     """
     m = mask.astype(np.uint8)
+    if m.size == 0:
+        return []        # 空 ROI（視窗被縮到 0、region 算錯）：cv2 會直接 assert
     grown = cv2.dilate(m, np.ones((merge_gap, merge_gap), np.uint8)) \
         if merge_gap > 1 else m
     n, labels, _, _ = cv2.connectedComponentsWithStats(grown, connectivity=8)
@@ -65,6 +67,16 @@ def _dot_blobs(mask: np.ndarray, min_px: int, max_px: int,
         if min_px <= a <= max_px:
             out.append((int(round(sum_x[i] / a)), int(round(sum_y[i] / a)), a))
     return out
+
+
+def load_player_template(cfg: VisionCfg):
+    """載入使用者截的玩家點模板（沒有就回 None）。
+
+    包一層是為了讓 Perceiver 以外的呼叫端（老師、tools/）不必自己記得
+    模板檔名與目錄怎麼組。
+    """
+    from .locate import PLAYER_NAME, load_ui_template
+    return load_ui_template(cfg.ui_templates_dir, PLAYER_NAME)
 
 
 def find_player_candidates(minimap_bgr: np.ndarray, cfg: VisionCfg,

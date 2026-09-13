@@ -42,6 +42,26 @@ vision:
   #   --name minimap_player
   minimap_merge_gap: 3                # <=1 關掉合併（舊行為）
 
+  # --- 小地圖玩家點用什麼找 ---
+  #   color  【預設，零設定】顏色遮罩 +（有的話）minimap_player.png 模板
+  #   yolo   自己訓練的模型。對應商業版的 CC\yellow\——它為了小地圖上這顆
+  #          4x4 的黃點專門訓練了一顆 3M 參數的偵測器，因為顏色門檻在同色
+  #          地形的地圖上真的不夠用（自由市場的黃地板會贏過玩家點）
+  #
+  # 訓練流程（全部沿用既有管線，只是換 region 與老師）：
+  #   python tools/collect_dataset.py --region minimap --count 400 --interval 1
+  #   python tools/autolabel.py --images datasets/raw_minimap \
+  #       --teacher minimap_dot --preview 6      # 先看老師標得對不對
+  #   python tools/autolabel.py --images datasets/raw_minimap --teacher minimap_dot
+  #   python tools/prepare_dataset.py --raw datasets/raw_minimap
+  #   python tools/train_yolo.py --imgsz 320
+  # 老師會**自動跳過顏色分不出來的畫面**，所以訓練資料不會混進「地板是玩家」
+  # 這種標註；那些圖會被列出來讓你手動標——它們正是最有價值的樣本。
+  minimap_detector: color
+  minimap_model: ""                   # minimap_detector=yolo 時填 .pt 或 .onnx
+  minimap_confidence: 0.4
+  minimap_imgsz: 0                    # 0 = 320（小地圖很小，640 只是更慢）
+
   # --- 位置的軌跡追蹤（見 maplebot/vision/track.py）---
   # 顏色偵測每一幀都在一堆長得差不多的候選裡賭一次。賭錯的代價不是「這幀不動」，
   # 是安靜地回報一個完全錯的位置，然後巡邏整晚走錯地方。角色是連續移動的、

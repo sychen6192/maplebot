@@ -61,6 +61,13 @@ class VisionCfg:
     # 同色地形打碎成幾十個「剛好像一個點」的小塊，max_dot_pixels 因此
     # 完全擋不到它（見 vision/minimap.py 的實測）。<=1 等於關掉。
     minimap_merge_gap: int = 3
+    # 小地圖玩家點的偵測方式：color（顏色遮罩，零設定）| yolo（訓練好的模型）。
+    # 對應商業版的 CC\yellow\ 模型——它為了這顆 4x4 的黃點專門訓練了一顆
+    # 3M 參數的偵測器，因為顏色門檻在同色地形的地圖上不夠用。
+    minimap_detector: str = "color"
+    minimap_model: str = ""            # .pt 或 .onnx
+    minimap_confidence: float = 0.4
+    minimap_imgsz: int = 0             # 0 = 用 320（小地圖很小，640 只是更慢）
     # --- 軌跡追蹤（見 vision/track.py）---
     # 顏色偵測每一幀都在一堆長得差不多的候選裡賭一次，賭錯不是「這幀不動」，
     # 是安靜地回報一個完全錯的位置。角色是連續移動的，跳點不是——所以改用
@@ -439,6 +446,15 @@ def load_config(path: str, local_path: Optional[str] = None) -> AppCfg:
     vc.min_dot_pixels = int(v.get("min_dot_pixels", vc.min_dot_pixels))
     vc.max_dot_pixels = int(v.get("max_dot_pixels", vc.max_dot_pixels))
     vc.minimap_merge_gap = int(v.get("minimap_merge_gap", vc.minimap_merge_gap))
+    vc.minimap_detector = str(v.get("minimap_detector", vc.minimap_detector)).lower()
+    if vc.minimap_detector not in ("color", "yolo"):
+        raise ConfigError(
+            f"vision.minimap_detector 只能是 color / yolo，拿到: {vc.minimap_detector!r}")
+    vc.minimap_model = str(v.get("minimap_model", vc.minimap_model))
+    vc.minimap_confidence = float(v.get("minimap_confidence", vc.minimap_confidence))
+    vc.minimap_imgsz = int(v.get("minimap_imgsz", vc.minimap_imgsz))
+    if vc.minimap_detector == "yolo" and not vc.minimap_model:
+        raise ConfigError("vision.minimap_detector=yolo 必須設定 vision.minimap_model")
     vc.track_player = bool(v.get("track_player", vc.track_player))
     vc.minimap_max_jump_px = int(v.get("minimap_max_jump_px", vc.minimap_max_jump_px))
     vc.minimap_max_coast = int(v.get("minimap_max_coast", vc.minimap_max_coast))

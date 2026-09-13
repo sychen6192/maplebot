@@ -210,3 +210,82 @@ def test_make_teacher_rejects_an_unknown_name(cfg):
 def test_make_teacher_falls_back_to_the_config_threshold(cfg, templates):
     cfg.vision.mob_match_threshold = 0.55
     assert make_teacher("template", cfg, templates_dir=templates).det.threshold == 0.55
+
+
+# --- 小地圖玩家點老師（對應商業版的 CC\yellow\ 模型）---
+# 設計重點不是「會標」，是**不確定的時候拒絕標**。老師標錯的，學生會學得很牢。
+
+def _mm(dots=((30, 20),), decoys=(), w=128, h=58):
+    """合成小地圖：dots 是玩家黃點，decoys 是同色但不是玩家的零星小塊。
+
+    decoys 模擬的是實拍上真正會造成歧義的東西——小地圖標題那行文字的碎片。
+    （整片黃地板反而不會：碎塊被 minimap_merge_gap 接回一整塊之後，面積上限
+    就擋得掉了。會活下來混進候選的是本來就孤立的小點。）
+    """
+    mm = np.full((h, w, 3), (60, 55, 50), dtype=np.uint8)
+    for (x, y) in decoys:
+        mm[y:y + 2, x:x + 3] = (0, 250, 250)
+    for (x, y) in dots:
+        mm[y - 2:y + 3, x - 2:x + 3] = (40, 40, 40)
+        mm[y - 1:y + 2, x - 1:x + 2] = (0, 255, 255)
+    return mm
+
+
+def _cfg():
+    from maplebot.config import AppCfg
+    return AppCfg()
+
+
+def test_it_labels_an_unambiguous_minimap():
+    from maplebot.teachers import make_teacher
+    t = make_teacher("minimap_dot", _cfg())
+    labels = t.label(_mm(dots=((30, 20),)))
+    assert len(labels) == 1
+    cls, mob = labels[0]
+    assert cls == 0
+    assert abs(mob.cx - 30) <= 1 and abs(mob.cy - 20) <= 1
+
+
+def test_it_refuses_to_label_when_colour_is_ambiguous():
+    """畫面上有第二個同色小塊時，顏色偵測是在賭——這種圖整張跳過。
+
+    照標的話等於拿「標題文字是玩家」去訓練，而那正是模型該學會分辨的畫面。
+    寧可少標也不要標錯：老師抓不到的學生學不到，但老師**標錯**的學生會學得很牢。
+    """
+    from maplebot.teachers import make_teacher
+    t = make_teacher("minimap_dot", _cfg())
+    assert t.label(_mm(dots=((30, 20),), decoys=((80, 8), (95, 8)))) == []
+    assert t.ambiguous == 1
+    assert t.labeled == 0
+
+
+def test_an_empty_minimap_labels_nothing():
+    from maplebot.teachers import make_teacher
+    t = make_teacher("minimap_dot", _cfg())
+    assert t.label(_mm(dots=())) == []
+    assert t.empty == 1
+
+
+def test_explain_says_why_most_images_were_skipped():
+    from maplebot.teachers import make_teacher
+    t = make_teacher("minimap_dot", _cfg())
+    for _ in range(4):
+        t.label(_mm(dots=((30, 20),), decoys=((80, 8), (95, 8))))
+    t.label(_mm(dots=((30, 20),)))
+    out = t.explain()
+    assert "跳過 4" in out
+    assert "minimap_player" in out          # 要講出怎麼讓老師變得有把握
+
+
+def test_boxes_are_a_fixed_size_not_the_blob_bbox():
+    """框用固定大小：玩家點是遊戲畫的固定標記，色塊外接框會隨雜訊抖。"""
+    from maplebot.teachers import make_teacher
+    t = make_teacher("minimap_dot", _cfg())
+    a = t.label(_mm(dots=((30, 20),)))[0][1]
+    b = t.label(_mm(dots=((70, 30),)))[0][1]
+    assert (a.w, a.h) == (b.w, b.h)
+
+
+def test_minimap_dot_is_a_registered_teacher():
+    from maplebot.teachers import TEACHERS
+    assert "minimap_dot" in TEACHERS

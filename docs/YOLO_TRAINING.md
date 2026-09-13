@@ -323,6 +323,59 @@ python tools/check_remote.py
 
 > 伺服器沒有身分驗證，只適合自己的區網；不要開到公網。
 
+## 另一條線：小地圖玩家點模型
+
+上面整份講的是**怪物**偵測。同一套管線也可以拿來訓練「小地圖上的玩家黃點」，
+而那其實是更值得做的一件事。
+
+**為什麼**：把商業版的客戶端拆開之後，它自己的辨識資產只有兩顆神經網路，
+其中一顆（`CC\yellow\`）就是專門在小地圖上找那顆 4x4 黃點的——fp16、
+約 3.0M 參數、6MB 權重，完整的 YOLOv8/11n 級三頭偵測器。一個要賣錢的實作
+為一件「看起來三行顏色門檻就能解決」的事花這種成本，只有一個解釋：
+**顏色門檻在這裡不夠用**。
+
+實測也是：自由市場那種黃地板的地圖上，顏色偵測回報的是地板不是角色。
+軌跡追蹤（`vision/track.py`）能擋住它跳來跳去，但擋不住角色真的跟丟之後
+被同色的東西接手。
+
+```bash
+# 1. 蒐集小地圖（多走幾張地圖，一定要包含同色地形那種）
+python tools/collect_dataset.py --region minimap --count 400 --interval 1
+
+# 2. 先看老師標得對不對
+python tools/autolabel.py --images datasets/raw_minimap \
+    --teacher minimap_dot --preview 6
+
+# 3. 批次標註
+python tools/autolabel.py --images datasets/raw_minimap --teacher minimap_dot
+
+# 4. 切分 + 訓練（小地圖很小，imgsz 用 320 就夠，640 只是更慢）
+python tools/prepare_dataset.py --raw datasets/raw_minimap
+python tools/train_yolo.py --imgsz 320 --name minimap
+
+# 5. 部署
+#    config/local.yaml:
+#      vision:
+#        minimap_detector: yolo
+#        minimap_model: runs/mobs/minimap/weights/best.pt
+```
+
+### 老師會拒絕標註，那是刻意的
+
+`minimap_dot` 老師就是現在的顏色偵測，但它**只在有把握的時候才標**：
+畫面上只有一個同色候選才產生標註，有好幾個就整張跳過。
+
+這一點很重要。teachers.py 開頭那句「老師抓不到的，學生也學不到」還有更糟的
+一半：**老師標錯的，學生會學得非常牢**。自由市場那張圖如果照標，等於拿
+「地板是玩家」當真值去訓練。
+
+被跳過的圖會列在 autolabel 的輸出裡（「沒偵測到任何怪」那一段）。
+**那些正是最有價值的樣本**——顏色分不出來、模型才需要學。用 labelImg 手動
+把它們標一標再訓練，模型才學得會你真正要它解決的那件事。
+
+一個捷徑：先截一次玩家點模板（`tools/grab_template.py --dir data/templates/ui
+--name minimap_player`），老師會優先用模板比對，有把握的圖就變多了。
+
 ## 什麼時候需要重練
 
 - 換新地圖/新怪：蒐集新地圖 100~200 張 → autolabel → 校對 → 併入 `datasets/raw/` 重跑 4、5

@@ -18,6 +18,7 @@ from .vision.locate import PLAYER_NAME, load_ui_template
 from .vision.follower import FollowerFilter
 from .vision.mobs import MobDetector
 from .vision.outline_mobs import REFERENCE_WIDTH
+from .vision.minimap_yolo import make_minimap_detector
 from .vision.track import PointTracker
 
 
@@ -25,7 +26,9 @@ class Perceiver:
     def __init__(self, cfg: AppCfg, detector: MobDetector):
         self.cfg = cfg
         self.detector = detector
-        # 有玩家點模板就優先用模板匹配（見 vision/minimap.py）
+        # 小地圖玩家點：顏色遮罩（零設定）或訓練好的模型。兩者介面相同，
+        # 回傳的都是候選清單，交給同一個軌跡追蹤挑（見 vision/minimap_yolo.py）
+        self.minimap_detector = make_minimap_detector(cfg.vision)
         self.player_template = load_ui_template(cfg.vision.ui_templates_dir, PLAYER_NAME)
         # 角色名牌定位（見 vision/nametag.py）。沒有模板檔就是 None，
         # 自動退回組隊紅條——所以沒截模板的人不會壞掉。
@@ -80,8 +83,7 @@ class Perceiver:
         mm = self._slice(frame, "minimap")
         if mm is not None:
             st.minimap_size = (mm.shape[1], mm.shape[0])
-            cands = minimap.find_player_candidates(
-                mm, vc, template=self.player_template)
+            cands = self.minimap_detector.candidates(mm)
             if self._mm_track is not None:
                 st.minimap_xy = self._mm_track.update(cands)
                 st.minimap_conf = self._mm_track.confidence

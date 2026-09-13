@@ -12,6 +12,12 @@
 用法：
   python tools/collect_dataset.py --interval 2 --count 300
   python tools/collect_dataset.py --format jpg      # 省硬碟，標註品質較差
+  python tools/collect_dataset.py --region minimap --count 400 --interval 1
+
+**--region minimap** 是給小地圖玩家點模型用的（對應商業版的 CC\yellow\）。
+存到 datasets/raw_minimap/，接 tools/autolabel.py --teacher minimap_dot。
+小地圖很小，蒐 300~500 張、多走幾張地圖就夠；重點是**要包含同色地形的地圖**
+（自由市場那種黃地板），那正是顏色偵測會壞、需要模型的畫面。
 """
 import argparse
 import os
@@ -28,11 +34,18 @@ from maplebot.capture import WindowCapture  # noqa: E402
 from maplebot.config import load_config  # noqa: E402
 
 OUT_DIR = os.path.join("datasets", "raw")
+MINIMAP_OUT_DIR = os.path.join("datasets", "raw_minimap")
 
 
 def _fingerprint(frame: np.ndarray) -> np.ndarray:
+    """用來判斷「這張跟上一張幾乎一樣」的縮圖。
+
+    小地圖本來就只有 128x58，放大到 160x96 等於插值出假細節，去重會失準
+    （角色走了一格也看不出來）。所以縮圖不要比原圖大。
+    """
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    return cv2.resize(gray, (160, 96)).astype(np.int16)
+    h, w = gray.shape[:2]
+    return cv2.resize(gray, (min(160, w), min(96, h))).astype(np.int16)
 
 
 def main() -> int:
@@ -44,18 +57,27 @@ def main() -> int:
                     help="與上一張的平均像素差低於此值就跳過（0 = 不去重）")
     ap.add_argument("--format", choices=["png", "jpg"], default="png",
                     help="png=無損（預設，描邊標註需要）；jpg=省硬碟但會破壞純黑")
+    ap.add_argument("--region", default="playfield",
+                    choices=["playfield", "minimap"],
+                    help="要蒐集哪一塊。minimap 是給小地圖玩家點模型用的，"
+                         "存到 datasets/raw_minimap/")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
     cap = WindowCapture(cfg.window_title)
-    region = cfg.region("playfield")
-    os.makedirs(OUT_DIR, exist_ok=True)
+    region = cfg.region(args.region)
+    out_dir = MINIMAP_OUT_DIR if args.region == "minimap" else OUT_DIR
+    os.makedirs(out_dir, exist_ok=True)
 
     params = ([] if args.format == "png"
               else [cv2.IMWRITE_JPEG_QUALITY, 92])
-    print(f"開始蒐集：每 {args.interval}s 檢查一次，目標 {args.count} 張"
-          f"（{args.format}）-> {OUT_DIR}")
-    print("提示：邊玩邊蒐集，多換幾個點位/地圖，畫面要包含要打的怪與空景")
+    print(f"開始蒐集 {args.region}：每 {args.interval}s 檢查一次，目標 {args.count} 張"
+          f"（{args.format}）-> {out_dir}")
+    if args.region == "minimap":
+        print("提示：多走幾張地圖，**一定要包含同色地形那種**（自由市場的黃地板）"
+              "——那正是顏色偵測會壞、需要模型的畫面")
+    else:
+        print("提示：邊玩邊蒐集，多換幾個點位/地圖，畫面要包含要打的怪與空景")
     saved, skipped = 0, 0
     last_fp = None
     while saved < args.count:
@@ -68,12 +90,16 @@ def main() -> int:
                 continue
         last_fp = fp
         name = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
-        cv2.imwrite(os.path.join(OUT_DIR, f"{name}.{args.format}"), frame, params)
+        cv2.imwrite(os.path.join(out_dir, f"{name}.{args.format}"), frame, params)
         saved += 1
         print(f"\r已存 {saved}/{args.count}（跳過重複 {skipped}）", end="", flush=True)
         time.sleep(args.interval)
-    print("\n完成。下一步（先看老師標得對不對）："
-          "python tools/autolabel.py --preview 6")
+    if args.region == "minimap":
+        print(f"\n完成。下一步（先看老師標得對不對）：python tools/autolabel.py "
+              f"--images {out_dir} --teacher minimap_dot --preview 6")
+    else:
+        print("\n完成。下一步（先看老師標得對不對）："
+              "python tools/autolabel.py --preview 6")
     return 0
 
 
