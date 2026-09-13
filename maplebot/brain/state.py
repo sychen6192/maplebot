@@ -31,6 +31,9 @@ class GameState:
     # 偵測搬到背景執行緒時會 > 0——「有兩隻怪」跟「半秒前有兩隻怪」
     # 不是同一件事，下游要分得出來。
     mobs_age: float = 0.0
+    # 這張地圖的小地圖會不會跟著角色捲動。會的話 minimap_xy 是**地圖座標**
+    # 而不是小地圖內的座標——差別在於它可以超出小地圖寬度（見 issue #7）。
+    minimap_scrolling: bool = False
 
     @property
     def vision_ok(self) -> bool:

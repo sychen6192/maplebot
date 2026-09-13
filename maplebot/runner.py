@@ -194,6 +194,12 @@ class Runner:
             if chk.status == doctor.WARN:
                 self.log.warning("%s：%s。%s", chk.name, chk.detail, chk.fix)
 
+        scroll = self.perceiver.minimap_scroll
+        if scroll is not None and scroll.scrolling:
+            self.log.info(
+                "%s。巡邏點會以地圖座標比對，可能超出小地圖寬度，那是正常的"
+                "（見 issue #7）", scroll.explain())
+
         if state.minimap_xy is None:
             self.log.warning("開場找不到小地圖玩家黃點——確認 regions.minimap 只框地圖畫布本體，"
                              "或調整 vision.color_tolerance。先照跑，但巡邏可能不會動")

@@ -18,6 +18,7 @@ from .vision.locate import PLAYER_NAME, load_ui_template
 from .vision.follower import FollowerFilter
 from .vision.mobs import MobDetector
 from .vision.outline_mobs import REFERENCE_WIDTH
+from .vision.minimap_scroll import MinimapScroll
 from .vision.minimap_yolo import make_minimap_detector
 from .vision.track import PointTracker
 
@@ -79,6 +80,9 @@ class Perceiver:
                                       cfg.vision.minimap_max_coast) \
             if cfg.vision.track_player else None
         self._screen_track: Optional[PointTracker] = None   # scale 要等第一幀才知道
+        # 會捲動的小地圖（大地圖）：把視窗座標換成穩定的地圖座標。
+        # 不捲的地圖上這是恆等轉換（實測 120 幀漂移 0.00px），見 minimap_scroll.py
+        self.minimap_scroll = MinimapScroll() if cfg.vision.minimap_scroll else None
         # 被撞到時血條會閃，那一幀會讀成 0%——擋在這裡，別讓下游灌藥又停機
         self._bars = {
             name: status.BarFilter(cfg.vision.bar_max_drop,
@@ -115,6 +119,12 @@ class Perceiver:
             elif cands:
                 x, y, _ = max(cands, key=lambda c: c[2])
                 st.minimap_xy, st.minimap_conf = (x, y), 1.0
+            if self.minimap_scroll is not None:
+                # 換算成地圖座標**在軌跡追蹤之後**：追蹤要看的是視窗內的連續性
+                # （地圖在捲的時候，點在視窗裡其實幾乎不動），換算只是把捲掉的
+                # 部分加回去。順序反過來的話，捲動會被當成「跳點」擋掉。
+                st.minimap_xy = self.minimap_scroll.update(mm, st.minimap_xy)
+                st.minimap_scrolling = self.minimap_scroll.scrolling
             st.other_players = minimap.find_others(mm, vc)
 
         for name, default_color in (("hp", "red"), ("mp", "blue"), ("exp", "yellow")):
