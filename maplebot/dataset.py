@@ -10,17 +10,18 @@ train/val 並產生 dataset.yaml -> ultralytics 訓練。
 皆為 0~1 正規化值）加上一份 classes.txt。
 """
 import glob
+import json
 import os
 import random
 import shutil
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import cv2
 import yaml
 
 from .teachers import TemplateTeacher, class_from_template_name  # noqa: F401
-from .vision import mob_hpbar
+from .vision import mob_hpbar, playfield
 from .vision.mobs import Mob, TemplateMobDetector
 from .vision.nametag import load_locator
 from .vision.outline_mobs import OutlineMobDetector
@@ -149,6 +150,92 @@ def preview_labels(images_dir: str, teacher, out_dir: str,
         cv2.imwrite(dst, draw_labels(img, teacher.label(img), teacher.classes))
         written.append(dst)
     return written
+
+
+Box = Tuple[int, int, int, int]          # (x, y, w, h)，影像像素座標
+
+
+@dataclass
+class GroundResult:
+    images: int = 0                      # 寫了標籤的張數
+    asked: int = 0                       # 這次真的問了幾張（其餘來自快取）
+    kept: int = 0                        # 寫進標籤的框數
+    kinds: Dict[str, int] = field(default_factory=dict)
+    failed: List[str] = field(default_factory=list)    # 問不到答案、沒寫標籤的影像
+
+
+def ground_label_dir(images_dir: str,
+                     ground: Callable[[object], Optional[List[Tuple[str, Box]]]],
+                     cache_path: str, exclude: Sequence[Box] = (),
+                     origin: Tuple[int, int] = (0, 0),
+                     keep: Sequence[str] = ("monster",), class_name: str = "mob",
+                     rewrite: bool = True, limit: int = 0, attempts: int = 2,
+                     progress: Optional[Callable[[int, int], None]] = None) -> GroundResult:
+    """請 VLM 整張畫面框出每個物件（advisor.ground），keep 裡的類別寫成 YOLO 標籤。
+
+    描邊老師會把相鄰的東西黏成一框（蝸牛＋旁邊的楓幣、並排的三隻水靈），擠成
+    一串的還會寬過上限整串被丟掉；grounding 是一隻一框，掉落物和玩家另外標成
+    item/player，不會混進怪的框裡。
+
+    exclude 是固定的介面矩形（config 的 mob_exclude，client 座標；origin 是影像
+    左上角在 client 的位置）：送出前塗灰，跟即時偵測看到的一樣
+    （playfield.blank_rects），中心落在裡面的框也丟掉。
+
+    ground 回 None（逾時、回的不是框）就重問，attempts 次都問不到的記在 failed、
+    **不寫**標籤檔——prepare_dataset 把沒標籤的圖當「這張沒有怪」的負樣本，寫個
+    空檔等於教學生畫面上的怪全是背景。回空陣列是真的沒東西，照寫空檔。
+    快取存全部類別（item/player/pet 之後要多類別不用重問），中斷重跑只問沒問過的。
+    """
+    cache: Dict[str, list] = {}
+    if os.path.exists(cache_path):
+        with open(cache_path, encoding="utf-8") as f:
+            cache = json.load(f)
+    res = GroundResult()
+    paths = list_images(images_dir)
+    if limit:
+        paths = paths[:limit]
+    labels: Dict[str, list] = {}
+    for n, path in enumerate(paths, 1):
+        name = os.path.basename(path)
+        if name not in cache:
+            img = cv2.imread(path)
+            if img is None:
+                continue
+            img = playfield.blank_rects(img, exclude, origin)
+            found = None
+            for _ in range(max(attempts, 1)):
+                res.asked += 1
+                try:
+                    found = ground(img)
+                except Exception:      # 逾時、連不上
+                    found = None
+                if found is not None:
+                    break
+            if found is None:
+                res.failed.append(path)
+                if progress:
+                    progress(n, len(paths))
+                continue
+            cache[name] = [[label, list(box)] for label, box in found]
+            with open(cache_path, "w", encoding="utf-8") as f:   # 每張存一次：中斷了也不白問
+                json.dump(cache, f, ensure_ascii=False)
+        boxes = []
+        for label, (x, y, w, h) in cache[name]:
+            res.kinds[label] = res.kinds.get(label, 0) + 1
+            cx, cy = x + w / 2, y + h / 2
+            gx, gy = cx + origin[0], cy + origin[1]
+            if label not in keep or any(ex <= gx < ex + ew and ey <= gy < ey + eh
+                                        for ex, ey, ew, eh in exclude):
+                continue
+            boxes.append((0, cx, cy, w, h))
+        labels[path] = boxes
+        res.kept += len(boxes)
+        res.images += 1
+        if progress:
+            progress(n, len(paths))
+    if rewrite and labels:
+        write_yolo_labels(images_dir, labels, [class_name])
+    return res
 
 
 @dataclass

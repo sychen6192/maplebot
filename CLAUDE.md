@@ -60,10 +60,11 @@ Every pixel threshold in config — attack range, outline area, nametag offset, 
 
 ### Auto-labeling (YOLO route)
 
-Two entry points, deliberately kept separate:
+Three entry points, deliberately kept separate:
 
 - `tools/auto_pipeline.py` → `dataset.autolabel_dir` with a teacher object from `teachers.py`. Config-driven; the outline teacher builds its detector through the same `make_detector` the bot runs, so the teacher's boxes match what the bot actually sees.
 - `tools/autolabel_outline.py` → `dataset.autolabel_outline_dir`. Explicit parameters, unions the outline and template teachers by IoU (their blind spots are complementary), supports `--exclude` for fixed HUD rectangles.
+- `tools/label_vlm.py` → `dataset.ground_label_dir` with `Advisor.ground`: the advisor's VLM boxes every object on the whole frame (thinking off, PNG); only `monster` boxes become labels, the other kinds stay in the cache. A frame the VLM never answered gets **no** label file — `prepare_dataset` treats a missing label as a negative sample.
 
 ## Conventions
 

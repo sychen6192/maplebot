@@ -28,6 +28,7 @@
 | **描邊 ∪ 模板**（建議） | `tools/autolabel_outline.py` | 兩個老師聯集，盲點互補：描邊怕怪跟草叢黏在一起、模板怕沒見過的動作幀。**換地圖不用重截模板**（描邊對任何怪都成立），有模板就順便一起用。實測召回率明顯高於單一老師 |
 | **描邊**（預設，免模板） | `tools/auto_pipeline.py` | **你現在就跑得動的那個偵測器**，一行指令跑完標註→切分→訓練。不用截任何模板，換地圖直接標。代價：它不知道怪的種類，全部標成一類 `mob` |
 | **模板匹配** | `tools/auto_pipeline.py --teacher template` | 已經截過模板時用。楓谷 sprite 每幀像素幾乎相同，命中率很高，而且標出來有怪種資訊 |
+| **VLM grounding**（督導層的模型） | `tools/label_vlm.py` | 已經設好 `advisor`（本地 VLM）時。整張畫面請模型一隻一框，掉落物、玩家、寵物另外標成 item/player/pet、不進標籤。描邊會把蝸牛和旁邊的楓幣黏成一框、擠成一排的怪寬過上限整串丟掉，這兩個它都沒有。實測 10 張（1366x768 訓練場）：督導判過是怪的描邊框 65/68 被框到，另外多框到 32 隻描邊漏掉的；框成怪的 118 個錯 2~3 個。一張約 3 秒，500 張半小時，中斷重跑只問沒問過的 |
 | **GroundingDINO**（大模型） | `tools/label_gdino.py` | 完全不想截模板、又想要語意標籤。但它是拿真實照片訓練的，對卡通 sprite 語意很模糊——實測標籤會混成 `"slime npc signboard"` 這種複合詞而被 reject 過濾掉。**先 `--test` 試一張** |
 
 兩條描邊路線的差別：`auto_pipeline.py` 走 `teachers.py` 的老師介面，偵測器由
@@ -51,6 +52,17 @@ python tools/autolabel_outline.py --exclude 0,0,320,400 --exclude 1700,1130,859,
 ```
 
 想用大模型老師就把中間換成 `label_gdino -> prepare_dataset -> train_yolo`。
+
+已經設好本地 VLM 督導層的話，把中間換成 `label_vlm -> prepare_dataset -> train_yolo`，訓練用原解析度：
+
+```bash
+python tools/label_vlm.py --limit 10 --preview   # 先抽查框得對不對
+python tools/label_vlm.py
+python tools/prepare_dataset.py
+python tools/train_yolo.py --imgsz 1376 --epochs 100 --batch 8
+```
+
+`--imgsz 1376` 是因為畫面本來就 1366 寬，預設 800 會把約 35px 的蝸牛縮到 20px。實測（1366x768 訓練場，500 張，RTX 3060 練 17 分鐘、第 45 輪最好）：留下來沒參與訓練的 75 張上，離角色最近的框是怪 98.6%（描邊 78.1%），框到掉落物/玩家/寵物 1 個（描邊 10 個）。上線時 config 的 `yolo_imgsz` 也要設成 1376。
 想再精修才需要 labelImg（見文末「選配：人工精修」）。
 
 > **老師抓不到的，學生也學不到。** 用描邊老師之前，先跑
