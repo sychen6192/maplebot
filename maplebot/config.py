@@ -224,6 +224,10 @@ class AdvisorCfg:
     # 機器、走 Tailscale 之類的網路時伺服器通常會要 key——沒帶就是每輪 401，
     # 督導層靜靜地整場沒作用。放在不進版控的 local.yaml。
     api_key: str = ""
+    # 原地打了 target_check_after 秒還打不死，就問督導層正在打的是不是怪，
+    # 不是就提早讓路（不用等 safety.attack_stall_seconds）。enabled 關著時不作用
+    target_check: bool = True
+    target_check_after: float = 4.0
 
 
 @dataclass
@@ -607,6 +611,8 @@ def load_config(path: str, local_path: Optional[str] = None) -> AppCfg:
     ac.timeout = float(a.get("timeout", ac.timeout))
     ac.confirm = max(int(a.get("confirm", ac.confirm)), 1)
     ac.api_key = str(a.get("api_key") or ac.api_key)
+    ac.target_check = bool(a.get("target_check", ac.target_check))
+    ac.target_check_after = float(a.get("target_check_after", ac.target_check_after))
     return cfg
 
 

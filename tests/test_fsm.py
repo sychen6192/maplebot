@@ -643,6 +643,56 @@ def test_attack_stall_check_can_be_disabled(cfg, profile):
         t += 0.5
 
 
+def test_attack_carries_the_box_it_is_hitting(cfg, profile):
+    """runner 要拿這個框去問督導層，所以必須是最近的那隻、不是隨便一隻。"""
+    near, far = _mob(420), _mob(600)
+    action = fsm.decide(_state(mobs=[far, near]), cfg, profile, _rt(), NOW, CENTER)
+    assert isinstance(action, fsm.Attack)
+    assert action.target == (405, 248, 30, 24)
+
+
+def test_supervisor_is_consulted_only_after_standing_still_long_enough(cfg, profile):
+    """82% 的攻擊串 2 秒內就打完，不能每一下都去問——只問原地打太久的。"""
+    rt = _rt()
+    st = _state(mobs=[_mob(400)])
+    first = fsm.decide(st, cfg, profile, rt, NOW, CENTER)
+    assert fsm.stalled_attack_target(rt, first, NOW, after=4.0) is None
+    later = fsm.decide(st, cfg, profile, rt, NOW + 4.0, CENTER)
+    assert fsm.stalled_attack_target(rt, later, NOW + 4.0, after=4.0) == later.target
+
+
+def test_supervisor_is_not_consulted_when_not_attacking_or_disabled(cfg, profile):
+    rt = _rt()
+    st = _state(mobs=[_mob(400)])
+    fsm.decide(st, cfg, profile, rt, NOW, CENTER)
+    attack = fsm.decide(st, cfg, profile, rt, NOW + 5, CENTER)
+    assert fsm.stalled_attack_target(rt, fsm.Wait("x"), NOW + 5, after=4.0) is None
+    assert fsm.stalled_attack_target(rt, attack, NOW + 5, after=0) is None
+
+
+def test_moving_while_attacking_never_asks_the_supervisor(cfg, profile):
+    """邊打邊移動就是有進展，跟 12 秒保護同一個判準。"""
+    rt = _rt()
+    t = NOW
+    for i in range(20):
+        action = fsm.decide(_state(minimap_xy=(60 + i * 4, 30), mobs=[_mob(400)]),
+                            cfg, profile, rt, t, CENTER)
+        assert fsm.stalled_attack_target(rt, action, t, after=4.0) is None
+        t += 0.5
+
+
+def test_a_supervisor_break_stops_attacking_and_resumes_later(cfg, profile):
+    """督導說不是怪 -> 跟 12 秒保護一樣讓路，時間到再恢復。"""
+    rt = _rt()
+    st = _state(mobs=[_mob(400)])
+    fsm.decide(st, cfg, profile, rt, NOW, CENTER)
+    rt.begin_attack_break(NOW + 4, cfg.safety.attack_break_seconds)
+    assert rt.attack_breaks == 1 and rt.attack_pos is None
+    assert isinstance(fsm.decide(st, cfg, profile, rt, NOW + 4.1, CENTER), fsm.Move)
+    after = NOW + 4 + cfg.safety.attack_break_seconds + 0.1
+    assert isinstance(fsm.decide(st, cfg, profile, rt, after, CENTER), fsm.Attack)
+
+
 def test_gap_without_targets_restarts_the_attack_timer(cfg, profile):
     """打一下、怪死了、隔很久又有新怪出現，不該把中間的空檔算成連續攻擊。"""
     rt = _rt()

@@ -26,12 +26,14 @@ class Stats:
     escapes: int = 0
     climbs: int = 0
     loots: int = 0
+    target_breaks: int = 0     # 督導點名說「打的不是怪」而提早讓路的次數
 
     def summary(self) -> str:
         mins = (time.monotonic() - self.started) / 60
         return (f"運行 {mins:.1f} 分鐘 | tick {self.ticks} | 攻擊 {self.attacks} 次 | "
                 f"buff {self.buffs} 次 | HP 藥 {self.potions_hp} | MP 藥 {self.potions_mp} | "
-                f"撿物 {self.loots} 次 | 垂直移動 {self.climbs} 次 | 脫困 {self.escapes} 次")
+                f"撿物 {self.loots} 次 | 垂直移動 {self.climbs} 次 | 脫困 {self.escapes} 次"
+                + (f" | 督導點名 {self.target_breaks} 次" if self.target_breaks else ""))
 
 
 class Executor:

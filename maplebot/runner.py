@@ -2,6 +2,7 @@
 
 職責只剩調度與安全：實際辨識在 Perceiver、按鍵在 Executor。
 """
+import threading
 import time
 from dataclasses import dataclass
 from typing import Optional, Tuple
@@ -92,6 +93,11 @@ class Runner:
         self._idle_warned = False
         self._follower_warned = False
         self._attack_breaks = 0
+        # 督導點名：上一次問的是哪一串攻擊（用 rt.attack_since 識別）、什麼時候問的，
+        # 以及背景執行緒帶回來、還沒套用的 (那一串, 判定)
+        self._target_asked: Optional[tuple] = None
+        self._target_verdict: Optional[tuple] = None
+        self._target_lock = threading.Lock()   # 背景執行緒寫、主迴圈讀完清掉
         self._bar_warned = False
         self._jump_warned = False
         self._started_wall = time.time()
@@ -420,6 +426,58 @@ class Runner:
             self.cfg.safety.attack_stall_seconds,
             self.cfg.safety.attack_break_seconds, self.rt.attack_breaks)
 
+    def _apply_target_verdict(self, now: float) -> None:
+        """督導層說正在打的不是怪 -> 讓路。在 decide 之前呼叫，這一 tick 就生效。
+
+        只認同一串攻擊的答案：答案要 1~3 秒才回來，這段時間怪可能早就死了、
+        角色也可能移動過開了新的一串——拿舊答案打斷新的一串是錯的。
+        """
+        with self._target_lock:
+            pending, self._target_verdict = self._target_verdict, None
+        if pending is None:
+            return
+        streak, verdict = pending
+        kind = (verdict or {}).get("kind", "monster")
+        if kind == "monster" or self.rt.attack_pos is None \
+                or streak != self.rt.attack_since:
+            self.log.debug("督導點名回覆 %s（%s）——%s", kind, (verdict or {}).get("note", ""),
+                           "照打" if kind == "monster" else "那串攻擊已經結束，不採用")
+            return
+        stalled = now - self.rt.attack_since
+        self.rt.begin_attack_break(now, self.cfg.safety.attack_break_seconds)
+        self._attack_breaks = self.rt.attack_breaks   # 別再印 12 秒保護那句
+        self.stats.target_breaks += 1
+        self.log.warning("督導點名：正在打的是 %s（%s），原地打了 %.1f 秒，先去巡邏 %.0f 秒",
+                         kind, (verdict or {}).get("note", ""), stalled,
+                         self.cfg.safety.attack_break_seconds)
+
+    def _request_target_check(self, action, frame: np.ndarray, now: float) -> None:
+        """原地打太久還打不死，就把正在打的框送去問督導層（非同步，不擋主迴圈）。"""
+        if not self.advisor.checks_targets:
+            return
+        after = self.cfg.advisor.target_check_after
+        box = fsm.stalled_attack_target(self.rt, action, now, after)
+        if box is None:
+            return
+        streak = self.rt.attack_since
+        # 同一串每 after 秒最多問一次：第一次答「是怪」但還是原地打不死，就再問。
+        # 最難的框（半個掛機玩家＋蝸牛造型的寵物）單次只對 7/10，問兩次漏掉的
+        # 機率約 1 成；真的怪 70 次沒誤判過，多問一次幾乎不增加誤判
+        last = self._target_asked
+        if last is not None and last[0] == streak and now - last[1] < after:
+            return
+        pfx, pfy, _, _ = self.cfg.region("playfield")
+        x, y, w, h = box
+
+        def done(verdict, streak=streak):
+            with self._target_lock:
+                self._target_verdict = (streak, verdict)
+
+        if self.advisor.check_target_async(frame, (x + pfx, y + pfy, w, h), done):
+            self._target_asked = (streak, now)
+            self.log.debug("督導點名：原地打了 %.1f 秒，詢問目標框 %s", now - streak,
+                           (x + pfx, y + pfy, w, h))
+
     # ---- 系統監看與時間限制 ----
 
     def _attach_game_process(self) -> None:
@@ -741,9 +799,11 @@ class Runner:
                     self._on_player_lost()
                     continue
 
+                self._apply_target_verdict(now)
                 with self.metrics.stage("decide"):
                     action = fsm.decide(state, self.cfg, self.profile, self.rt,
                                         now, self.playfield_center)
+                self._request_target_check(action, frame, now)
                 if self.dry_run:
                     # Wait 的理由一定要印出來——否則「每 tick 都 Wait」看起來
                     # 像卡住，實際上是某條規則一直擋著（例如誤判有其他玩家）

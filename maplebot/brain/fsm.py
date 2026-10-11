@@ -74,6 +74,9 @@ class Attack:
     repeat: int
     aoe: bool = False
     index: int = 0        # profile.active_skills() 裡的序號，用來記各自的冷卻
+    # 正在打的那個框 (x, y, w, h)，playfield 座標。executor 用不到；runner 在
+    # 一直打不死時拿它去問督導層「這到底是不是怪」，見 stalled_attack_target
+    target: Optional[Tuple[int, int, int, int]] = None
 
 
 @dataclass
@@ -190,6 +193,16 @@ class Runtime:
     def note_skill(self, index: int, now: float) -> None:
         self.last_skill[index] = now
         self.last_attack = now
+
+    def begin_attack_break(self, now: float, seconds: float) -> None:
+        """別再打這一串了，先讓路給巡邏 seconds 秒。
+
+        兩個地方會叫它：decide 自己發現打了 attack_stall_seconds 位置都沒變，
+        以及 runner 收到督導層說「正在打的不是怪」——後者通常早好幾秒。
+        """
+        self.attack_break_until = now + seconds
+        self.attack_breaks += 1
+        self.attack_pos = None
 
     def pause_climb(self) -> None:
         """離開繩子去重新對位：清掉這一趟的 y 觀測，但保留重試次數，
@@ -411,6 +424,28 @@ def _attack_stalled(rt: Runtime, player: Tuple[int, int], now: float,
     return now - rt.attack_since >= limit
 
 
+def stalled_attack_target(rt: Runtime, action: Action, now: float,
+                          after: float) -> Optional[Tuple[int, int, int, int]]:
+    """這一串攻擊已經原地打了 after 秒 -> 回傳正在打的框，給 runner 去問督導層。
+
+    _attack_stalled 只看「角色有沒有動」，分不出「站著連殺走過來的蝸牛」跟
+    「對著掛機玩家揮空氣」，所以門檻只能放寬到 12 秒。實測（1366x768 訓練場，
+    15 分鐘 286 串攻擊）82% 的攻擊串 2 秒內就結束，>=4 秒的只有 25 串；
+    而偵測框有 4 成根本不是怪（其他玩家、寵物、角色自己、地上的掉落物）。把框
+    附近裁切放大再問，14 個框各問 10 次：不是怪的抓到 67/70、真的怪誤判 0/70，
+    中位數 0.5 秒。所以 4 秒先問一次，比乾等 12 秒早一半以上脫身；萬一誤判，
+    代價也只是提早巡邏 attack_break_seconds 秒。
+
+    回傳 None = 現在不用問（不是攻擊、還沒到時間、或這串不是原地打）。
+    同一串多久問一次由呼叫端決定——用 rt.attack_since 當這一串的識別。
+    """
+    if after <= 0 or not isinstance(action, Attack) or action.target is None:
+        return None
+    if rt.attack_pos is None or now - rt.attack_since < after:
+        return None
+    return action.target
+
+
 def _check_stuck(rt: Runtime, player: Tuple[int, int], now: float,
                  stuck_px: int, stuck_seconds: float) -> bool:
     """巡邏移動中位置長時間沒變就視為卡住（地形卡死、被彈回）。"""
@@ -509,9 +544,7 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
                 continue
             if _attack_stalled(rt, state.minimap_xy, now, pat.stuck_px,
                                cfg.safety.attack_stall_seconds):
-                rt.attack_break_until = now + cfg.safety.attack_break_seconds
-                rt.attack_breaks += 1
-                rt.attack_pos = None
+                rt.begin_attack_break(now, cfg.safety.attack_break_seconds)
                 break             # 跳出攻擊，往下走巡邏
             nearest = min(in_range, key=lambda m: abs(m.cx - center_x))
             # 遠程職業被貼臉時先退開再打（近戰把 keep_away_px 設 0 關掉）。
@@ -521,8 +554,10 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
                 return Chase(-1 if nearest.cx >= center_x else 1,
                              pat.max_step_seconds, away=True)
             direction = 1 if nearest.cx >= center_x else -1
+            target = (int(nearest.cx - nearest.w / 2), int(nearest.cy - nearest.h / 2),
+                      int(nearest.w), int(nearest.h))
             return Attack(direction, sk.key, sk.cast_seconds, sk.repeat,
-                          aoe=(sk.type == "aoe"), index=i)
+                          aoe=(sk.type == "aoe"), index=i, target=target)
 
         if not mobs_near:
             rt.attack_pos = None   # 沒目標了，連續攻擊的計時重來

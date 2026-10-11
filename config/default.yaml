@@ -304,3 +304,13 @@ advisor:
   # 伺服器要 key 時填這裡（送 Authorization: Bearer）。key 請寫在 config/local.yaml，
   # 不要寫在這個會進版控的檔案
   api_key: ""
+  # 空揮時找督導點名：原地連續攻擊 target_check_after 秒還沒打死，就把正在打的框
+  # 送去問「這是不是怪」，不是（其他玩家、寵物、角色自己、NPC、地上的掉落物）就
+  # 提早讓路，不用等 safety.attack_stall_seconds 的 12 秒；答「是怪」但還打不死，
+  # 每隔 target_check_after 秒再問一次。
+  # 實測 1366x768 訓練場：偵測框有 4 成不是怪；把框附近裁切放大再問，14 個框各問
+  # 10 次，不是怪的抓到 67/70、真的怪誤判 0/70，中位數 0.5 秒。而 82% 的正常攻擊串
+  # 2 秒內就結束，>=4 秒的 15 分鐘才 25 串，所以不會一直去問。
+  # 督導層沒回應時原本的 12 秒保護照常兜底
+  target_check: true
+  target_check_after: 4.0
