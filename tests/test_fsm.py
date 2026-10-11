@@ -46,6 +46,88 @@ def _mob(cx, cy=260):
     return Mob(cx=cx, cy=cy, w=30, h=24, score=0.9, name="m")
 
 
+def _feed_hp(cfg, profile, rt, hps, t=NOW, step=1.0):
+    """依序餵 HP 讀值；喝藥時照 executor 的做法記下冷卻。回傳 (動作們, 下一個時間)。"""
+    actions = []
+    for hp in hps:
+        a = fsm.decide(_state(hp=hp), cfg, profile, rt, t, CENTER)
+        if isinstance(a, fsm.DrinkPotion):
+            rt.note_potion(a.kind, t)
+        actions.append(a)
+        t += step
+    return actions, t
+
+
+def test_potions_that_do_nothing_are_noticed_and_not_spammed(cfg, profile):
+    """實機藥水用完後 3 分多鐘按了 200 多次喝藥，HP 50% -> 22% 才停機。
+    連喝 POTION_DRY_PRESSES 瓶都沒回升就該認定用完了，之後每 20 秒才試一瓶。"""
+    rt = _rt()
+    actions, t = _feed_hp(cfg, profile, rt, [0.40] * fsm.POTION_DRY_PRESSES)
+    assert all(isinstance(a, fsm.DrinkPotion) for a in actions)
+    assert rt.hp_potions_dry
+    later, t = _feed_hp(cfg, profile, rt, [0.40] * 10, t=t)
+    assert not any(isinstance(a, fsm.DrinkPotion) for a in later)   # 不再狂按，繼續做別的
+    last_drink = NOW + fsm.POTION_DRY_PRESSES - 1
+    retry, _ = _feed_hp(cfg, profile, rt, [0.40], t=last_drink + fsm.POTION_DRY_RETRY_SECONDS)
+    assert isinstance(retry[0], fsm.DrinkPotion)                    # 隔一陣子再試一瓶
+
+
+def test_potions_that_work_never_count_as_dry(cfg, profile):
+    rt = _rt()
+    # 每瓶回 5~7%，中間被打掉一些：一直喝也不該被當成用完
+    hps = [0.40, 0.47, 0.42, 0.49, 0.43, 0.48, 0.41, 0.47, 0.44, 0.49] * 3
+    _feed_hp(cfg, profile, rt, hps)
+    assert not rt.hp_potions_dry
+
+
+def test_dry_potions_with_a_return_scroll_go_home_early(cfg, profile):
+    """有回城卷就趁血還多的時候回城，不要等到危險線才停。"""
+    profile.panic_return_key = "home"
+    rt = _rt()
+    actions, _ = _feed_hp(cfg, profile, rt, [0.40] * (fsm.POTION_DRY_PRESSES + 1))
+    assert isinstance(actions[-1], fsm.Panic) and actions[-1].return_home
+    assert "藥水" in actions[-1].reason
+
+
+def test_a_restock_clears_the_dry_flag(cfg, profile):
+    rt = _rt()
+    _, t = _feed_hp(cfg, profile, rt, [0.40] * fsm.POTION_DRY_PRESSES)
+    assert rt.hp_potions_dry
+    _feed_hp(cfg, profile, rt, [0.40, 0.48], t=t)     # 補了藥，HP 回升
+    assert not rt.hp_potions_dry
+
+
+def test_the_low_hp_panic_says_the_potions_ran_out(cfg, profile):
+    rt = _rt()
+    _, t = _feed_hp(cfg, profile, rt, [0.40] * fsm.POTION_DRY_PRESSES)
+    actions, _ = _feed_hp(cfg, profile, rt, [0.20] * 10, t=t)
+    panic = next(a for a in actions if isinstance(a, fsm.Panic))
+    assert "藥水沒有效果" in panic.reason
+
+
+def test_status_bars_gone_is_not_low_hp(cfg, profile):
+    """斷線、讀圖時狀態列整條不見，HP/MP 都讀成 0——不能灌藥，也不能判定瀕死。
+    實機斷線那次 bot 對著登入畫面按了 4 秒喝藥鍵，然後以「HP 剩 0%」停機。"""
+    rt = _rt()
+    for i in range(20):
+        action = fsm.decide(_state(hp=0.0, mp=0.0), cfg, profile, rt, NOW + i, CENTER)
+        assert isinstance(action, fsm.Wait) and "狀態列" in action.reason
+    assert rt.low_hp_streak == 0
+
+
+def test_real_low_hp_with_mp_still_on_screen_is_treated(cfg, profile):
+    """真的快死時 MP 條還在：照舊先喝藥。"""
+    action = fsm.decide(_state(hp=0.0, mp=0.6), cfg, profile, _rt(), NOW, CENTER)
+    assert isinstance(action, fsm.DrinkPotion)
+
+
+def test_status_bars_gone_needs_exp_to_be_gone_too():
+    """有讀 EXP 時三條都要是 0：升級後 EXP 剛好 0%，但 HP 不會同時是 0。"""
+    assert GameState(ts=NOW, hp=0.0, mp=0.0, exp=0.0).status_bars_gone
+    assert not GameState(ts=NOW, hp=0.0, mp=0.0, exp=0.42).status_bars_gone
+    assert not GameState(ts=NOW, hp=0.5, mp=0.0, exp=0.0).status_bars_gone
+
+
 def test_vision_failure_waits(cfg, profile):
     st = GameState(ts=NOW, hp=None, minimap_xy=None)
     assert isinstance(fsm.decide(st, cfg, profile, _rt(), NOW, CENTER), fsm.Wait)
@@ -196,15 +278,31 @@ def test_waypoint_keys_run_on_arrival(cfg, profile):
 def test_stuck_triggers_escape(cfg, profile):
     rt = _rt()
     pos = (60, 30)  # 離目標 40 還很遠，位置一直不動
-    a1 = fsm.decide(_state(minimap_xy=pos), cfg, profile, rt, NOW, CENTER)
-    assert isinstance(a1, fsm.Move)
-    a2 = fsm.decide(_state(minimap_xy=pos), cfg, profile, rt, NOW + 2.0, CENTER)
-    assert isinstance(a2, fsm.Move)  # 還沒超過 stuck_seconds
-    a3 = fsm.decide(_state(minimap_xy=pos), cfg, profile, rt, NOW + 4.5, CENTER)
-    assert isinstance(a3, fsm.Escape)
-    assert a3.jump_key == "alt"
-    a4 = fsm.decide(_state(minimap_xy=pos), cfg, profile, rt, NOW + 4.6, CENTER)
-    assert isinstance(a4, fsm.Move)  # 脫困後重新計時，不會連發
+    t, actions = NOW, []
+    while t <= NOW + profile.patrol.stuck_seconds:   # 巡邏一步一步走（每 0.5 秒一 tick）
+        actions.append(fsm.decide(_state(minimap_xy=pos), cfg, profile, rt, t, CENTER))
+        t += 0.5
+    assert all(isinstance(a, fsm.Move) for a in actions[:-1])   # 還沒超過 stuck_seconds
+    assert isinstance(actions[-1], fsm.Escape) and actions[-1].jump_key == "alt"
+    after = fsm.decide(_state(minimap_xy=pos), cfg, profile, rt, t, CENTER)
+    assert isinstance(after, fsm.Move)  # 脫困後重新計時，不會連發
+
+
+def test_fighting_in_place_is_not_a_stuck_patrol(cfg, profile):
+    """打了 5 秒怪（人站著不動）回到巡邏，不能馬上被當成卡了 4 秒——
+    實機至少 10 次督導點名讓路之後同一秒就脫困跳。"""
+    rt = _rt()
+    pos = (60, 30)
+    assert isinstance(fsm.decide(_state(minimap_xy=pos), cfg, profile, rt, NOW, CENTER),
+                      fsm.Move)
+    t = NOW + 0.5
+    while t < NOW + 6:
+        action = fsm.decide(_state(minimap_xy=pos, mobs=[_mob(400)]), cfg, profile, rt, t,
+                            CENTER)
+        assert isinstance(action, fsm.Attack)
+        t += 0.5
+    resumed = fsm.decide(_state(minimap_xy=pos), cfg, profile, rt, t, CENTER)
+    assert isinstance(resumed, fsm.Move)
 
 
 def test_moving_player_never_escapes(cfg, profile):
@@ -566,6 +664,132 @@ def test_climb_stall_escapes_then_gives_up(cfg, profile):
     assert rt.climb_retries == 0  # 換點後重新計數
 
 
+def _give_up_climb(cfg, profile, pos, ticks=4):
+    """retries=0：Climb x3 之後放棄。回傳最後那個 Wait。"""
+    profile.patrol.climb_retries = 0
+    rt = _rt()
+    seq = [fsm.decide(_state(minimap_xy=pos), cfg, profile, rt, NOW + i, CENTER)
+           for i in range(ticks)]
+    assert [type(a).__name__ for a in seq] == ["Climb", "Climb", "Climb", "Wait"]
+    return rt, seq[-1]
+
+
+def test_failing_a_climb_also_skips_the_rest_of_that_floor(cfg, profile):
+    """繩沒抓到，後面在上面那層的點也到不了——實機在下面那層對著沒有繩的地方
+    各跳抓了一輪，白耗 75 秒。要直接跳到第一個不用往上爬的點。"""
+    profile.patrol.waypoints = [Waypoint(40, y=20), Waypoint(60, y=20),
+                                Waypoint(90, y=21), Waypoint(95, y=50)]
+    rt, wait = _give_up_climb(cfg, profile, pos=(41, 50))
+    assert rt.wp_index == 3
+    assert "連同後面 2 個" in wait.reason
+
+
+def test_a_failed_climb_does_not_skip_a_point_on_the_current_floor(cfg, profile):
+    profile.patrol.waypoints = [Waypoint(40, y=20), Waypoint(95, y=50), Waypoint(60, y=20)]
+    rt, wait = _give_up_climb(cfg, profile, pos=(41, 50))
+    assert rt.wp_index == 1
+    assert "連同" not in wait.reason
+
+
+def test_a_standing_grab_never_runs(cfg, profile):
+    profile.patrol.waypoints = [Waypoint(40, y=20), Waypoint(95, y=50)]
+    action = fsm.decide(_state(minimap_xy=(40, 50)), cfg, profile, _rt(), NOW, CENTER)
+    assert isinstance(action, fsm.Climb) and action.jump_key and action.run == 0
+
+
+def _run_grab_profile(profile):
+    profile.patrol.waypoints = [Waypoint(40, y=20, grab="run", run_up=4, tolerance=1),
+                                Waypoint(60, y=20), Waypoint(95, y=50)]
+
+
+def test_a_running_grab_starts_its_run_up_away_from_the_rope(cfg, profile):
+    """在繩子正下方起跳實機 0/35：最高點都已經過了繩子。要先退到繩子前 run_up 格，
+    朝繩子跑過去跳，最高點才落在繩上；沒抓到就換到另一側的起跳點。"""
+    _run_grab_profile(profile)
+    rt = _rt()
+    # 從左邊過來：起跳點是 40-4=36，朝右跑
+    move = fsm.decide(_state(minimap_xy=(30, 50)), cfg, profile, rt, NOW, CENTER)
+    assert isinstance(move, fsm.Move) and move.direction == 1 and move.target_x == 36
+    jump = fsm.decide(_state(minimap_xy=(36, 50)), cfg, profile, rt, NOW + 1, CENTER)
+    assert isinstance(jump, fsm.Climb) and jump.jump_key and jump.run == 1
+    # 沒抓到，落在繩子右邊 47：換右側起跳點 44，朝左跑
+    move = fsm.decide(_state(minimap_xy=(47, 50)), cfg, profile, rt, NOW + 2, CENTER)
+    assert isinstance(move, fsm.Move) and move.direction == -1 and move.target_x == 44
+    jump = fsm.decide(_state(minimap_xy=(44, 50)), cfg, profile, rt, NOW + 3, CENTER)
+    assert isinstance(jump, fsm.Climb) and jump.run == -1
+
+
+def test_a_running_grab_remembers_the_side_that_worked(cfg, profile):
+    """同一條繩兩邊不一定一樣好抓（實機往右 8/10、往左 1/3）：抓到過一次，
+    下一圈就先從那一邊跑，不管角色是從哪一側走過來的。"""
+    _run_grab_profile(profile)
+    rt = _rt()
+    t = iter(range(100))
+    step = lambda xy: fsm.decide(_state(minimap_xy=xy), cfg, profile, rt,  # noqa: E731
+                                 NOW + next(t), CENTER)
+    step((50, 50))                                   # 從右邊過來 -> 右側起跳點 44
+    assert step((44, 50)).run == -1                  # 往左跑，沒抓到
+    step((33, 50))                                   # 落在左邊 -> 換左側起跳點 36
+    assert step((36, 50)).run == 1                   # 往右跑
+    step((40, 44))                                   # 抓到了，在繩上往上爬
+    step((40, 20))                                   # 到了上面那層
+    assert rt.grab_memory == {0: 1}
+    rt.wp_index = 0                                  # 下一圈又輪到這條繩
+    again = step((50, 50))                           # 一樣從右邊過來
+    assert isinstance(again, fsm.Move) and again.target_x == 36   # 直接去左側、往右跑
+
+
+def test_once_on_the_rope_a_running_grab_just_climbs(cfg, profile):
+    """抓到之後人在繩子上（x = 繩子），不能又走回起跳點、也不能再跳。"""
+    _run_grab_profile(profile)
+    rt = _rt()
+    fsm.decide(_state(minimap_xy=(30, 50)), cfg, profile, rt, NOW, CENTER)
+    fsm.decide(_state(minimap_xy=(36, 50)), cfg, profile, rt, NOW + 1, CENTER)
+    climb = fsm.decide(_state(minimap_xy=(40, 44)), cfg, profile, rt, NOW + 2, CENTER)
+    assert isinstance(climb, fsm.Climb) and climb.direction == -1
+    assert climb.run == 0 and not climb.jump_key
+
+
+def test_a_running_grab_gives_up_after_the_same_budget(cfg, profile):
+    """沒抓到時人落在幾格外、對位跑掉，原本的停滯計數會歸零——所以另外數跳幾次，
+    跳滿 (climb_retries+1) x climb_stalls 就放棄，連同上面那層的點。"""
+    _run_grab_profile(profile)
+    pat = profile.patrol
+    budget = (pat.climb_retries + 1) * pat.climb_stalls
+    rt = _rt()
+    t = NOW
+    x = 30
+    runs = []
+    for i in range(budget * 3):
+        t += 1
+        action = fsm.decide(_state(minimap_xy=(x, 50)), cfg, profile, rt, t, CENTER)
+        if isinstance(action, fsm.Move):
+            x = action.target_x                  # 走到起跳點
+        elif isinstance(action, fsm.Climb):
+            runs.append(action.run)
+            x = 40 + 7 * action.run              # 沒抓到，落在跑的那一側
+        else:
+            break
+    assert runs == [1, -1] * (budget // 2) + [1] * (budget % 2)
+    assert isinstance(action, fsm.Wait) and "連同後面 1 個" in action.reason
+    assert rt.wp_index == 2
+
+
+def test_a_failed_drop_skips_nothing_extra(cfg, profile):
+    """下跳失敗（例如站上小平台跳不下去）跟以前一樣只放棄這一個點。"""
+    profile.patrol.waypoints = [Waypoint(40, y=80, descend="jump"), Waypoint(60, y=80),
+                                Waypoint(95, y=50)]
+    rt, _ = _give_up_climb(cfg, profile, pos=(41, 50))
+    assert rt.wp_index == 1
+
+
+def test_a_failed_climb_stops_skipping_at_an_x_only_point(cfg, profile):
+    """只管 x 的點不分樓層，在哪一層都走得到，不能跳過。"""
+    profile.patrol.waypoints = [Waypoint(40, y=20), Waypoint(70), Waypoint(60, y=20)]
+    rt, _ = _give_up_climb(cfg, profile, pos=(41, 50))
+    assert rt.wp_index == 1
+
+
 def test_climb_retries_survive_realignment(cfg, profile):
     """脫困會把位置撞歪；走回去對位時不能把重試次數歸零，否則永遠放棄不了。"""
     profile.patrol.waypoints = [Waypoint(40, y=20), Waypoint(95)]
@@ -641,6 +865,56 @@ def test_attack_stall_check_can_be_disabled(cfg, profile):
     for _ in range(120):
         assert isinstance(fsm.decide(st, cfg, profile, rt, t, CENTER), fsm.Attack)
         t += 0.5
+
+
+def test_attack_carries_the_box_it_is_hitting(cfg, profile):
+    """runner 要拿這個框去問督導層，所以必須是最近的那隻、不是隨便一隻。"""
+    near, far = _mob(420), _mob(600)
+    action = fsm.decide(_state(mobs=[far, near]), cfg, profile, _rt(), NOW, CENTER)
+    assert isinstance(action, fsm.Attack)
+    assert action.target == (405, 248, 30, 24)
+
+
+def test_supervisor_is_consulted_only_after_standing_still_long_enough(cfg, profile):
+    """82% 的攻擊串 2 秒內就打完，不能每一下都去問——只問原地打太久的。"""
+    rt = _rt()
+    st = _state(mobs=[_mob(400)])
+    first = fsm.decide(st, cfg, profile, rt, NOW, CENTER)
+    assert fsm.stalled_attack_target(rt, first, NOW, after=4.0) is None
+    later = fsm.decide(st, cfg, profile, rt, NOW + 4.0, CENTER)
+    assert fsm.stalled_attack_target(rt, later, NOW + 4.0, after=4.0) == later.target
+
+
+def test_supervisor_is_not_consulted_when_not_attacking_or_disabled(cfg, profile):
+    rt = _rt()
+    st = _state(mobs=[_mob(400)])
+    fsm.decide(st, cfg, profile, rt, NOW, CENTER)
+    attack = fsm.decide(st, cfg, profile, rt, NOW + 5, CENTER)
+    assert fsm.stalled_attack_target(rt, fsm.Wait("x"), NOW + 5, after=4.0) is None
+    assert fsm.stalled_attack_target(rt, attack, NOW + 5, after=0) is None
+
+
+def test_moving_while_attacking_never_asks_the_supervisor(cfg, profile):
+    """邊打邊移動就是有進展，跟 12 秒保護同一個判準。"""
+    rt = _rt()
+    t = NOW
+    for i in range(20):
+        action = fsm.decide(_state(minimap_xy=(60 + i * 4, 30), mobs=[_mob(400)]),
+                            cfg, profile, rt, t, CENTER)
+        assert fsm.stalled_attack_target(rt, action, t, after=4.0) is None
+        t += 0.5
+
+
+def test_a_supervisor_break_stops_attacking_and_resumes_later(cfg, profile):
+    """督導說不是怪 -> 跟 12 秒保護一樣讓路，時間到再恢復。"""
+    rt = _rt()
+    st = _state(mobs=[_mob(400)])
+    fsm.decide(st, cfg, profile, rt, NOW, CENTER)
+    rt.begin_attack_break(NOW + 4, cfg.safety.attack_break_seconds)
+    assert rt.attack_breaks == 1 and rt.attack_pos is None
+    assert isinstance(fsm.decide(st, cfg, profile, rt, NOW + 4.1, CENTER), fsm.Move)
+    after = NOW + 4 + cfg.safety.attack_break_seconds + 0.1
+    assert isinstance(fsm.decide(st, cfg, profile, rt, after, CENTER), fsm.Attack)
 
 
 def test_gap_without_targets_restarts_the_attack_timer(cfg, profile):

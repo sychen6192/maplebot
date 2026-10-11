@@ -162,6 +162,36 @@ patrol:
     assert wps[2].y is None            # 單層寫法不受影響
 
 
+def test_profile_waypoint_grab(tmp_path):
+    path = _write(tmp_path / "p.yaml", """
+patrol:
+  waypoints:
+    - { x: 54, y: 56, tolerance: 1, grab: RUN }
+    - { x: 74, y: 72 }
+""")
+    wps = load_profile(path).patrol.waypoints
+    assert wps[0].grab == "run" and wps[0].tolerance == 1
+    assert wps[0].run_up == 4          # 沒寫就是 4（1366x768 實錄：50 起跳、54 抓到）
+    assert wps[1].grab == "stand"      # 沒寫就是站定跳抓（原本的行為）
+
+
+def test_profile_waypoint_run_up(tmp_path):
+    path = _write(tmp_path / "p.yaml",
+                  "patrol: { waypoints: [{ x: 54, y: 56, grab: run, run_up: 6 }] }\n")
+    assert load_profile(path).patrol.waypoints[0].run_up == 6
+    bad = _write(tmp_path / "q.yaml",
+                 "patrol: { waypoints: [{ x: 54, y: 56, grab: run, run_up: 0 }] }\n")
+    with pytest.raises(ConfigError):
+        load_profile(bad)
+
+
+def test_profile_bad_grab(tmp_path):
+    path = _write(tmp_path / "p.yaml",
+                  "patrol: { waypoints: [{ x: 10, y: 5, grab: fly }] }\n")
+    with pytest.raises(ConfigError):
+        load_profile(path)
+
+
 def test_profile_bad_descend(tmp_path):
     path = _write(tmp_path / "p.yaml",
                   "patrol: { waypoints: [{ x: 10, descend: teleport }] }\n")

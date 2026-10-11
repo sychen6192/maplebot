@@ -38,3 +38,14 @@ class GameState:
     @property
     def vision_ok(self) -> bool:
         return self.hp is not None and self.minimap_xy is not None
+
+    @property
+    def status_bars_gone(self) -> bool:
+        """HP、MP（有讀 EXP 的話連 EXP）同時是 0：狀態列整條不在畫面上，不是快死了。
+
+        bar_ratio 找不到顏色一律回 0.0（寧可當低血），所以斷線、讀圖、換頻道時
+        三條會一起變 0；真的瀕死或陣亡時 MP、EXP 條都還在。實機 2026-10-11
+        遊戲斷線停在選擇伺服器的畫面：bot 對著登入畫面連按 4 秒喝藥，然後以
+        「HP 剩 0%」停機，收工報告還把 EXP 68% -> 0% 算成升級一次。
+        """
+        return self.hp == 0.0 and self.mp == 0.0 and self.exp in (None, 0.0)

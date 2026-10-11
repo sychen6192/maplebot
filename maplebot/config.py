@@ -220,6 +220,14 @@ class AdvisorCfg:
     # 要連續幾輪都判定異常才真的暫停。VLM 偶爾會把常駐 HUD（勳章名牌、
     # 任務面板）看成彈出視窗，一次誤判就暫停等於整晚白掛。
     confirm: int = 2
+    # 有設才送 Authorization: Bearer。本機的 Ollama 不需要，但模型放在另一台
+    # 機器、走 Tailscale 之類的網路時伺服器通常會要 key——沒帶就是每輪 401，
+    # 督導層靜靜地整場沒作用。放在不進版控的 local.yaml。
+    api_key: str = ""
+    # 原地打了 target_check_after 秒還打不死，就問督導層正在打的是不是怪，
+    # 不是就提早讓路（不用等 safety.attack_stall_seconds）。enabled 關著時不作用
+    target_check: bool = True
+    target_check_after: float = 4.0
 
 
 @dataclass
@@ -265,6 +273,10 @@ class Waypoint:
     keys: List[str] = field(default_factory=list)  # 抵達時依序敲的鍵（跳躍/技能等）
     tolerance: Optional[int] = None   # 這個點的 x 對位容差（None = 用 patrol.tolerance）。
                                       # 爬繩點的抓取窗口只有 ±1~2px，需要比走路更準
+    grab: str = "stand"               # 往上爬時怎麼跳抓：stand（站定原地跳）| run（助跑跳，
+                                      # 每次換邊掃過繩子；抓取窗口比小地圖一格還窄的繩用）
+    run_up: int = 4                   # grab: run 時在繩子前幾格起跳（小地圖 px），讓跳躍
+                                      # 最高點落在繩上。1366x768 實錄：50 起跳、54 抓到
 
 
 @dataclass
@@ -404,11 +416,19 @@ def _parse_waypoint(raw) -> Waypoint:
         tol = raw.get("tolerance")
         if tol is not None and int(tol) < 1:
             raise ConfigError(f"waypoint tolerance 至少要是 1，拿到: {tol!r}")
+        grab = str(raw.get("grab", "stand")).lower()
+        if grab not in ("stand", "run"):
+            raise ConfigError(
+                f"waypoint grab 只能是 stand（站定跳抓）或 run（助跑跳抓），拿到: {grab!r}")
+        run_up = int(raw.get("run_up", 4))
+        if run_up < 1:
+            raise ConfigError(f"waypoint run_up 至少要是 1，拿到: {run_up!r}")
         return Waypoint(x=float(raw["x"]),
                         y=None if y is None else float(y),
                         descend=descend,
                         keys=[str(k).lower() for k in keys],
-                        tolerance=None if tol is None else int(tol))
+                        tolerance=None if tol is None else int(tol),
+                        grab=grab, run_up=run_up)
     if isinstance(raw, (int, float)):
         return Waypoint(x=float(raw))
     raise ConfigError(f"看不懂的 waypoint 格式: {raw!r}")
@@ -602,6 +622,9 @@ def load_config(path: str, local_path: Optional[str] = None) -> AppCfg:
     ac.interval = float(a.get("interval", ac.interval))
     ac.timeout = float(a.get("timeout", ac.timeout))
     ac.confirm = max(int(a.get("confirm", ac.confirm)), 1)
+    ac.api_key = str(a.get("api_key") or ac.api_key)
+    ac.target_check = bool(a.get("target_check", ac.target_check))
+    ac.target_check_after = float(a.get("target_check_after", ac.target_check_after))
     return cfg
 
 

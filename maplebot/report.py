@@ -65,6 +65,7 @@ def build(profile_name: str, started_wall: float, ended_wall: float, now: float,
             "loots": stats.loots,
             "climbs": stats.climbs,
             "escapes": stats.escapes,
+            "target_breaks": stats.target_breaks,
             # 每分鐘攻擊次數比總次數有用：可以跨場次比較「這張地圖值不值得掛」
             "attacks_per_min": round(stats.attacks / (duration / 60), 1) if duration >= 60 else None,
         },
