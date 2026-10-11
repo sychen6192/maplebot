@@ -917,6 +917,29 @@ def test_a_supervisor_break_stops_attacking_and_resumes_later(cfg, profile):
     assert isinstance(fsm.decide(st, cfg, profile, rt, after, CENTER), fsm.Attack)
 
 
+def test_a_dropped_item_is_picked_up_before_moving_on(cfg, profile):
+    """督導說正在打的是掉落物：先撿起來（不然下一圈又被當成怪打），再讓路去巡邏。"""
+    profile.loot.key = "z"
+    rt = _rt()
+    st = _state(mobs=[_mob(400)])                 # 這個「怪」其實是地上的蝸牛殼
+    fsm.decide(st, cfg, profile, rt, NOW, CENTER)
+    rt.begin_attack_break(NOW + 5, cfg.safety.attack_break_seconds)
+    rt.loot_now = True
+    loot = fsm.decide(st, cfg, profile, rt, NOW + 5.1, CENTER)
+    assert isinstance(loot, fsm.Loot) and loot.key == "z"
+    assert rt.loot_now is False                   # 只撿一次
+    assert isinstance(fsm.decide(st, cfg, profile, rt, NOW + 5.6, CENTER), fsm.Move)
+
+
+def test_no_loot_key_means_no_pickup(cfg, profile):
+    profile.loot.key = ""
+    rt = _rt()
+    rt.begin_attack_break(NOW, cfg.safety.attack_break_seconds)
+    rt.loot_now = True
+    action = fsm.decide(_state(mobs=[_mob(400)]), cfg, profile, rt, NOW + 0.1, CENTER)
+    assert not isinstance(action, fsm.Loot) and rt.loot_now is False
+
+
 def test_gap_without_targets_restarts_the_attack_timer(cfg, profile):
     """打一下、怪死了、隔很久又有新怪出現，不該把中間的空檔算成連續攻擊。"""
     rt = _rt()

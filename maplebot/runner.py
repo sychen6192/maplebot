@@ -463,10 +463,12 @@ class Runner:
             return
         stalled = now - self.rt.attack_since
         self.rt.begin_attack_break(now, self.cfg.safety.attack_break_seconds)
+        self.rt.loot_now = kind == "item"             # 掉落物：先撿起來，不然下一圈又打它
         self._attack_breaks = self.rt.attack_breaks   # 別再印 12 秒保護那句
         self.stats.target_breaks += 1
-        self.log.warning("督導點名：正在打的是 %s（%s），原地打了 %.1f 秒，先去巡邏 %.0f 秒",
+        self.log.warning("督導點名：正在打的是 %s（%s），原地打了 %.1f 秒，%s先去巡邏 %.0f 秒",
                          kind, (verdict or {}).get("note", ""), stalled,
+                         "撿起來之後" if kind == "item" else "",
                          self.cfg.safety.attack_break_seconds)
 
     def _request_target_check(self, action, frame: np.ndarray, now: float) -> None:

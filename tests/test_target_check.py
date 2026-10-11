@@ -64,6 +64,15 @@ def test_not_a_monster_for_this_streak_yields_to_patrol(runner):
     assert runner._attack_breaks == runner.rt.attack_breaks
 
 
+@pytest.mark.parametrize("kind, loot", [("item", True), ("player", False), ("pet", False)])
+def test_only_an_item_verdict_asks_for_a_pickup(runner, kind, loot):
+    """掉落物要撿起來才會消失；玩家、寵物撿不走，讓路就好。"""
+    _attacking(runner)
+    runner._target_verdict = (runner.rt.attack_since, {"kind": kind, "note": "x"})
+    runner._apply_target_verdict(NOW)
+    assert runner.rt.loot_now is loot
+
+
 @pytest.mark.parametrize("verdict", [{"kind": "monster", "note": "藍寶"}, None, {}])
 def test_monster_or_no_answer_keeps_attacking(runner, verdict):
     _attacking(runner)

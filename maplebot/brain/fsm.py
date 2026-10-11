@@ -189,6 +189,7 @@ class Runtime:
     grab_plan: int = 0                  # 下一次助跑跳抓往哪邊跑（0 = 還沒決定），每跳一次換邊
     grab_attempts: int = 0              # 這個巡邏點已經助跑跳抓幾次（換點歸零）
     grab_memory: Dict[int, int] = field(default_factory=dict)  # 巡邏點序號 -> 上次抓到時跑的方向
+    loot_now: bool = False              # 下一個 tick 先撿一次（runner 收到督導說「是掉落物」時設）
     hp_last: Optional[float] = None     # 上一幀的 HP（判斷藥水有沒有效）
     hp_potion_streak: int = 0           # 上次 HP 回升之後又喝了幾瓶
     hp_potion_since: Optional[float] = None
@@ -650,6 +651,15 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
             if _mp_below(state, buff.min_mp):
                 continue      # MP 不夠，等回魔再補，別空按
             return CastBuff(i, buff.key, buff.cast_seconds)
+
+        # 督導點名說正在打的是掉落物：先撿起來再走。光讓路的話它還留在原地，
+        # 下一圈又被描邊偵測當成怪打（實機 80 分鐘點名讓路 38 次，20 次是掉落物）。
+        # 平常「清完場才撿」的規則在這裡不適用——那個掉落物本身就讓範圍內永遠有「怪」
+        if rt.loot_now:
+            rt.loot_now = False
+            if profile.loot.key:
+                rt.last_loot = now
+                return Loot(profile.loot.key, max(profile.loot.taps, 1))
 
         # 依 profile 的順序挑第一個「放得出來又划算」的技能：
         # 冷卻好了、MP 夠、而且範圍內的怪數達到 min_mobs
