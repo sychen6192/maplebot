@@ -8,9 +8,10 @@
 """
 import base64
 import json
+import re
 import threading
 import time
-from typing import Callable, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -68,6 +69,109 @@ def crop_for_target(frame_bgr: np.ndarray, box: Tuple[int, int, int, int]) -> np
     return cv2.resize(crop, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
 
 
+# 離線標註用：整張畫面請模型自己框出每個物件（grounding），給 YOLO 當標籤。
+#
+# 為什麼不是「描邊老師框、督導逐框判」：描邊的閉合核在 1366 寬是 35px，相鄰
+# 的東西會黏成一框——蝸牛＋旁邊的楓幣＋蝸牛殼、三隻並排的水靈都只有一框，逐框
+# 判也只能說「裡面主要是怪」，學生學到的框就是糊的；一整排擠在一起的菇菇寬過
+# 上限還會整串被丟掉。10 張實測：督導判過是怪的老師框 65/68 被框到，另外多框到
+# 32 隻老師漏掉的；框成怪的 118 個裡錯 2~3 個（裝飾用的大香菇、蝸牛殼＋楓幣）。
+#
+# 「地上一叢香菇是裝飾」那句是抽查補上的：右邊傳送門旁那叢沒有臉的香菇道具，
+# 沒講的話一張圖會被框成 5 隻怪（巡邏的右端點就在那裡，學生學會了每圈都會去
+# 打它）；講了之後 4 張圖各問兩次，那叢一個都沒框，真的怪一隻沒少。
+#
+# 關掉思考（chat_template_kwargs）：開著要 2~9 秒、輸出長的常在想到一半被
+# max_tokens 截斷（10 次裡 5 次拿不到答案）；關掉後模型直接用原生的
+# bbox_2d 格式回，中位數 3.2 秒。座標是 0~1000 的相對座標。
+_GROUND_PROMPT = (
+    "這是 MapleStory 遊戲畫面。框出畫面中每一隻怪物（蝸牛、水靈、菇菇、樹妖等會動的生物；"
+    "被打時腳下會有「Lv.數字 名字」），也框出掉在地上的東西（蝸牛殼、楓幣、藥水、道具，label 用 item）、"
+    "玩家角色（腳下有名字牌、沒有 Lv，label 用 player）和寵物（label 用 pet）。"
+    "每個物件一個框、框要貼齊物件本身；背景的草叢、乾草堆、樹、花、介面不要框；"
+    "地上一叢一叢的香菇是背景裝飾（沒有眼睛、嘴巴），也不要框——菇菇怪物有眼睛和嘴巴。"
+    '以 JSON 陣列回傳，座標用 0~1000 的相對座標：[{"bbox_2d": [x1, y1, x2, y2], "label": "monster"}]'
+)
+_GROUND_TEMPERATURE = 0.2
+# 一張畫面 20~30 個物件、每個約 25 token。給太多只是讓陷入重複的回答（見
+# _drop_runaway）多跑幾秒；被截斷的尾巴 parse_grounding 會逐個物件撈回來。
+_GROUND_MAX_TOKENS = 2000
+_RUNAWAY_MIN = 4
+
+
+def _drop_runaway(objs: List[Tuple[str, Tuple[int, int, int, int]]]
+                  ) -> List[Tuple[str, Tuple[int, int, int, int]]]:
+    """丟掉模型陷入重複時吐出來的整串框。
+
+    實測一張畫面在平台上排了 51 個「item」：大小全是 22x16、y 一樣、x 每隔
+    21~22px 一個，鋪滿整條平台。真的怪或掉落物並排，大小和間距不會分毫不差，
+    所以同 label、同大小、在同一條線上等距排 _RUNAWAY_MIN 個以上就整串丟掉。
+    """
+    groups: dict = {}
+    for i, (label, (_, _, w, h)) in enumerate(objs):
+        groups.setdefault((label, w, h), []).append(i)
+    bad = set()
+    for idx in groups.values():
+        if len(idx) < _RUNAWAY_MIN:
+            continue
+        for along, across in ((0, 1), (1, 0)):          # 橫排、直排
+            line = [objs[i][1][across] for i in idx]
+            if max(line) - min(line) > 1:
+                continue
+            pos = sorted(objs[i][1][along] for i in idx)
+            steps = [b - a for a, b in zip(pos, pos[1:])]
+            if max(steps) - min(steps) <= 2:
+                bad.update(idx)
+    return [o for i, o in enumerate(objs) if i not in bad]
+
+
+def parse_grounding(text: str, width: int, height: int
+                    ) -> Optional[List[Tuple[str, Tuple[int, int, int, int]]]]:
+    """把模型回的 grounding 文字解成 [(label, (x, y, w, h))]，座標換回像素。
+
+    模型常包一層 ```json、或把 bbox_2d 寫成 bbox；輸出被截斷時整個陣列 parse
+    不了，就退回逐個物件撈，能救幾個是幾個。完全沒有 JSON 回 None（沒答到），
+    跟回 []（模型說畫面上沒東西）分開——標註時前者要重問，後者是負樣本。
+    """
+    start, end = text.find("["), text.rfind("]")
+    try:
+        items = json.loads(text[start:end + 1]) if 0 <= start < end else None
+    except json.JSONDecodeError:
+        items = None
+    if not isinstance(items, list):
+        chunks = re.findall(r"\{[^{}]*\}", text)
+        if not chunks:
+            return None
+        items = []
+        for chunk in chunks:
+            try:
+                items.append(json.loads(chunk))
+            except json.JSONDecodeError:
+                continue
+    def px(v: float, size: int) -> float:
+        return min(max(v, 0.0), 1000.0) * size / 1000
+
+    out = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        b = item.get("bbox_2d") or item.get("bbox")
+        if not isinstance(b, list) or len(b) != 4:
+            continue
+        try:
+            x1, y1, x2, y2 = (float(v) for v in b)
+        except (TypeError, ValueError):
+            continue
+        x1, x2 = sorted((px(x1, width), px(x2, width)))
+        y1, y2 = sorted((px(y1, height), px(y2, height)))
+        w, h = int(round(x2 - x1)), int(round(y2 - y1))
+        if w < 2 or h < 2:
+            continue
+        label = str(item.get("label") or item.get("kind") or "unknown").strip().lower()
+        out.append((label, (int(round(x1)), int(round(y1)), w, h)))
+    return _drop_runaway(out)
+
+
 class Advisor:
     def __init__(self, cfg: AdvisorCfg, on_abnormal: Callable[[str], None], logger):
         self.cfg = cfg
@@ -100,10 +204,15 @@ class Advisor:
         self._stop.set()
 
     def _loop(self) -> None:
+        asked = None
         while not self._stop.wait(self.cfg.interval):
             frame = self.latest_frame
-            if frame is None:
+            # 暫停時主迴圈不再擷取，latest_frame 停在暫停前那張。實測斷線那晚
+            # 對同一張斷線畫面每 20~45 秒問一次：每兩次就再「暫停」一次、再存
+            # 一張一樣的截圖、再響一次警示，還一直佔著模型唯一的 slot
+            if frame is None or frame is asked:
                 continue
+            asked = frame
             try:
                 verdict = self._ask(frame)
             except Exception as e:
@@ -168,33 +277,61 @@ class Advisor:
         return self._chat(_TARGET_PROMPT, crop_for_target(frame_bgr, box),
                           temperature=_TARGET_TEMPERATURE)
 
+    def ground(self, frame_bgr: np.ndarray, timeout: float = 60.0
+               ) -> Optional[List[Tuple[str, Tuple[int, int, int, int]]]]:
+        """整張畫面請模型框出每個物件，回傳 [(label, (x, y, w, h))]（像素座標）。
+
+        給離線標註用，不在即時迴圈裡呼叫：一次 3~5 秒，而且送 PNG——小怪只有
+        40px 寬，JPEG 的色塊會吃掉描邊。逾時另外給，整張畫面比單框問題慢得多。
+        回 None 表示沒拿到看得懂的答案（見 parse_grounding）。
+        """
+        h, w = frame_bgr.shape[:2]
+        for text in self._complete(_GROUND_PROMPT, frame_bgr, _GROUND_TEMPERATURE,
+                                   think=False, image_format="png",
+                                   max_tokens=_GROUND_MAX_TOKENS, timeout=timeout):
+            found = parse_grounding(text, w, h)
+            if found is not None:
+                return found
+        return None
+
     def _ask(self, frame_bgr: np.ndarray) -> Optional[dict]:
         return self._chat(_PROMPT, frame_bgr)
 
-    def _chat(self, prompt: str, frame_bgr: np.ndarray,
-              temperature: Optional[float] = None) -> Optional[dict]:
+    def _complete(self, prompt: str, frame_bgr: np.ndarray,
+                  temperature: Optional[float] = None, think: bool = True,
+                  image_format: str = "jpg", max_tokens: int = 1500,
+                  timeout: Optional[float] = None) -> Tuple[str, ...]:
+        """送一張圖＋提示，回傳 (content, reasoning) 兩段文字給呼叫端自己解析。"""
         import urllib.request
 
-        ok, buf = cv2.imencode(".jpg", frame_bgr, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        if image_format == "png":
+            ok, buf = cv2.imencode(".png", frame_bgr)
+            mime = "image/png"
+        else:
+            ok, buf = cv2.imencode(".jpg", frame_bgr, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            mime = "image/jpeg"
         if not ok:
-            return None
+            return ()
         b64 = base64.b64encode(buf.tobytes()).decode()
         payload = {
             "model": self.cfg.model,
             # thinking 模型（qwen3 系列）會先在 reasoning 欄位裡推理，
             # 上限給太小會在想到一半被截斷，content 永遠是空字串。
-            "max_tokens": 1500,
+            "max_tokens": max_tokens,
             "messages": [{
                 "role": "user",
                 "content": [
                     {"type": "text", "text": prompt},
                     {"type": "image_url",
-                     "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                     "image_url": {"url": f"data:{mime};base64,{b64}"}},
                 ],
             }],
         }
         if temperature is not None:
             payload["temperature"] = temperature
+        if not think:
+            # llama.cpp / vLLM 把這個轉給 chat template；不認得的伺服器會忽略
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
         headers = {"Content-Type": "application/json"}
         if self.cfg.api_key:
             headers["Authorization"] = f"Bearer {self.cfg.api_key}"
@@ -203,13 +340,17 @@ class Advisor:
             data=json.dumps(payload).encode(),
             headers=headers,
         )
-        with urllib.request.urlopen(req, timeout=self.cfg.timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout or self.cfg.timeout) as resp:
             data = json.loads(resp.read())
         msg = data["choices"][0]["message"]
+        return (msg.get("content") or "",
+                msg.get("reasoning") or msg.get("reasoning_content") or "")
+
+    def _chat(self, prompt: str, frame_bgr: np.ndarray,
+              temperature: Optional[float] = None) -> Optional[dict]:
         # thinking 模型的答案在 content，但推理被截斷時 content 會是空的——
         # 這時去 reasoning 欄位撈：模型通常在推理結尾就把 JSON 寫出來了。
-        for text in (msg.get("content") or "",
-                     msg.get("reasoning") or msg.get("reasoning_content") or ""):
+        for text in self._complete(prompt, frame_bgr, temperature):
             start, end = text.find("{"), text.rfind("}")
             if start < 0 or end <= start:
                 continue

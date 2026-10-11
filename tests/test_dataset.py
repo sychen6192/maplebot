@@ -7,8 +7,8 @@ import pytest
 import yaml
 
 from maplebot.dataset import (autolabel_dir, class_from_template_name,
-                              draw_labels, list_images, prepare_dataset,
-                              preview_labels, write_yolo_labels)
+                              draw_labels, ground_label_dir, list_images,
+                              prepare_dataset, preview_labels, write_yolo_labels)
 from maplebot.vision.mobs import Mob
 
 
@@ -317,3 +317,76 @@ def test_preview_of_an_empty_folder_is_not_an_error(tmp_path):
     empty.mkdir()
     assert preview_labels(str(empty), _FakeTeacher(),
                           str(tmp_path / "out"), count=3) == []
+
+
+# ---- VLM 整張框（ground_label_dir）----
+
+MONSTER, ITEM, PLAYER = (20, 30, 40, 20), (100, 60, 10, 10), (150, 20, 20, 40)
+
+
+def _frames(tmp_path, names=("a.png",)):
+    for name in names:
+        cv2.imwrite(str(tmp_path / name), np.full((100, 200, 3), 200, np.uint8))
+
+
+def test_ground_writes_only_monsters_as_one_class(tmp_path):
+    """掉落物、玩家寫進快取但不進標籤：學生只學「怪」這一類。"""
+    _frames(tmp_path)
+    res = ground_label_dir(str(tmp_path),
+                           lambda img: [("monster", MONSTER), ("item", ITEM), ("player", PLAYER)],
+                           str(tmp_path / "g.json"))
+    assert (tmp_path / "a.txt").read_text().splitlines() == ["0 0.200000 0.400000 0.200000 0.200000"]
+    assert (tmp_path / "classes.txt").read_text().split() == ["mob"]
+    assert res.kinds == {"monster": 1, "item": 1, "player": 1} and res.kept == 1
+
+
+def test_a_frame_the_vlm_never_answered_gets_no_label_and_is_asked_next_run(tmp_path):
+    """沒標籤的圖 prepare_dataset 會當成「沒有怪」——問不到就不能寫空檔。"""
+    _frames(tmp_path, ("a.png", "b.png"))
+    cache = str(tmp_path / "g.json")
+    calls = []
+
+    def flaky(img):
+        calls.append(1)
+        if len(calls) == 1:
+            return [("monster", MONSTER)]
+        raise TimeoutError("slot busy")
+
+    res = ground_label_dir(str(tmp_path), flaky, cache)
+    assert len(calls) == 3                                 # b 問了兩次
+    assert res.failed == [str(tmp_path / "b.png")] and not (tmp_path / "b.txt").exists()
+    asked = []
+    res = ground_label_dir(str(tmp_path), lambda img: asked.append(1) or [], cache)
+    assert len(asked) == 1 and not res.failed               # 只補問 b
+    assert (tmp_path / "a.txt").read_text().strip()         # a 的標籤照快取重寫
+    assert (tmp_path / "b.txt").read_text() == ""            # 回空陣列 = 真的沒東西
+
+
+def test_unparseable_answers_are_retried(tmp_path):
+    _frames(tmp_path)
+    answers = iter([None, [("monster", MONSTER)]])
+    res = ground_label_dir(str(tmp_path), lambda img: next(answers), str(tmp_path / "g.json"))
+    assert res.asked == 2 and res.kept == 1 and not res.failed
+
+
+def test_ui_is_painted_before_asking_and_boxes_inside_it_are_dropped(tmp_path):
+    """mob_exclude 是 client 座標；影像是從 playfield 原點裁的，要先扣掉。"""
+    _frames(tmp_path)
+    seen = []
+
+    def ground(img):
+        seen.append(img.copy())
+        return [("monster", (5, 5, 10, 10)), ("monster", MONSTER)]
+
+    ground_label_dir(str(tmp_path), ground, str(tmp_path / "g.json"),
+                     exclude=[(100, 50, 30, 30)], origin=(100, 50))
+    assert (seen[0][:30, :30] != 200).all()                 # 介面那塊塗掉了
+    assert (seen[0][60:, 60:] == 200).all()                 # 其他地方原封不動
+    assert (tmp_path / "a.txt").read_text().splitlines() == ["0 0.200000 0.400000 0.200000 0.200000"]
+
+
+def test_dry_run_keeps_the_answers_but_writes_no_labels(tmp_path):
+    _frames(tmp_path)
+    cache = tmp_path / "g.json"
+    ground_label_dir(str(tmp_path), lambda img: [("monster", MONSTER)], str(cache), rewrite=False)
+    assert cache.exists() and not (tmp_path / "a.txt").exists()

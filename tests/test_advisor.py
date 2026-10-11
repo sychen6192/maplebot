@@ -273,3 +273,91 @@ def test_target_check_is_off_when_the_advisor_or_the_feature_is_off():
     no_target = Advisor(AdvisorCfg(enabled=True, target_check=False), lambda n: None,
                         logging.getLogger("t"))
     assert no_target.check_target_async(frame, (5, 5, 10, 10), lambda v: None) is False
+
+
+# ---- 離線標註：整張畫面請模型自己框（grounding）----
+
+def test_grounding_reads_the_native_format_in_a_code_fence():
+    """關掉思考後模型用原生格式回：```json 包著、bbox_2d、0~1000 相對座標。"""
+    from maplebot.brain.advisor import parse_grounding
+    text = ('```json\n[{"bbox_2d": [100, 200, 300, 600], "label": "monster"},\n'
+            ' {"bbox": [500, 500, 520, 540], "label": "Item"}]\n```')
+    assert parse_grounding(text, 1000, 500) == [
+        ("monster", (100, 100, 200, 200)), ("item", (500, 250, 20, 20))]
+
+
+def test_grounding_salvages_the_objects_before_a_truncated_tail():
+    from maplebot.brain.advisor import parse_grounding
+    text = ('[{"bbox_2d": [0, 0, 100, 100], "label": "monster"}, '
+            '{"bbox_2d": [200, 200, 300, 300], "label": "pet"}, {"bbox_2d": [40')
+    assert [label for label, _ in parse_grounding(text, 100, 100)] == ["monster", "pet"]
+
+
+def test_no_answer_and_an_empty_answer_are_different():
+    """沒答到要重問；答「畫面上沒東西」是負樣本——混在一起會把怪全標成背景。"""
+    from maplebot.brain.advisor import parse_grounding
+    assert parse_grounding("我看不出來", 100, 100) is None
+    assert parse_grounding("```json\n[]\n```", 100, 100) == []
+
+
+def test_a_runaway_row_is_dropped_but_a_real_row_is_kept():
+    """實測：模型在平台上鋪了 51 個一模一樣、等距的 22x16「item」。"""
+    from maplebot.brain.advisor import _drop_runaway
+    runaway = [("item", (423 + 22 * i - (i % 3 == 2), 388, 22, 16)) for i in range(8)]
+    real = [("monster", (840, 125, 46, 50)), ("monster", (890, 126, 45, 49)),
+            ("monster", (938, 125, 46, 50)), ("monster", (1060, 125, 46, 50))]
+    coins = [("item", (300, 640, 20, 20)), ("item", (322, 640, 20, 20))]
+    assert _drop_runaway(runaway + real + coins) == real + coins
+
+
+def test_ground_turns_thinking_off_and_sends_a_lossless_frame(monkeypatch):
+    """思考開著要 2~9 秒、常被 max_tokens 截斷；JPEG 會把 40px 小怪的描邊吃掉。"""
+    import numpy as np
+    sent = _capture_requests(monkeypatch,
+                             reply='[{"bbox_2d": [500, 500, 750, 1000], "label": "monster"}]')
+    adv, _ = _advisor()
+    frame = np.zeros((100, 200, 3), np.uint8)
+    frame[50:, 100:150] = (0, 200, 0)
+
+    assert adv.ground(frame) == [("monster", (100, 50, 50, 50))]
+    assert sent[0]["chat_template_kwargs"] == {"enable_thinking": False}
+    url = sent[0]["messages"][0]["content"][1]["image_url"]["url"]
+    assert url.startswith("data:image/png;base64,")
+    assert (_decode_sent_image(sent[0]) == frame).all()
+
+
+def test_target_check_still_lets_the_model_think(monkeypatch):
+    """點名的提示是在思考開著時調出來的（67/70），不能被 grounding 的設定帶走。"""
+    import numpy as np
+    sent = _capture_requests(monkeypatch)
+    adv, _ = _advisor()
+    adv.check_target(np.zeros((100, 100, 3), np.uint8), (10, 10, 20, 20))
+    assert "chat_template_kwargs" not in sent[0]
+    assert sent[0]["messages"][0]["content"][1]["image_url"]["url"].startswith("data:image/jpeg")
+
+
+def test_a_paused_bot_is_not_asked_about_the_same_frame_again(monkeypatch):
+    """暫停時沒有新畫面：一直重問同一張，每兩輪就重複暫停、存截圖、響警示。"""
+    import threading
+    import time
+
+    import numpy as np
+    cfg = AdvisorCfg(enabled=True, interval=0.01)
+    adv = Advisor(cfg, lambda note: None, logging.getLogger("t"))
+    asked = []
+    seen_two = threading.Event()
+
+    def fake_ask(frame):
+        asked.append(frame)
+        if len(asked) >= 2:
+            seen_two.set()
+        return {"status": "ok"}
+
+    monkeypatch.setattr(adv, "_ask", fake_ask)
+    adv.latest_frame = np.zeros((10, 10, 3), np.uint8)
+    adv.start()
+    time.sleep(0.15)                                   # 十幾輪都是同一張
+    assert len(asked) == 1
+    adv.latest_frame = np.ones((10, 10, 3), np.uint8)  # 恢復後的新畫面照問
+    assert seen_two.wait(1.0)
+    adv.stop()

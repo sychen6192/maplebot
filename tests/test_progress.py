@@ -18,6 +18,7 @@ def test_level_up_wraps_and_counts():
     t.update(0.95, 0.0)
     t.update(0.99, 10.0)
     t.update(0.01, 20.0)          # 升級
+    t.update(0.02, 25.0)
     t.update(0.05, 30.0)
     assert t.levels == 1
     assert t.deaths == 0
@@ -28,8 +29,20 @@ def test_small_drop_counts_as_death_not_level_up():
     """楓谷死亡會扣經驗——小幅倒退不能誤判成升級。"""
     t = ExpTracker()
     t.update(0.50, 0.0)
-    t.update(0.42, 10.0)
+    for s in (10.0, 11.0, 12.0):
+        t.update(0.42, s)
     assert t.deaths == 1 and t.levels == 0
+    assert t.gained() == pytest.approx(-0.08)
+
+
+def test_a_one_frame_misread_is_not_a_death():
+    """斷線那一刻有一幀 EXP 讀成 0.0%：不能記成死亡、累積進度也不能少一截。"""
+    t = ExpTracker()
+    t.update(0.14, 0.0)
+    t.update(0.0, 1.0)            # 黑屏淡出後的第一張
+    t.update(0.144, 2.0)          # 重連回來
+    assert t.deaths == 0 and t.levels == 0
+    assert t.gained() == pytest.approx(0.004)
 
 
 def test_per_hour_rate():
@@ -80,6 +93,7 @@ def test_summary_before_any_reading():
 def test_summary_mentions_rate_and_levels():
     t = ExpTracker()
     t.update(0.90, 0.0)
-    t.update(0.10, 3600.0)        # 一小時升一級
+    for s in (3598.0, 3599.0, 3600.0):
+        t.update(0.10, s)         # 一小時升一級
     s = t.summary(3600.0)
     assert "等/小時" in s and "升級 1 次" in s
