@@ -157,6 +157,33 @@ def test_climb_jump_down_jumps_while_holding_down(ex):
     assert executor.stats.climbs == 1
 
 
+def test_standing_jump_grab_presses_no_arrow(ex):
+    executor, backend = ex
+    executor.execute(fsm.Climb(direction=-1, key="up", seconds=0.4, jump_key="alt"), NOW)
+    assert backend.history == [
+        ("down", SCANCODES["up"][0]),
+        ("down", SCANCODES["alt"][0]),
+        ("up", SCANCODES["alt"][0]),
+        ("up", SCANCODES["up"][0]),
+    ]
+
+
+def test_running_jump_grab_walks_first_and_lets_go_of_the_arrow(ex):
+    """先走起來再跳（空中才有水平速度掃過繩子），起跳後放開方向鍵、繼續按住上。"""
+    executor, backend = ex
+    executor.execute(fsm.Climb(direction=-1, key="up", seconds=0.4, jump_key="alt",
+                               run=-1), NOW)
+    assert backend.history == [
+        ("down", SCANCODES["up"][0]),
+        ("down", SCANCODES["left"][0]),
+        ("down", SCANCODES["alt"][0]),
+        ("up", SCANCODES["alt"][0]),
+        ("up", SCANCODES["left"][0]),
+        ("up", SCANCODES["up"][0]),
+    ]
+    assert executor.stats.climbs == 1
+
+
 def test_loot_taps_pickup_key(ex):
     executor, backend = ex
     executor.execute(fsm.Loot(key="z", taps=3), NOW)

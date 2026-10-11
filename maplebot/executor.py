@@ -151,14 +151,32 @@ class Executor:
             if action.jump_key and action.direction < 0:
                 # 跳抓：繩底懸空時站著按上抓不到，按住上、跳一下、繼續按住上
                 #（落到繩上那刻就會抓住）。在繩上時 fsm 不會再帶 jump_key。
-                self.log.info("跳抓繩子：按住 %s 跳（%s）再繼續往上",
-                              action.key, action.jump_key)
+                #
+                # 助跑（action.run）：小地圖一格 2px，讀到「對準了」時人可能在格子裡
+                # 任何位置，而窄繩的抓取窗口比一格還小——站定跳實測 3/26。人工錄
+                # 路線時是助跑跳上去的：跳的軌跡在起跳那刻定了，起跳前先走起來，
+                # 空中就會橫掃過好幾 px，經過繩子那一刻按著上就抓住。起跳後放開
+                # 方向鍵，沒抓到時落地才不會繼續往前走。
+                arrow = None
+                if action.run:
+                    arrow = "right" if action.run > 0 else "left"
+                self.log.info("跳抓繩子：按住 %s 跳（%s）再繼續往上%s",
+                              action.key, action.jump_key,
+                              f"（助跑往{'右' if action.run > 0 else '左'}）" if arrow else "")
                 self.kb.press(action.key)
+                if arrow:
+                    self.kb.press(arrow)
                 try:
-                    time.sleep(self._dur(0.08))
+                    time.sleep(self._dur(0.12 if arrow else 0.08))
                     self.kb.tap(action.jump_key, self._dur(0.12))
+                    if arrow:
+                        time.sleep(self._dur(0.15))
+                        self.kb.release(arrow)
+                        arrow = None
                     time.sleep(self._dur(max(action.seconds, 0.35)))
                 finally:
+                    if arrow:
+                        self.kb.release(arrow)
                     self.kb.release(action.key)
             elif action.jump_key:
                 self.log.info("下跳平台：按住 %s 再跳（%s）", action.key, action.jump_key)

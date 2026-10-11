@@ -138,6 +138,8 @@ class Climb:
     key: str
     seconds: float
     jump_key: str = ""
+    # 跳抓時的助跑方向：0 = 站定原地跳；+1/-1 = 先往右/左走再跳（waypoint grab: run）
+    run: int = 0
 
 
 Action = Union[Wait, Panic, DrinkPotion, CastBuff, Attack, Move, RunKeys, Escape, Loot,
@@ -170,6 +172,7 @@ class Runtime:
     last_loot: float = 0.0
     stuck_pos: Optional[Tuple[int, int]] = None
     stuck_since: float = 0.0
+    stuck_checked: Optional[float] = None   # 上一次做卡住檢查的時間（判斷巡邏有沒有被打斷）
     escape_direction: int = 1
     attack_pos: Optional[Tuple[int, int]] = None   # 這一串連續攻擊的起點
     attack_since: float = 0.0
@@ -183,6 +186,13 @@ class Runtime:
     climb_retries: int = 0
     chase_dir: int = 0                  # 追擊方向承諾（防止與巡邏互搶抖動）
     chase_until: float = 0.0
+    grab_plan: int = 0                  # 下一次助跑跳抓往哪邊跑（0 = 還沒決定），每跳一次換邊
+    grab_attempts: int = 0              # 這個巡邏點已經助跑跳抓幾次（換點歸零）
+    grab_memory: Dict[int, int] = field(default_factory=dict)  # 巡邏點序號 -> 上次抓到時跑的方向
+    hp_last: Optional[float] = None     # 上一幀的 HP（判斷藥水有沒有效）
+    hp_potion_streak: int = 0           # 上次 HP 回升之後又喝了幾瓶
+    hp_potion_since: Optional[float] = None
+    hp_potions_dry: bool = False        # 喝了好幾瓶 HP 都沒回升：多半是藥水用完了
 
     def note_buff(self, index: int, now: float) -> None:
         self.last_buff[index] = now
@@ -217,6 +227,8 @@ class Runtime:
         self.stuck_pos = None
         self.pause_climb()
         self.climb_retries = 0
+        self.grab_attempts = 0
+        self.grab_plan = 0
 
 
 def attack_scale(playfield_width: int, enabled: bool = True) -> float:
@@ -252,6 +264,38 @@ def _mp_below(state: GameState, threshold: float) -> bool:
 
 def _potion_due(rt: Runtime, kind: str, cooldown: float, now: float) -> bool:
     return now - rt.last_potion.get(kind, 0.0) >= cooldown
+
+
+# 藥水沒效果的判定。實機 2026-10-11 19:25~19:28：HP 藥水用完之後 bot 3 分多鐘
+# 按了 200 多次喝藥，HP 從 50% 一路掉到 22% 才以「補血追不上」停機——停機
+# 之後角色站在怪堆裡，使用者反應時間只剩幾十秒。藥水有效時一瓶回 8% 左右
+# （530 血一瓶 44），狀態列 HP 條一格 0.6%，回升 3% 一定看得到；自然回血
+# 一次只有 1~2%，不會被當成藥水有效。
+# 門檻刻意放寬：被好幾隻怪同時打的時候，一瓶 +8% 可能被同一幀的傷害吃掉一半，
+# 6 瓶就判定的話，藥水明明有效卻被當成用完、改成 20 秒才喝一瓶，反而更危險。
+# 10 瓶、8 秒每一瓶都看不到回升才算——實機那次用完了 3 分多鐘，8 秒發現仍綽綽有餘。
+POTION_DRY_PRESSES = 10         # 連續喝這麼多瓶
+POTION_DRY_SECONDS = 8.0        # 而且已經過了這麼久，HP 都沒回升 -> 藥水用完了
+POTION_DRY_RETRY_SECONDS = 20.0  # 判定用完之後多久再試一瓶（補了藥就會恢復）
+_HP_RISE = 0.03
+
+
+def _track_hp_rise(rt: Runtime, hp: float) -> None:
+    """HP 明顯回升 = 藥水有效（或被補血了）：連續沒效的計數歸零。"""
+    if rt.hp_last is not None and hp >= rt.hp_last + _HP_RISE:
+        rt.hp_potion_streak = 0
+        rt.hp_potion_since = None
+        rt.hp_potions_dry = False
+    rt.hp_last = hp
+
+
+def _count_hp_potion(rt: Runtime, now: float) -> None:
+    if rt.hp_potion_since is None:
+        rt.hp_potion_since = now
+    rt.hp_potion_streak += 1
+    if rt.hp_potion_streak >= POTION_DRY_PRESSES \
+            and now - rt.hp_potion_since >= POTION_DRY_SECONDS:
+        rt.hp_potions_dry = True
 
 
 def resolve_waypoint_x(wp: Waypoint, minimap_size: Optional[Tuple[int, int]]) -> int:
@@ -337,12 +381,69 @@ def _auto_patrol(rt: Runtime, player: Tuple[int, int], pat: PatrolCfg,
         return_home=False)
 
 
+def _skip_unreached_floor(rt: Runtime, waypoints: List[Waypoint],
+                          minimap_size: Optional[Tuple[int, int]],
+                          floor_y: int, y_tolerance: int) -> int:
+    """爬不上 floor_y 那一層時，後面在那一層（或更高）的點也一起跳過；回傳跳過幾個。
+
+    那些點本來就是靠剛剛那條繩才到得了。不跳過的話，每一個都會在下面那層
+    原地跳抓滿 climb_retries 輪——實機（1366x768 訓練場）二層 -> 三層的窄繩
+    沒抓到之後，接著在二層 x=34、x=102（底下根本沒有繩）又各跳抓了一輪，
+    白耗約 75 秒才走到下一個地面的點。遇到不用往上爬的點就停。
+    """
+    skipped = 0
+    for _ in range(len(waypoints) - 1):
+        nxt = waypoints[rt.wp_index % len(waypoints)]
+        ny = resolve_waypoint_y(nxt, minimap_size)
+        if ny is None or ny > floor_y + y_tolerance:
+            break
+        rt.next_waypoint(len(waypoints))
+        skipped += 1
+    return skipped
+
+
+def _run_up_spot(rt: Runtime, pat: PatrolCfg, wp: Waypoint, rope_x: int,
+                 target_y: Optional[int], player: Tuple[int, int]) -> int:
+    """助跑跳抓的起跳點：繩子前 wp.run_up 格，跳到最高點時剛好在繩子上。
+
+    在繩子正下方起跳是錯的——實機 0/35：往右跑的那一跳最高點落在 x=56~58、
+    往左的落在 50，經過繩子時人才剛離地。人工錄路線時是從 x=50 起跳、52 還在
+    上升、54（最高點）抓到。方向依角色在繩子哪一側決定，沒抓到就換到另一側
+    的起跳點（grab_plan 在 _climb 每跳一次翻面）。
+    還不用往上爬、或已經抓到繩子在往上爬了，就照原本對準繩子。
+    """
+    x, y = player
+    if target_y is None or y - target_y <= pat.y_tolerance:
+        return rope_x
+    if rt.climb_start_y is not None and y < rt.climb_start_y - pat.climb_stall_px:
+        return rope_x
+    if rt.grab_plan == 0:
+        # 先用上次抓到的方向：同一條繩兩邊不一定一樣好抓（實機往右 8/10、往左 1/3），
+        # 沒有紀錄才看角色在繩子哪一側
+        rt.grab_plan = rt.grab_memory.get(rt.wp_index) or (1 if x <= rope_x else -1)
+    return rope_x - rt.grab_plan * wp.run_up
+
+
+def _give_up_climb(rt: Runtime, pat: PatrolCfg, waypoints: List[Waypoint],
+                   minimap_size: Optional[Tuple[int, int]], y: int, dy: int) -> Action:
+    """放棄這個垂直移動的巡邏點；往上爬失敗時連同那一層的點一起放棄。"""
+    rt.next_waypoint(len(waypoints))
+    skipped = 0
+    if dy < 0:
+        skipped = _skip_unreached_floor(rt, waypoints, minimap_size, y + dy, pat.y_tolerance)
+    also = f"（連同後面 {skipped} 個在那一層的點）" if skipped else ""
+    return Wait(f"垂直移動連續失敗（已重試 {pat.climb_retries} 次），"
+                f"放棄這個巡邏點{also}", seconds=0.3)
+
+
 def _climb(rt: Runtime, player: Tuple[int, int], pat: PatrolCfg, wp: Waypoint,
-           dy: int, total_waypoints: int) -> Action:
+           dy: int, waypoints: List[Waypoint],
+           minimap_size: Optional[Tuple[int, int]]) -> Action:
     """閉迴路垂直移動：每一步都回頭看小地圖 y 有沒有真的變。
 
     沒抓到繩子、爬一半被怪打掉，y 就會停住 —— 這時先脫困微調位置重新對繩，
     連續失敗超過 climb_retries 就放棄這個巡邏點，免得永遠卡在繩子前面。
+    往上爬失敗時，後面同一層的點一起放棄（見 _skip_unreached_floor）。
     """
     y = player[1]
     first = rt.climb_prev_y is None
@@ -358,9 +459,7 @@ def _climb(rt: Runtime, player: Tuple[int, int], pat: PatrolCfg, wp: Waypoint,
         rt.pause_climb()
         rt.climb_retries += 1
         if rt.climb_retries > pat.climb_retries:
-            rt.next_waypoint(total_waypoints)
-            return Wait(f"垂直移動連續失敗（已重試 {pat.climb_retries} 次），"
-                        "放棄這個巡邏點", seconds=0.3)
+            return _give_up_climb(rt, pat, waypoints, minimap_size, y, dy)
         rt.escape_direction *= -1
         return Escape(rt.escape_direction, pat.jump_key)
 
@@ -374,7 +473,17 @@ def _climb(rt: Runtime, player: Tuple[int, int], pat: PatrolCfg, wp: Waypoint,
         near_start = rt.climb_start_y is not None \
             and y >= rt.climb_start_y - pat.climb_stall_px
         jump = pat.jump_key if (first or near_start) else ""
-        return Climb(-1, pat.climb_up_key, pat.climb_seconds, jump_key=jump)
+        run = 0
+        if jump and wp.grab == "run":
+            # 助跑跳抓：沒抓到時會落在 3~4 格外、對位跑掉，上面那套「原地跳 3 次
+            # 沒爬動」的計數永遠累積不起來——所以另外數跳了幾次，預算跟站定跳
+            # 一樣是 (climb_retries+1) x climb_stalls 次
+            if rt.grab_attempts >= (pat.climb_retries + 1) * pat.climb_stalls:
+                return _give_up_climb(rt, pat, waypoints, minimap_size, y, dy)
+            run = rt.grab_plan or 1        # 方向在選起跳點時就決定了（_run_up_spot）
+            rt.grab_attempts += 1
+            rt.grab_plan = -run            # 沒抓到就換到另一側再跑一次
+        return Climb(-1, pat.climb_up_key, pat.climb_seconds, jump_key=jump, run=run)
     jump_key = pat.jump_key if wp.descend == "jump" else ""
     return Climb(1, pat.climb_down_key, pat.climb_seconds, jump_key=jump_key)
 
@@ -446,10 +555,21 @@ def stalled_attack_target(rt: Runtime, action: Action, now: float,
     return action.target
 
 
+STUCK_GAP_SECONDS = 1.0   # 兩次巡邏檢查隔超過這麼久 = 中間在做別的事，卡住計時重來
+
+
 def _check_stuck(rt: Runtime, player: Tuple[int, int], now: float,
                  stuck_px: int, stuck_seconds: float) -> bool:
-    """巡邏移動中位置長時間沒變就視為卡住（地形卡死、被彈回）。"""
-    if rt.stuck_pos is None or \
+    """巡邏移動中位置長時間沒變就視為卡住（地形卡死、被彈回）。
+
+    只算**連續巡邏**的時間。原本打怪、追擊、撿物時計時照跑，打了 5 秒怪
+    （人站著不動）一回到巡邏就被當成已經卡了 4 秒：實機 35 分鐘約 50 次脫困跳，
+    至少 10 次跟督導點名的讓路落在同一秒。連續巡邏時兩次檢查最多隔約 0.6 秒
+    （一步最長 0.45 秒加辨識），所以隔超過 STUCK_GAP_SECONDS 就從現在重新計時。
+    """
+    gap = rt.stuck_checked is not None and now - rt.stuck_checked > STUCK_GAP_SECONDS
+    rt.stuck_checked = now
+    if gap or rt.stuck_pos is None or \
             abs(player[0] - rt.stuck_pos[0]) + abs(player[1] - rt.stuck_pos[1]) > stuck_px:
         rt.stuck_pos = player
         rt.stuck_since = now
@@ -464,6 +584,10 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
            now: float, playfield_center: Tuple[int, int]) -> Action:
     if not state.vision_ok:
         return Wait("讀不到畫面狀態（HP 條或小地圖玩家點）")
+    if state.status_bars_gone:
+        # 不是低血：狀態列整條不見了。灌藥、判定瀕死都是錯的反應——一直這樣
+        # 的話小地圖黃點也會跟著不見，交給 runner 的看門狗暫停並截圖
+        return Wait("狀態列不在畫面上（斷線、讀圖或換頻道）")
 
     assert state.hp is not None and state.minimap_xy is not None
     # 攻擊範圍要以**角色**為中心，不是畫面中心：鏡頭有跟隨延遲、走到地圖邊緣
@@ -484,11 +608,13 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
             rt.low_hp_since = now
         long_enough = now - rt.low_hp_since >= cfg.safety.critical_hp_seconds
         if rt.low_hp_streak >= cfg.safety.critical_hp_frames and long_enough:
+            why = "HP 藥水沒有效果（多半是用完了）" if rt.hp_potions_dry else "補血追不上"
             return Panic(f"HP 剩 {state.hp:.0%}，連續 {now - rt.low_hp_since:.0f} 秒"
-                         f"低於危險線 {cfg.safety.critical_hp_ratio:.0%}，補血追不上")
+                         f"低於危險線 {cfg.safety.critical_hp_ratio:.0%}，{why}")
     else:
         rt.low_hp_streak = 0
         rt.low_hp_since = None
+    _track_hp_rise(rt, state.hp)
 
     # 緊急回血：血更低的時候改按另一個鍵（大瓶／全補藥）。
     # 一般補血一瓶只回一點點——實測 530 血的角色一瓶回 44，被圍住時
@@ -499,8 +625,14 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
         return DrinkPotion("hp_emergency", urgent.key)
 
     hp_pot = profile.potions.get("hp")
-    if hp_pot and state.hp < hp_pot.below_ratio and _potion_due(rt, "hp", hp_pot.cooldown, now):
-        return DrinkPotion("hp", hp_pot.key)
+    if hp_pot and state.hp < hp_pot.below_ratio:
+        if rt.hp_potions_dry and profile.panic_return_key:
+            # 趁血還沒見底回城：等到危險線才停機，回城卷也救不了站在怪堆裡的人
+            return Panic("HP 藥水沒有效果（多半是用完了），回城後停機", return_home=True)
+        cooldown = POTION_DRY_RETRY_SECONDS if rt.hp_potions_dry else hp_pot.cooldown
+        if _potion_due(rt, "hp", cooldown, now):
+            _count_hp_potion(rt, now)
+            return DrinkPotion("hp", hp_pot.key)
 
     mp_pot = profile.potions.get("mp")
     if mp_pot and state.mp is not None and state.mp < mp_pot.below_ratio \
@@ -616,8 +748,10 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
 
     wp = waypoints[rt.wp_index % len(waypoints)]
     target = resolve_waypoint_x(wp, state.minimap_size)
-    dist = target - state.minimap_xy[0]
     target_y = resolve_waypoint_y(wp, state.minimap_size)
+    if wp.grab == "run":
+        target = _run_up_spot(rt, pat, wp, target, target_y, state.minimap_xy)
+    dist = target - state.minimap_xy[0]
 
     # 站得比巡邏層高的時候，**先下來再說**，不用等 x 對準。
     # 脫困跳躍很容易把角色送上路邊的小平台（實測是地圖中間那間小木屋的屋頂），
@@ -628,7 +762,8 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
     if target_y is not None and wp.descend == "jump":
         drop = target_y - state.minimap_xy[1]        # 小地圖 y 往下變大
         if drop > pat.y_tolerance:
-            return _climb(rt, state.minimap_xy, pat, wp, drop, len(waypoints))
+            return _climb(rt, state.minimap_xy, pat, wp, drop, waypoints,
+                          state.minimap_size)
 
     tol = wp.tolerance if wp.tolerance is not None else pat.tolerance
     if abs(dist) > tol:
@@ -643,8 +778,12 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
     if target_y is not None:
         dy = target_y - state.minimap_xy[1]
         if abs(dy) > pat.y_tolerance:
-            return _climb(rt, state.minimap_xy, pat, wp, dy, len(waypoints))
+            return _climb(rt, state.minimap_xy, pat, wp, dy, waypoints,
+                          state.minimap_size)
 
+    if wp.grab == "run" and rt.grab_attempts:
+        # 抓到了：記住是哪個方向跑的（grab_plan 在那一跳之後已經翻面），下一圈先用它
+        rt.grab_memory[rt.wp_index % len(waypoints)] = -rt.grab_plan
     rt.next_waypoint(len(waypoints))
     if wp.keys:
         return RunKeys(list(wp.keys))

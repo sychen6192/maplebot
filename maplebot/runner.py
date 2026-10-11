@@ -98,6 +98,7 @@ class Runner:
         self._target_asked: Optional[tuple] = None
         self._target_verdict: Optional[tuple] = None
         self._target_lock = threading.Lock()   # 背景執行緒寫、主迴圈讀完清掉
+        self._potion_dry_warned = False
         self._bar_warned = False
         self._jump_warned = False
         self._started_wall = time.time()
@@ -425,6 +426,23 @@ class Runner:
             "看黃框框在什麼東西上",
             self.cfg.safety.attack_stall_seconds,
             self.cfg.safety.attack_break_seconds, self.rt.attack_breaks)
+
+    def _notice_potions_dry(self, frame: np.ndarray) -> None:
+        """藥水用完要馬上叫人：等到危險線才停機，角色已經站在怪堆裡沒剩多少血了。"""
+        if not self.rt.hp_potions_dry:
+            self._potion_dry_warned = False      # 補了藥、HP 又回升了
+            return
+        if self._potion_dry_warned:
+            return
+        self._potion_dry_warned = True
+        self.alerts.ping("warn", "HP 藥水沒有效果，多半是用完了")
+        save_anomaly(frame, "HP 藥水沒有效果", self.log)
+        self.log.warning(
+            "連續喝了 %d 瓶 HP 藥水，HP 都沒有回升——多半是藥水用完了。%s",
+            self.rt.hp_potion_streak,
+            "設了回城卷，馬上回城停機" if self.profile.panic_return_key else
+            "沒設回城卷（panic_return_key），改成每 %.0f 秒試一瓶、繼續打怪；"
+            "請盡快補藥" % fsm.POTION_DRY_RETRY_SECONDS)
 
     def _apply_target_verdict(self, now: float) -> None:
         """督導層說正在打的不是怪 -> 讓路。在 decide 之前呼叫，這一 tick 就生效。
@@ -790,7 +808,9 @@ class Runner:
                         break
                     continue
 
-                self.exp.update(state.exp, now)
+                if not state.status_bars_gone:
+                    # 狀態列不見時 EXP 也讀成 0，餵進去會被當成「99% -> 0% 升級一次」
+                    self.exp.update(state.exp, now)
                 if self.exp.stalled(now):
                     self._on_exp_stalled(frame, now)
                     continue
@@ -825,6 +845,7 @@ class Runner:
                 self._notice_followers()
                 self._notice_track_jumps()
                 self._notice_attack_break()
+                self._notice_potions_dry(frame)
                 self._notice_bar_glitch()
                 self._publish(state, action)
                 self._sample(state, wall)   # 圖表的時間軸是現實時間，跟 _started_mono 同基準

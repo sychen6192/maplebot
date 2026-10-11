@@ -115,6 +115,24 @@ def test_still_stuck_after_a_monster_answer_asks_again(runner, monkeypatch):
     assert len(asked) == 2
 
 
+def test_dry_potions_alert_once_until_hp_recovers(runner, monkeypatch):
+    """藥水用完要馬上叫人，但不能每一幀都叫；補了藥之後再用完要能再叫一次。"""
+    import maplebot.runner as runner_mod
+    saved, pings = [], []
+    monkeypatch.setattr(runner_mod, "save_anomaly", lambda frame, why, log: saved.append(why))
+    monkeypatch.setattr(runner.alerts, "ping", lambda kind, msg: pings.append(msg))
+    frame = np.zeros((300, 300, 3), np.uint8)
+    runner.rt.hp_potions_dry = True
+    runner._notice_potions_dry(frame)
+    runner._notice_potions_dry(frame)
+    assert len(saved) == 1 and len(pings) == 1
+    runner.rt.hp_potions_dry = False        # 補了藥
+    runner._notice_potions_dry(frame)
+    runner.rt.hp_potions_dry = True         # 又用完了
+    runner._notice_potions_dry(frame)
+    assert len(pings) == 2
+
+
 def test_a_short_attack_is_not_sent(runner, monkeypatch):
     asked = []
     monkeypatch.setattr(runner.advisor, "check_target_async",
