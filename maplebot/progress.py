@@ -16,6 +16,10 @@ from typing import Optional
 class ExpTracker:
     stall_seconds: float = 600.0      # 多久沒進帳視為異常（0=不檢查）
     level_up_drop: float = 0.5        # EXP 掉超過這個比例視為升級而非死亡
+    # EXP 往下掉要連續讀到幾次才算數。實測斷線那一刻：黑屏淡出後第一張畫面
+    # HP 還讀得到、EXP 讀成 0.0%，一幀就記成「經驗倒退一次」、累積進度從
+    # +36.5% 掉到 +22.2%。真的死亡、升級掉下去會一直維持，換畫面的雜訊只有一兩幀
+    confirm_drops: int = 3
 
     started: Optional[float] = None
     last_exp: Optional[float] = None
@@ -23,6 +27,7 @@ class ExpTracker:
     levels: int = 0                   # 期間升了幾級
     deaths: int = 0                   # 偵測到的經驗倒退次數
     _first_exp: Optional[float] = None
+    _drop_streak: int = 0
 
     def update(self, exp: Optional[float], now: float) -> None:
         if exp is None:                       # 讀不到就跳過，不要污染統計
@@ -35,11 +40,17 @@ class ExpTracker:
             return
 
         prev = self.last_exp
-        self.last_exp = exp
         if prev is None:
+            self.last_exp = exp
             return
 
         delta = exp - prev
+        if delta < 0:
+            self._drop_streak += 1
+            if self._drop_streak < self.confirm_drops:
+                return                        # 先不信，last_exp 留在掉之前
+        self._drop_streak = 0
+        self.last_exp = exp
         if delta > 0:
             self.last_gain_at = now
         elif delta <= -self.level_up_drop:    # 99% -> 0%

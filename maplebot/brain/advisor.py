@@ -100,10 +100,15 @@ class Advisor:
         self._stop.set()
 
     def _loop(self) -> None:
+        asked = None
         while not self._stop.wait(self.cfg.interval):
             frame = self.latest_frame
-            if frame is None:
+            # 暫停時主迴圈不再擷取，latest_frame 停在暫停前那張。實測斷線那晚
+            # 對同一張斷線畫面每 20~45 秒問一次：每兩次就再「暫停」一次、再存
+            # 一張一樣的截圖、再響一次警示，還一直佔著模型唯一的 slot
+            if frame is None or frame is asked:
                 continue
+            asked = frame
             try:
                 verdict = self._ask(frame)
             except Exception as e:

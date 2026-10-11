@@ -273,3 +273,30 @@ def test_target_check_is_off_when_the_advisor_or_the_feature_is_off():
     no_target = Advisor(AdvisorCfg(enabled=True, target_check=False), lambda n: None,
                         logging.getLogger("t"))
     assert no_target.check_target_async(frame, (5, 5, 10, 10), lambda v: None) is False
+
+
+def test_a_paused_bot_is_not_asked_about_the_same_frame_again(monkeypatch):
+    """暫停時沒有新畫面：一直重問同一張，每兩輪就重複暫停、存截圖、響警示。"""
+    import threading
+    import time
+
+    import numpy as np
+    cfg = AdvisorCfg(enabled=True, interval=0.01)
+    adv = Advisor(cfg, lambda note: None, logging.getLogger("t"))
+    asked = []
+    seen_two = threading.Event()
+
+    def fake_ask(frame):
+        asked.append(frame)
+        if len(asked) >= 2:
+            seen_two.set()
+        return {"status": "ok"}
+
+    monkeypatch.setattr(adv, "_ask", fake_ask)
+    adv.latest_frame = np.zeros((10, 10, 3), np.uint8)
+    adv.start()
+    time.sleep(0.15)                                   # 十幾輪都是同一張
+    assert len(asked) == 1
+    adv.latest_frame = np.ones((10, 10, 3), np.uint8)  # 恢復後的新畫面照問
+    assert seen_two.wait(1.0)
+    adv.stop()
