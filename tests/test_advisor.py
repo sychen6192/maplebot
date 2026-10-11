@@ -113,3 +113,32 @@ def test_reasoning_content_field_also_works(monkeypatch):
 
 def test_unparsable_reply_is_none(monkeypatch):
     assert _ask_with(monkeypatch, {"content": "我不知道"}) is None
+
+
+def _sent_headers(monkeypatch, api_key):
+    import urllib.request
+
+    import numpy as np
+    sent = []
+
+    def fake_urlopen(req, *a, **k):
+        sent.append(dict(req.header_items()))
+        return _Resp({"choices": [{"message": {"content": '{"status": "ok"}'}}]})
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    cfg = AdvisorCfg(enabled=True, api_key=api_key)
+    Advisor(cfg, lambda note: None, logging.getLogger("test.advisor")) \
+        ._ask(np.zeros((40, 60, 3), dtype=np.uint8))
+    return sent[0]
+
+
+def test_api_key_is_sent_as_bearer(monkeypatch):
+    """遠端模型伺服器要 key：沒帶的話每輪都是 401，督導層整場沒作用。"""
+    headers = _sent_headers(monkeypatch, "secret-key")
+    assert headers.get("Authorization") == "Bearer secret-key"
+
+
+def test_no_api_key_sends_no_authorization(monkeypatch):
+    """本機 Ollama 不用 key——不能送一個空的 Bearer 過去。"""
+    headers = _sent_headers(monkeypatch, "")
+    assert "Authorization" not in headers

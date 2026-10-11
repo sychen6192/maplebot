@@ -111,10 +111,13 @@ class Advisor:
                 ],
             }],
         }
+        headers = {"Content-Type": "application/json"}
+        if self.cfg.api_key:
+            headers["Authorization"] = f"Bearer {self.cfg.api_key}"
         req = urllib.request.Request(
             self.cfg.endpoint,
             data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"},
+            headers=headers,
         )
         with urllib.request.urlopen(req, timeout=self.cfg.timeout) as resp:
             data = json.loads(resp.read())

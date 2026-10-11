@@ -301,3 +301,6 @@ advisor:
   model: "qwen2.5vl:7b"
   interval: 20.0
   timeout: 15.0
+  # 伺服器要 key 時填這裡（送 Authorization: Bearer）。key 請寫在 config/local.yaml，
+  # 不要寫在這個會進版控的檔案
+  api_key: ""

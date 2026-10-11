@@ -220,6 +220,10 @@ class AdvisorCfg:
     # 要連續幾輪都判定異常才真的暫停。VLM 偶爾會把常駐 HUD（勳章名牌、
     # 任務面板）看成彈出視窗，一次誤判就暫停等於整晚白掛。
     confirm: int = 2
+    # 有設才送 Authorization: Bearer。本機的 Ollama 不需要，但模型放在另一台
+    # 機器、走 Tailscale 之類的網路時伺服器通常會要 key——沒帶就是每輪 401，
+    # 督導層靜靜地整場沒作用。放在不進版控的 local.yaml。
+    api_key: str = ""
 
 
 @dataclass
@@ -602,6 +606,7 @@ def load_config(path: str, local_path: Optional[str] = None) -> AppCfg:
     ac.interval = float(a.get("interval", ac.interval))
     ac.timeout = float(a.get("timeout", ac.timeout))
     ac.confirm = max(int(a.get("confirm", ac.confirm)), 1)
+    ac.api_key = str(a.get("api_key") or ac.api_key)
     return cfg
 
 
