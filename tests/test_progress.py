@@ -1,7 +1,7 @@
 """經驗值追蹤：效率換算、升級回捲、死亡扣經驗、停滯偵測。"""
 import pytest
 
-from maplebot.progress import ExpTracker
+from maplebot.telemetry.progress import ExpTracker
 
 
 def test_accumulates_gain():

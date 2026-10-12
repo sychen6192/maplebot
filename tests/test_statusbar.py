@@ -81,7 +81,7 @@ class _Cfg:
 
 
 def test_matching_rois_pass():
-    from maplebot.doctor import FAIL, check_status_bars
+    from maplebot.diagnostics.doctor import FAIL, check_status_bars
     img, boxes = _ui()
     checks = check_status_bars(_Cfg(dict(boxes)), img)
     assert checks and not [c for c in checks if c.status == FAIL]
@@ -89,7 +89,7 @@ def test_matching_rois_pass():
 
 def test_a_shifted_hp_roi_is_caught():
     """框歪的血條必須被擋下來——這正是「莫名其妙就停機」的成因。"""
-    from maplebot.doctor import FAIL, check_status_bars
+    from maplebot.diagnostics.doctor import FAIL, check_status_bars
     img, boxes = _ui()
     bad = dict(boxes)
     x, y, w, h = bad["hp_bar"]
@@ -103,7 +103,7 @@ def test_a_shifted_hp_roi_is_caught():
 
 def test_a_bar_shifted_off_the_strip_is_caught():
     """整條移到別的地方（換解析度沒重新校正）也要抓到。"""
-    from maplebot.doctor import FAIL, check_status_bars
+    from maplebot.diagnostics.doctor import FAIL, check_status_bars
     img, boxes = _ui()
     bad = dict(boxes)
     x, y, w, h = bad["mp_bar"]
@@ -113,7 +113,7 @@ def test_a_bar_shifted_off_the_strip_is_caught():
 
 def test_an_unrecognised_status_strip_only_warns():
     """認不出狀態列不代表使用者設定錯——可能只是客戶端長得不一樣，不能擋跑。"""
-    from maplebot.doctor import FAIL, WARN, check_status_bars
+    from maplebot.diagnostics.doctor import FAIL, WARN, check_status_bars
     blank = np.full((768, 1366, 3), 40, dtype=np.uint8)
     checks = check_status_bars(_Cfg({"hp_bar": (500, 700, 100, 14)}), blank)
     assert [c for c in checks if c.status == WARN]
@@ -127,7 +127,7 @@ def test_the_threshold_matches_the_measured_symptom(fixture_frame):
     喝藥門檻常設在 50%/30%，10% 的誤差足以讓它提早或延後觸發，所以界線畫在那裡。
     """
     from maplebot.config import load_config
-    from maplebot.doctor import FAIL, OK, check_status_bars
+    from maplebot.diagnostics.doctor import FAIL, OK, check_status_bars
 
     cfg = load_config("config/default.yaml", local_path="/nonexistent")
     x, y, w, h = cfg.regions["hp_bar"]
@@ -150,7 +150,7 @@ def test_vertical_shift_alone_is_tolerated(fixture_frame):
     讀出來一模一樣（實測平移 2/4/6/8px 都是 1.000）。
     """
     from maplebot.config import load_config
-    from maplebot.doctor import FAIL, check_status_bars
+    from maplebot.diagnostics.doctor import FAIL, check_status_bars
 
     cfg = load_config("config/default.yaml", local_path="/nonexistent")
     x, y, w, h = cfg.regions["hp_bar"]

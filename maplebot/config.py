@@ -185,7 +185,7 @@ class SafetyCfg:
 
 @dataclass
 class MonitorCfg:
-    """系統/遊戲行程監看（需要 psutil，沒裝就自動停用）。詳見 sysmon.py。"""
+    """系統/遊戲行程監看（需要 psutil，沒裝就自動停用）。詳見 telemetry/sysmon.py。"""
     enabled: bool = True
     interval: float = 5.0             # 幾秒取樣一次（psutil 掃行程有成本）
     stop_when_game_exits: bool = True  # 遊戲行程消失就停機（強烈建議開著）
@@ -197,7 +197,7 @@ class MonitorCfg:
 
 @dataclass
 class ReportCfg:
-    """收工報告。詳見 report.py。"""
+    """收工報告。詳見 telemetry/report.py。"""
     enabled: bool = True
     dir: str = "logs/reports"
     sample_interval: float = 10.0     # 曲線取樣間隔（0=不記曲線）

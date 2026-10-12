@@ -39,6 +39,8 @@ One tick is `capture → perceive → decide → execute`, and each arrow is a h
 - **`control/executor.py`** turns the returned `Action` into keystrokes and writes cooldown timestamps back into the same `Runtime`. `decide` and `execute` must therefore be handed the **same** `now`.
 - **`runner.py`** owns the loop, safety and watchdogs.
 
+Modules off this path live in a subpackage named for when they run, keeping the package root to the loop and its config: `diagnostics/` (preflight checks, annotated snapshots), `telemetry/` (what the loop measures and reports), `recording/` (turning a walked route into waypoints), `training/` (offline labeling, below). The live loop never imports `recording/`; `tests/test_layering.py` fails if `import maplebot.runner` loads it, so a change to route compression cannot change bot behavior.
+
 ### The bot clock
 
 `runner.py` keeps two clocks. Timers that ask "how long has this condition persisted" (low HP, exp stall, lost player, stuck) must use `self._bot_clock(wall)`, which excludes time the loop skipped while paused or on a black screen. Timers that ask "how much real time has passed" (`max_runtime_minutes`, performance sampling, report charts) use the wall clock. Mixing these up caused a bug where resuming from a pause instantly tripped conditions that are supposed to require sustained failure — see `_go_offline` / `_back_online`.

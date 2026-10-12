@@ -55,10 +55,10 @@
 | **JSON 數據持久化** | 每 30 秒把最近 100 個 snapshot 寫成 JSON | `report.py`。我們不做「持續寫入」而是**收工寫一份**：掛機中每 10 秒取一個樣點放記憶體（`Series`，有筆數上限），結束時一次落地成 `session_<時間>.json` |
 | **matplotlib 效能圖表** | 每 5 分鐘自動出一張 2x2 圖（系統 CPU/RAM、遊戲 CPU/RAM） | `report.write_chart()`：HP/MP/EXP、視野內怪數、實際 FPS、遊戲記憶體。**圖上的字一律 ASCII**——他們的圖表標題寫中文，但 matplotlib 預設字型（DejaVu Sans）沒有中文字符，實際輸出是一排豆腐框。我們的測試會盯著 matplotlib 的 `missing from font` warning，寫中文進去就紅燈 |
 | **文字報告匯出** | 選單第 5 項，把當前狀態存成 .txt | `report.render_markdown()`，跑完自動產生。內容取捨不同：他們的報告是「當下的系統資源」，我們的是**這一場的結算**——賺了幾等、每小時幾等、攻擊幾次、喝幾瓶藥、出過幾次警報、慢在哪一段、遊戲有沒有掛掉 |
-| **啟動器的環境自檢** | `start.py` 檢查 Python 版本、套件、模型檔、設定檔，缺套件可代裝 | `tools/doctor.py` + `maplebot/doctor.py`（檢查邏輯是純函式，28 個測試）。我們多檢查的是**設定的內部矛盾**，那才是實際卡住人的地方：ROI 有沒有超出校正時的視窗大小、血條 ROI 有沒有被框進 playfield（症狀是站在空地一直揮）、`potions.hp.below_ratio` 有沒有低於 `critical_hp_ratio`（症狀是一掉血就停機，而人會以為是辨識壞了）。每一項都附「該動哪裡」，有 ❌ 就 exit 1 |
+| **啟動器的環境自檢** | `start.py` 檢查 Python 版本、套件、模型檔、設定檔，缺套件可代裝 | `tools/doctor.py` + `maplebot/diagnostics/doctor.py`（檢查邏輯是純函式，28 個測試）。我們多檢查的是**設定的內部矛盾**，那才是實際卡住人的地方：ROI 有沒有超出校正時的視窗大小、血條 ROI 有沒有被框進 playfield（症狀是站在空地一直揮）、`potions.hp.below_ratio` 有沒有低於 `critical_hp_ratio`（症狀是一掉血就停機，而人會以為是辨識壞了）。每一項都附「該動哪裡」，有 ❌ 就 exit 1 |
 | **錯誤診斷腳本** | `tools/diagnose_errors.py`：import 測試 + `compile()` 語法檢查 | 併進 doctor 的套件檢查。語法檢查我們不做——那是 CI 的工作（`.github/workflows/ci.yml` 每次 push 跑 431 個測試，語法錯根本進不了 repo） |
 | **最長運行時間** | `safety.max_runtime_hours: 2` | `safety.max_runtime_minutes`（0=不限）。用分鐘是因為「掛 90 分鐘」比「掛 1.5 小時」好填。到點正常收工並產生報告，不是硬中斷 |
-| **執行中即時預覽疊框** | `start_automation(show_preview=True)` 用 cv2.imshow 畫偵測框 | `main.py --preview`。原本我們只有獨立的 `tools/debug_view.py`，那是**另一個行程**：各自擷取、各自辨識，看到的東西不保證跟主迴圈一樣，CPU 也多一份。繪圖搬到 `maplebot/overlay.py` 之後兩邊共用，預覽畫的就是主迴圈這一幀 |
+| **執行中即時預覽疊框** | `start_automation(show_preview=True)` 用 cv2.imshow 畫偵測框 | `main.py --preview`。原本我們只有獨立的 `tools/debug_view.py`，那是**另一個行程**：各自擷取、各自辨識，看到的東西不保證跟主迴圈一樣，CPU 也多一份。繪圖搬到 `maplebot/diagnostics/overlay.py` 之後兩邊共用，預覽畫的就是主迴圈這一幀 |
 | **ONNX 模型** | repo 裡放了 `best.onnx`（但程式沒用到，只吃 .pt） | `tools/export_onnx.py` + `yolo_mobs.py` 收 `.onnx`。真正的價值是**掛機那台不用裝 PyTorch**：torch + torchvision 2GB 起跳還要對 CUDA 版本，換 onnxruntime 只要幾十 MB，CPU 推理通常還快一到三倍 |
 
 ### 他們有、我們評估後不採用

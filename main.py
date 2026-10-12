@@ -74,7 +74,7 @@ def main(argv=None) -> int:
 
     preview = None
     if args.preview:
-        from maplebot.overlay import Preview
+        from maplebot.diagnostics.overlay import Preview
         preview = Preview(cfg, profile, logger)
         logger.info("已開啟即時預覽——畫的是主迴圈當下這一幀，"
                     "跟決策看到的完全是同一份資料")

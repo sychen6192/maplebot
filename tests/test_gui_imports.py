@@ -11,7 +11,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def test_gui_logic_modules_do_not_pull_in_tkinter():
     code = ("import maplebot.gui.controller, maplebot.gui.settings, maplebot.gui.live, "
-            "maplebot.gui.setup, maplebot.gui.look, maplebot.selfcheck, "
+            "maplebot.gui.setup, maplebot.gui.look, maplebot.diagnostics.selfcheck, "
             "maplebot.yaml_edit, sys; "
             "assert 'tkinter' not in sys.modules, 'tkinter was imported'")
     proc = subprocess.run([sys.executable, "-c", code], cwd=REPO, capture_output=True,

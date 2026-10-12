@@ -38,7 +38,7 @@ def isolated_logs(tmp_path, monkeypatch):
     不用 tmp_path/logs：有幾個測試自己在那裡放 check.png、check.json 再檢查，
     分開放才不必顧慮兩邊撞在一起。
     """
-    from maplebot import doctor
+    from maplebot.diagnostics import doctor
 
     logs = tmp_path / "isolated_logs"
     monkeypatch.setattr("maplebot.log.LOG_DIR", str(logs))

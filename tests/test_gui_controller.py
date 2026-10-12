@@ -12,8 +12,8 @@ import yaml
 
 from maplebot.capture import ImageCapture
 from maplebot.gui.controller import Controller
-from maplebot.recorder import KeyWatcher, Recorder
-from maplebot.route import Sample
+from maplebot.recording.recorder import KeyWatcher, Recorder
+from maplebot.recording.route import Sample
 
 
 def _yaml(path, data):
@@ -233,9 +233,9 @@ import threading
 
 from maplebot import window as window_mod
 from maplebot.config import load_profile
+from maplebot.diagnostics.selfcheck import VisionReport
 from maplebot.gui import controller as controller_mod
 from maplebot.gui import setup
-from maplebot.selfcheck import VisionReport
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROFILES = os.path.join(REPO, "config", "profiles")

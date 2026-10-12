@@ -10,20 +10,20 @@ from typing import Optional, Tuple
 
 import numpy as np
 
-from . import doctor
-from . import report as report_mod
-from .alerts import Alerts
 from .brain import fsm
 from .brain.advisor import Advisor
 from .config import AppCfg, Profile
 from .control.executor import Executor, Stats
 from .control.input_win import Keyboard
-from .metrics import LoopMetrics, Series
+from .diagnostics import doctor
 from .perception import MobJob, Perceiver
 from .pipeline import DetectorWorker, FrameSource
-from .progress import ExpTracker
 from .safety import LostPlayerWatchdog, Safety, is_black_screen, save_anomaly
-from .sysmon import SystemMonitor
+from .telemetry import report as report_mod
+from .telemetry.alerts import Alerts
+from .telemetry.metrics import LoopMetrics, Series
+from .telemetry.progress import ExpTracker
+from .telemetry.sysmon import SystemMonitor
 from .vision.locate import BR_NAME, TL_NAME, find_minimap, load_ui_template
 from .vision.types import MobDetector
 

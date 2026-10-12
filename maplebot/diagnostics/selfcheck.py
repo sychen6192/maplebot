@@ -17,11 +17,11 @@ from typing import List, Optional, Tuple
 
 import cv2
 
-from .brain import fsm
+from ..brain import fsm
 from .doctor import FAIL, OK, WARN, check_status_bars
 from .overlay import annotate, pct
-from .perception import Perceiver
-from .vision.mobs import make_detector
+from ..perception import Perceiver
+from ..vision.mobs import make_detector
 
 # verdicts() 第三欄的動作代號，GUI 用 {代號: callback} 分派到按鈕
 CALIBRATE, NAMETAG, VISION_TAB = "calibrate", "nametag", "tab:vision"

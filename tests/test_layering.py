@@ -1,4 +1,5 @@
-"""分層靠 import 守住：決策層不能把 OpenCV 拉進來，即時迴圈不能把離線訓練程式拉進來。
+"""分層靠 import 守住：決策層不能把 OpenCV 拉進來，即時迴圈不能把離線訓練程式和
+錄路線的程式拉進來。
 
 ADR 0002 要 decide() 是純函式，import 這一層也一樣。以前 brain/state.py 從
 vision/mobs.py 拿 Mob，mobs.py 頂層就 import cv2，所以 `import maplebot.brain.fsm`
@@ -27,6 +28,18 @@ def test_live_loop_does_not_pull_in_training_code():
     # 改標註流程就可能改到 bot 行為，目錄分出來的意義就沒了
     code = ("import maplebot.runner, sys; "
             "leaked = sorted(m for m in sys.modules if m.startswith('maplebot.training')); "
+            "assert not leaked, f'runner pulled in {leaked}'")
+    proc = subprocess.run([sys.executable, "-c", code], cwd=REPO, capture_output=True,
+                          text=True, timeout=120)
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_live_loop_does_not_pull_in_route_recording():
+    # 錄路線只在 bot 沒在打怪的時候跑（控制台執行中按不下「錄製路線」），產出的是
+    # 貼進 profile 的巡邏點。改 route.compress 的壓縮規則只該改到錄出來的巡邏點，
+    # 不該改到掛機行為；這個保證靠的是 runner 不 import maplebot/recording/
+    code = ("import maplebot.runner, sys; "
+            "leaked = sorted(m for m in sys.modules if m.startswith('maplebot.recording')); "
             "assert not leaked, f'runner pulled in {leaked}'")
     proc = subprocess.run([sys.executable, "-c", code], cwd=REPO, capture_output=True,
                           text=True, timeout=120)

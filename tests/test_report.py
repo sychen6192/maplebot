@@ -6,13 +6,13 @@
 import json
 import time
 
-from maplebot import report
-from maplebot.alerts import Alerts
 from maplebot.config import MonitorCfg
 from maplebot.control.executor import Stats
-from maplebot.metrics import LoopMetrics, Series
-from maplebot.progress import ExpTracker
-from maplebot.sysmon import SystemMonitor
+from maplebot.telemetry import report
+from maplebot.telemetry.alerts import Alerts
+from maplebot.telemetry.metrics import LoopMetrics, Series
+from maplebot.telemetry.progress import ExpTracker
+from maplebot.telemetry.sysmon import SystemMonitor
 
 
 def _pieces(duration=3600.0):

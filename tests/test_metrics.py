@@ -4,7 +4,7 @@
 """
 import pytest
 
-from maplebot.metrics import LoopMetrics, Series
+from maplebot.telemetry.metrics import LoopMetrics, Series
 
 
 class FakeClock:
