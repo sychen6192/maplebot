@@ -87,7 +87,7 @@ def main() -> int:
              "regions": results}
     if args.write:
         from maplebot.config import resolve_local_path
-        from maplebot.gui.settings import merge_into
+        from maplebot.yaml_edit import merge_into
         path = resolve_local_path(args.config) if args.write == "auto" else args.write
         merge_into(path, patch)
         print(f"\n已寫入 {path}（原有的其他設定都保留）")
