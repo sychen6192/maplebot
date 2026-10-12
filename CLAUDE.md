@@ -56,6 +56,8 @@ One tick is `capture → perceive → decide → execute`, and each arrow is a h
 
 `local.yaml` overrides `default.yaml` and is where calibration output belongs.
 
+Both the GUI and `tools/calibrate.py --write` write these files through `maplebot/yaml_edit.py:write_patch`, which edits values in place so hand-written comments (often the measurement behind a value) survive, and leaves a `<file>.bak` before any rewrite that would drop them. Write user config files through it rather than `yaml.safe_dump`. `yaml_edit` must not import `gui` or `config` (`config` imports its `_deep_merge`; `tests/test_gui_imports.py` checks both).
+
 ### The 790px reference width
 
 Every pixel threshold in config — attack range, outline area, nametag offset, chase distance — is expressed against a 790px-wide playfield and rescaled at runtime (`REFERENCE_WIDTH`). `range_px: 320` running on a 2560-wide window is not a bug. When adding a pixel threshold, decide whether it scales and say so in a comment (ADR 0003).

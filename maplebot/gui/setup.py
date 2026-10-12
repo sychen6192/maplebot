@@ -5,8 +5,8 @@
 所以「校正改過了，自檢要重做」這種規則可以直接測。
 
 gui_state.json 放的是控制台自己記的事（上次開的地圖、視窗位置、「辨識
-自檢看過了」），跟 Config / Profile 都不同：local.yaml 會被校正工具用
-safe_dump 整份重寫，塞在那裡遲早被洗掉。
+自檢看過了」），跟 Config / Profile 都不同：local.yaml 會被校正工具改寫，
+檔裡缺 key 時還是整份 safe_dump 重寫，塞在那裡遲早被洗掉。
 """
 import hashlib
 import json
