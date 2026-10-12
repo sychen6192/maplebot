@@ -390,3 +390,36 @@ def test_dry_run_keeps_the_answers_but_writes_no_labels(tmp_path):
     cache = tmp_path / "g.json"
     ground_label_dir(str(tmp_path), lambda img: [("monster", MONSTER)], str(cache), rewrite=False)
     assert cache.exists() and not (tmp_path / "a.txt").exists()
+
+
+def test_rerunning_prepare_dataset_never_leaks_val_into_train(raw_dir, tmp_path):
+    """加了新地圖的圖再切一次：同一張圖不能同時在 train 和 val。
+
+    圖變多之後洗牌結果整個不同，上一次留在 train/ 的圖這次可能被分到 val/。
+    舊輸出沒清掉的話兩邊都有它，mAP 等於拿考古題考試、看起來比實際好。
+    """
+    import shutil
+    raw, tpl = raw_dir
+    autolabel_dir(raw, tpl, threshold=0.8)
+    out = str(tmp_path / "yolo")
+    prepare_dataset(raw, out, val_fraction=0.34, seed=1)
+    keep = os.path.join(out, "README.txt")              # 不是 prepare_dataset 產的檔
+    with open(keep, "w", encoding="utf-8") as f:
+        f.write("mine")
+    open(os.path.join(out, "labels", "train.cache"), "w").close()   # ultralytics 的快取
+
+    for i in range(6):                                  # 新地圖蒐集到的圖（跟著標籤）
+        for ext in (".jpg", ".txt"):
+            src = os.path.join(raw, f"frame_{i:03d}{ext}")
+            shutil.copyfile(src, os.path.join(raw, f"new_{i:03d}{ext}"))
+    res = prepare_dataset(raw, out, val_fraction=0.34, seed=1)
+
+    def names(kind, split):
+        return {os.path.splitext(n)[0] for n in os.listdir(os.path.join(out, kind, split))}
+
+    train, val = names("images", "train"), names("images", "val")
+    assert not train & val
+    assert len(train) + len(val) == 12 == res.train + res.val
+    assert names("labels", "train") == train and names("labels", "val") == val
+    assert not os.path.exists(os.path.join(out, "labels", "train.cache"))
+    assert open(keep, encoding="utf-8").read() == "mine"

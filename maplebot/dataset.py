@@ -353,6 +353,17 @@ def prepare_dataset(raw_dir: str, out_dir: str, val_fraction: float = 0.15,
     n_val = max(1, round(len(images) * val_fraction))
     splits: List[Tuple[str, List[str]]] = [("val", images[:n_val]), ("train", images[n_val:])]
 
+    # 先清掉上一次的切分。圖變多之後洗牌結果整個不同，上次在 train/ 的圖這次
+    # 可能分到 val/——不清的話兩邊都有它，驗證集混進訓練過的圖，mAP 看起來比
+    # 實際好。只清這裡會寫的四個資料夾與 ultralytics 的標籤快取，out_dir 裡
+    # 其他東西不動
+    for split, _ in splits:
+        for kind in ("images", "labels"):
+            shutil.rmtree(os.path.join(out_dir, kind, split), ignore_errors=True)
+        cache = os.path.join(out_dir, "labels", f"{split}.cache")
+        if os.path.exists(cache):
+            os.remove(cache)
+
     res = PrepareResult(classes=classes)
     for split, paths in splits:
         img_dir = os.path.join(out_dir, "images", split)
