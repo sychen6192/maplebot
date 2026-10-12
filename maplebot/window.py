@@ -4,10 +4,11 @@
 - PrintWindow：直接向視窗要 client 區內容，**被其他視窗蓋住也拿得到**
 - 螢幕座標擷取（mss，見 capture.py）：抓螢幕上那塊區域，會拍到擋在前面的視窗
 """
+import os
 import sys
 import time
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 import numpy as np
 
@@ -104,23 +105,58 @@ def list_windows() -> List[Tuple[int, str]]:
     return results
 
 
+def _window_pid(hwnd: int) -> int:
+    """視窗所屬行程的 pid；查不到是 0。"""
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    return pid.value
+
+
+def _first_match(windows: Iterable[Tuple[int, str, int]], needle: str,
+                 own_pid: int) -> Optional[Tuple[int, str]]:
+    """(hwnd, title, pid) 依 z-order 排好，回傳第一個標題含 needle
+    （不分大小寫的子字串）、又不是自己行程開的視窗。
+
+    為什麼要排除自己：使用者填 'maple' 這種短字串時，控制台自己的視窗
+    （「mapleai 控制台」）也比得中，而按下開始的那一刻它正好在最上層、
+    EnumWindows 第一個列出來——bot 就去截控制台、把按鍵送給 Tk。
+    """
+    needle = needle.lower()
+    for hwnd, title, pid in windows:
+        if pid != own_pid and needle in title.lower():
+            return hwnd, title
+    return None
+
+
+def other_window_titles() -> List[str]:
+    """可見視窗的標題，扣掉自己行程開的（控制台、它跳出來的小視窗）。
+
+    給遊戲視窗選單用：清單裡出現控制台自己，選了就是上面那個錯。
+    """
+    if not IS_WINDOWS:
+        return []
+    own = os.getpid()
+    return [t for hwnd, t in list_windows() if _window_pid(hwnd) != own]
+
+
 def find_game_window(title_substr: str) -> Optional[GameWindow]:
     if not IS_WINDOWS:
         return None
-    needle = title_substr.lower()
-    for hwnd, title in list_windows():
-        if needle in title.lower():
-            rect = wintypes.RECT()
-            user32.GetClientRect(hwnd, ctypes.byref(rect))
-            pt = wintypes.POINT(0, 0)
-            user32.ClientToScreen(hwnd, ctypes.byref(pt))
-            return GameWindow(
-                hwnd=hwnd,
-                title=title,
-                origin=(pt.x, pt.y),
-                size=(rect.right - rect.left, rect.bottom - rect.top),
-            )
-    return None
+    hit = _first_match([(h, t, _window_pid(h)) for h, t in list_windows()],
+                       title_substr, os.getpid())
+    if hit is None:
+        return None
+    hwnd, title = hit
+    rect = wintypes.RECT()
+    user32.GetClientRect(hwnd, ctypes.byref(rect))
+    pt = wintypes.POINT(0, 0)
+    user32.ClientToScreen(hwnd, ctypes.byref(pt))
+    return GameWindow(
+        hwnd=hwnd,
+        title=title,
+        origin=(pt.x, pt.y),
+        size=(rect.right - rect.left, rect.bottom - rect.top),
+    )
 
 
 def resize_client(win: GameWindow, width: int, height: int) -> Optional[GameWindow]:
@@ -212,13 +248,12 @@ def window_process_elevated(hwnd: int) -> Optional[bool]:
     try:
         kernel32 = ctypes.windll.kernel32
         advapi32 = ctypes.windll.advapi32
-        pid = wintypes.DWORD()
-        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-        if not pid.value:
+        pid = _window_pid(hwnd)
+        if not pid:
             return None
         PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
         hproc = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,
-                                     False, pid.value)
+                                     False, pid)
         if not hproc:
             return None
         try:

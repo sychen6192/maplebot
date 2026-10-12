@@ -374,11 +374,11 @@ def _auto_patrol(rt: Runtime, player: Tuple[int, int], pat: PatrolCfg,
         ap.direction *= -1
         return Probe(ap.direction, pat.probe_seconds)
     return Panic(
-        f"自動巡邏校正失敗：重試 {pat.probe_retries} 次，"
+        f"自動探邊失敗：重試 {pat.probe_retries} 次，"
         f"量到的可走範圍都只有 {span}px（低於 "
         f"patrol.probe_min_span_px={pat.probe_min_span_px}）。"
         "請確認方向鍵有送進遊戲（遊戲用系統管理員跑的話終端機也要）、"
-        "小地圖 ROI 是否正確，或改用手動 patrol.waypoints",
+        "小地圖 region 是否正確，或改用手動 patrol.waypoints",
         return_home=False)
 
 

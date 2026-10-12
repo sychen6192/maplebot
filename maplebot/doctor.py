@@ -9,8 +9,9 @@
 「❌ 找不到模型 → 執行 python tools/train_yolo.py，或把 vision.mob_detector
 改回 outline」才有用。
 
-所有檢查都是純函式（吃參數、回 Check），CLI 在 tools/doctor.py，
-所以整套邏輯測得到、不需要真的壞掉的環境。
+所有檢查都是純函式（吃參數、回 Check），所以整套邏輯測得到、不需要真的
+壞掉的環境。哪些檢查、照什麼順序跑由 run_all() 決定：CLI（tools/doctor.py）
+只負責印，GUI 的準備分頁拿同一份來彙總，兩邊才不會講出不一樣的結論。
 """
 import os
 import sys
@@ -198,6 +199,30 @@ def _is_pretrained(path: str) -> bool:
     return is_pretrained_name(path)
 
 
+# 跟 vision/nametag.FEATURE_NAMES 是同一組檔名（測試會對）。不直接 import
+# 是因為那會連帶載入 cv2，而 doctor 要在 cv2 沒裝的機器上也跑得完，
+# 才講得出「cv2 沒裝」。
+NAMETAG_FILES = ("player_feature.png", "player_nametag.png")
+
+
+def check_nametag(ui_dir: str, exists: Callable[[str], bool] = os.path.exists) -> Check:
+    """使用者截過角色名牌沒有。
+
+    沒截 bot 照樣跑得起來，所以只是 WARN；但症狀很難自己看出來：角色定位
+    退回組隊紅條（要自己跟自己組隊才有）或畫面正中央，而鏡頭有跟隨延遲、
+    走到地圖邊緣還會停住，實測角色可以偏離中心 200px 以上——挖掉「自己」
+    挖錯地方，角色就被當成一隻怪站著打一整晚。
+    """
+    for name in NAMETAG_FILES:
+        path = os.path.join(ui_dir, name)
+        if exists(path):
+            return Check("角色名牌", OK, path)
+    return Check("角色名牌", WARN, "還沒截角色名牌",
+                 f"python tools/grab_template.py --dir {ui_dir} --name player_nametag"
+                 "（控制台：準備 › 3 截角色名牌）。沒有名牌時角色定位只能靠組隊紅條"
+                 "或畫面正中央，鏡頭一偏就會把角色自己當成怪站著打")
+
+
 def check_profile(profile, critical_hp_ratio: Optional[float] = None) -> List[Check]:
     out = []
     skills = profile.active_skills()
@@ -232,7 +257,8 @@ def check_profile(profile, critical_hp_ratio: Optional[float] = None) -> List[Ch
                          f"喝藥門檻 {hp.below_ratio:.0%} 不高於停機線 "
                          f"{critical_hp_ratio:.0%}",
                          "把 potions.hp.below_ratio 調高到 safety.critical_hp_ratio "
-                         "之上（例如停機線 25% 就設 50%），否則永遠先停機、不會喝藥"))
+                         "之上（例如停機線 25% 就設 50%），否則每次都要先掉進危險線才開始喝藥，"
+                         "只剩 critical_hp_seconds 那幾秒能搶救"))
     return out
 
 
@@ -384,3 +410,78 @@ def check_status_bars(cfg, frame) -> List[Check]:
         out.append(Check("血條 ROI 交叉驗證", WARN, "設定裡沒有可比對的血條 ROI",
                          "python tools/calibrate.py --write"))
     return out
+
+
+# ---- 整套組合 ----
+
+# 讀不起來時 run_all 就停在這一項；config_failed() 靠這個名字認出來
+CONFIG_CHECK = "全域設定"
+
+
+def run_all(cfg_path: str, profile_path: str, importer: Callable[[str], bool],
+            window_finder: Optional[Callable[[str], object]] = None,
+            source: str = "") -> List[Tuple[str, List[Check]]]:
+    """整套自檢，依段落回傳 [(段落標題, [Check, ...]), ...]。
+
+    CLI（tools/doctor.py）照順序印，GUI 拿來彙總——兩邊用同一份組合，
+    才不會 CLI 說有問題、控制台卻說一切就緒。importer 由呼叫端決定：
+    CLI 真的 import（才抓得到「裝了但載入就炸」），GUI 用 find_spec
+    （真的 import ultralytics 會連帶載入 torch，要好幾秒）。
+
+    全域設定讀不起來就停在「設定檔」那段：後面每一項都要用到 cfg，硬跑
+    只會多出一串跟真正問題無關的錯。用 config_failed() 判斷是不是停在這裡。
+    「遊戲視窗」那段只在有結果時出現（非 Windows 整段跳過）；
+    「辨識」那段只在給了 source 截圖時出現。
+    """
+    from .config import ConfigError, load_config, load_profile
+
+    env = [check_python(), check_platform()]
+    env += check_modules(importer)
+    env.append(check_writable())
+    sections: List[Tuple[str, List[Check]]] = [("執行環境", env)]
+
+    try:
+        cfg = load_config(cfg_path)
+    except ConfigError as e:
+        sections.append(("設定檔", [Check(
+            CONFIG_CHECK, FAIL, str(e),
+            f"修正 {cfg_path}（YAML 縮排/欄位型別），或跟版本控管裡的預設檔比對")]))
+        return sections
+    conf = [Check(CONFIG_CHECK, OK, " + ".join(cfg.sources))]
+    conf += check_regions(cfg)
+    conf.append(check_detector(cfg))
+    conf.append(check_nametag(cfg.vision.ui_templates_dir))
+    conf.append(check_game_process(cfg))
+    sections.append(("設定檔", conf))
+
+    try:
+        profile = load_profile(profile_path)
+    except ConfigError as e:
+        prof = [Check("Profile", FAIL, str(e), f"修正 {profile_path}")]
+    else:
+        prof = [Check("Profile", OK, profile.name)]
+        prof += check_profile(profile, cfg.safety.critical_hp_ratio)
+    sections.append((f"Profile（{profile_path}）", prof))
+
+    if source:
+        import cv2
+        # 先問檔案在不在：cv2.imread 讀不到會往 stderr 印一行 WARN，而這裡是
+        # 全部算完才印，那行會跑到報告最上面、跟「截圖」那項對不起來
+        shot = cv2.imread(source, cv2.IMREAD_COLOR) if os.path.exists(source) else None
+        if shot is None:
+            vis = [Check("截圖", FAIL, f"讀不到 {source}",
+                         "確認路徑；用 tools/debug_view.py --snapshot 可以存一張")]
+        else:
+            vis = check_status_bars(cfg, shot)
+        sections.append(("辨識（用 --source 的截圖驗）", vis))
+
+    window_checks = check_window(cfg, window_finder)
+    if window_checks:
+        sections.append(("遊戲視窗", window_checks))
+    return sections
+
+
+def config_failed(sections: List[Tuple[str, List[Check]]]) -> bool:
+    """run_all 是不是停在全域設定讀不起來那一步。"""
+    return any(c.name == CONFIG_CHECK and c.status == FAIL
+               for _, checks in sections for c in checks)

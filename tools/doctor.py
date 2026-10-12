@@ -15,7 +15,6 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from maplebot import doctor  # noqa: E402
-from maplebot.config import ConfigError, load_config, load_profile  # noqa: E402
 from maplebot.log import console_safe  # noqa: E402
 
 console_safe()   # cp950 終端機印 ✅/❌ 不炸掉
@@ -43,61 +42,17 @@ def main(argv=None) -> int:
                         "留空就跳過（那項檢查需要真的畫面）")
     args = p.parse_args(argv)
 
-    rep = doctor.Report()
     print("maplebot 環境自檢")
-
-    _section("執行環境")
-    for c in [doctor.check_python(), doctor.check_platform()]:
-        print("  " + rep.add(c).line())
-    for c in doctor.check_modules(_can_import):
-        print("  " + rep.add(c).line())
-    print("  " + rep.add(doctor.check_writable()).line())
-
-    _section("設定檔")
-    try:
-        cfg = load_config(args.config)
-    except ConfigError as e:
-        print("  " + rep.add(doctor.Check(
-            "全域設定", doctor.FAIL, str(e),
-            f"修正 {args.config}（YAML 縮排/欄位型別），"
-            "或跟版本控管裡的預設檔比對")).line())
+    sections = doctor.run_all(args.config, args.profile, _can_import,
+                              source=args.source)
+    rep = doctor.Report()
+    for title, checks in sections:
+        _section(title)
+        for c in checks:
+            print("  " + rep.add(c).line())
+    if doctor.config_failed(sections):
         print(f"\n{rep.summary()}——設定檔讀不起來，後面的檢查沒有意義")
         return 1
-    print("  " + rep.add(doctor.Check("全域設定", doctor.OK,
-                                      " + ".join(cfg.sources))).line())
-    for c in doctor.check_regions(cfg):
-        print("  " + rep.add(c).line())
-    print("  " + rep.add(doctor.check_detector(cfg)).line())
-    print("  " + rep.add(doctor.check_game_process(cfg)).line())
-
-    _section(f"Profile（{args.profile}）")
-    try:
-        profile = load_profile(args.profile)
-    except ConfigError as e:
-        print("  " + rep.add(doctor.Check("Profile", doctor.FAIL, str(e),
-                                          f"修正 {args.profile}")).line())
-    else:
-        print("  " + rep.add(doctor.Check("Profile", doctor.OK, profile.name)).line())
-        for c in doctor.check_profile(profile, cfg.safety.critical_hp_ratio):
-            print("  " + rep.add(c).line())
-
-    if args.source:
-        _section("辨識（用 --source 的截圖驗）")
-        import cv2
-        shot = cv2.imread(args.source, cv2.IMREAD_COLOR)
-        if shot is None:
-            print("  " + rep.add(doctor.Check(
-                "截圖", doctor.FAIL, f"讀不到 {args.source}",
-                "確認路徑；用 tools/debug_view.py --snapshot 可以存一張")).line())
-        else:
-            for c in doctor.check_status_bars(cfg, shot):
-                print("  " + rep.add(c).line())
-
-    window_checks = doctor.check_window(cfg)
-    if window_checks:
-        _section("遊戲視窗")
-        for c in window_checks:
-            print("  " + rep.add(c).line())
 
     print()
     print("═" * 52)

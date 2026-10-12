@@ -1,11 +1,14 @@
-"""把訓練好的 .pt 轉成 ONNX，讓推理不必扛 PyTorch。
+"""把訓練好的 .pt 轉成 ONNX：推理走 onnxruntime，CPU 上通常比 PyTorch eager 快。
 
-為什麼要這個：ultralytics + torch + torchvision 裝起來 2GB 起跳，還要對
-CUDA 版本。但**掛機那台不需要訓練**，它只要跑推理。換成 ONNX 之後，
-掛機環境只需要 onnxruntime（幾十 MB），CPU 推理通常還比 PyTorch eager 快
-一到三倍——沒顯卡的筆電因此也能走 YOLO 路線而不是只能用描邊偵測。
+為什麼要這個：**掛機那台不需要訓練**，它只要跑推理。換成 ONNX 之後推理走
+onnxruntime，CPU 上通常比 PyTorch eager 快一到三倍——沒顯卡的筆電因此也能走
+YOLO 路線，不是只能用描邊偵測。
 
-  python tools/export_onnx.py --model runs/detect/train/weights/best.pt
+注意：.onnx 目前仍經 ultralytics 載入（vision/yolo_mobs.py），ultralytics 依賴
+torch，所以掛機那台**還是要裝 torch**，省掉的只有 CUDA 與推理速度。真的不想在
+掛機那台裝 torch，就把模型放在另一台跑 tools/serve_yolo.py、這台用 remote 偵測器。
+
+  python tools/export_onnx.py --model runs/mobs/mobs/weights/best.pt
   python tools/export_onnx.py --model best.pt --imgsz 640 --half   # GPU 上再快一點
 
 轉完會印出要貼進設定檔的兩行。轉檔本身需要 ultralytics（在有訓練環境的
@@ -69,7 +72,10 @@ def main(argv=None) -> int:
     print(f"  yolo_model: {out}")
     if args.imgsz != 640:
         print(f"  yolo_imgsz: {args.imgsz}")
-    print("\n掛機那台只要裝 onnxruntime 就好（不需要 torch）：")
+    # .onnx 目前也是經 ultralytics 載入（vision/yolo_mobs.py），而 ultralytics 依賴
+    # torch——說「只要 onnxruntime」的話，照做的人開機就 ImportError
+    print("\n掛機那台要裝 ultralytics 加 onnxruntime（.onnx 也是經 ultralytics 載入，仍會帶進 torch）：")
+    print("  pip install ultralytics")
     print("  pip install onnxruntime          # CPU")
     print("  pip install onnxruntime-gpu      # 有 CUDA 的話")
     return 0

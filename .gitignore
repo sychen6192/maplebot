@@ -139,3 +139,9 @@ config/maps/
 config/UP/
 config/profiles/*.dat
 config/*.json
+
+# 控制台記住的上次地圖、視窗位置、「辨識自檢看過了」——每台電腦各自的狀態。
+# 上面的 config/*.json 已經涵蓋，寫明是為了沒人會把那條刪掉時順手把它放進版控
+config/gui_state.json
+# 控制台存檔沒辦法原地保留註解時，先備份一份 <檔名>.bak（每個 session 一次）
+config/**/*.bak

@@ -481,3 +481,205 @@ def test_the_worker_is_stopped_on_shutdown(tmp_path, shot):
     r.run()
     assert r.mob_worker is not None
     assert r.mob_worker._thread is None      # 收工時有被 join 掉
+
+
+# ---- 給 GUI 看的狀態：為什麼暫停／停止、開場自檢走到哪 ----
+# GUI 只讀 Status，不伸手進 runner。這些欄位錯了，回來看的人看到的就是
+# 「已暫停」卻不知道是自己按的還是 watchdog 判定異常——後者要先看畫面。
+
+def _scripted_poll(r, script):
+    """把熱鍵輪詢換成照表操作：第 n 次 poll 時呼叫 script[n]。
+
+    主迴圈每一圈（包括暫停中的空轉圈）都會 poll 一次，所以這是不靠
+    執行緒與 sleep 的決定性方式，模擬「使用者在某一圈按了暫停／繼續」。
+    """
+    calls = iter(range(1, 10 ** 6))
+
+    def poll():
+        fn = script.get(next(calls))
+        if fn is not None:
+            fn()
+    r.safety.poll = poll
+
+
+class _FocusCapture(_FadeCapture):
+    """畫面一直正常（自檢會過），並數 focus() 被叫了幾次。"""
+
+    def __init__(self, shot):
+        super().__init__(shot, black_from=10 ** 9)
+        self.focused = 0
+
+    def focus(self):
+        self.focused += 1
+        return True
+
+
+def test_a_persistent_blackout_says_why_it_paused(tmp_path, shot):
+    r = _runner(tmp_path, shot, safety={"black_screen_seconds": 0.1})
+    r.capture = _FadeCapture(shot)
+    r.max_seconds = 1.5
+    r.run()
+    assert r.safety.paused is True                 # 旗標本身仍是純 bool
+    assert "黑屏" in r.status.pause_reason
+    assert r.status.paused is True
+    assert r.status.paused_by_user is False        # watchdog 暫停，不是人按的
+
+
+@pytest.mark.parametrize("dry_run, refocused", [(False, 1), (True, 0)])
+def test_resume_brings_the_game_back_to_the_foreground(tmp_path, shot, dry_run, refocused):
+    """從 GUI 按繼續的那一刻前景是控制台；不帶回遊戲，方向鍵會打進 Tk。
+    dry-run 不送鍵，搶焦點只會打擾正在看 GUI 的人。"""
+    r = _runner(tmp_path, shot) if dry_run else _live_runner(tmp_path, shot)
+    cap = r.capture = _FocusCapture(shot)
+    seen = {}
+
+    def pause():
+        seen["before"] = cap.focused               # 開跑時 _focus_game 那次不算
+        r.safety.pause("測試暫停", by_user=True)
+
+    _scripted_poll(r, {3: pause, 5: r.safety.resume})
+    r.max_ticks = 4
+    r.run()
+    assert r.stats.ticks == 4                      # 真的有恢復並繼續跑
+    assert cap.focused - seen["before"] == refocused
+
+
+def test_status_tells_the_gui_how_the_run_went(tmp_path, shot):
+    r = _runner(tmp_path, shot)
+    assert r.status.preflight == ""
+    r.max_ticks = 2
+    r.run()
+    st = r.status
+    assert st.preflight == "ok"
+    assert st.started_at > 0
+    assert st.ended_at >= st.started_at
+    assert "max_ticks" in st.stop_reason
+    assert st.dry_run is True
+    assert st.target_fps == 60
+    assert st.report_path == ""                    # report.enabled: false
+
+
+def test_a_failed_preflight_is_published(tmp_path, shot):
+    """自檢沒過時 run() 直接 return，不進 finally——狀態也要落在 fail，
+    不然 GUI 永遠顯示「啟動中」。"""
+    r = _runner(tmp_path, shot, regions={"minimap": [10, 10, 120, 40],
+                                         "hp_bar": [500, 500, 50, 8],
+                                         "playfield": [0, 80, 300, 200]})
+    r.run()
+    assert r.status.preflight == "fail"
+    assert r.status.ended_at >= r.status.started_at > 0
+    assert r.status.running is False
+
+
+def test_a_minimap_resolve_failure_is_a_failed_preflight(tmp_path, shot):
+    r = _runner(tmp_path, shot, regions={"minimap": "auto", "hp_bar": [10, 60, 50, 8],
+                                         "playfield": [0, 80, 300, 200]},
+                vision={"ui_templates_dir": str(tmp_path / "none")})
+    r.run()
+    assert r.status.preflight == "fail"
+
+
+def test_a_preflight_exception_is_still_a_failure(tmp_path, shot):
+    r = _runner(tmp_path, shot)
+
+    def boom():
+        raise RuntimeError("擷取壞了")
+    r._preflight = boom
+    with pytest.raises(RuntimeError):
+        r.run()
+    assert r.status.preflight == "fail"
+
+
+def test_a_gui_stop_keeps_its_own_reason(tmp_path, shot):
+    """以前 finally 一律寫「使用者按下 f12 停止」，GUI 停止時是錯的，還會進報告。"""
+    r = _runner(tmp_path, shot)
+    _scripted_poll(r, {3: lambda: r.safety.request_stop("你在控制台按了停止")})
+    r.run()
+    assert r._stop_reason == "你在控制台按了停止"
+    assert r.status.stop_reason == "你在控制台按了停止"
+
+
+def test_a_bare_stop_flag_falls_back_to_the_hotkey_wording(tmp_path, shot):
+    r = _runner(tmp_path, shot)
+
+    def stop():
+        r.safety.stop = True
+    _scripted_poll(r, {2: stop})
+    r.run()
+    assert r.status.stop_reason == "使用者按下 f12 停止"
+
+
+def test_report_path_is_absolute(tmp_path, shot, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    r = _runner(tmp_path, shot)
+    r.cfg.report.enabled = True
+    r.cfg.report.chart = False
+    r.cfg.report.dir = "reports"                   # 相對路徑：GUI 不能依賴工作目錄
+    r.max_ticks = 2
+    r.run()
+    import os
+    assert os.path.isabs(r.status.report_path)
+    assert r.status.report_path.endswith(".md")
+    assert os.path.exists(r.status.report_path)
+
+
+def test_exp_rate_uses_the_bot_clock(tmp_path, shot):
+    """經驗效率要扣掉暫停那段：餵給 ExpTracker 的是 bot 時鐘，算速率也要同一條軸。"""
+    from maplebot.brain import fsm
+    from maplebot.brain.state import GameState
+
+    r = _runner(tmp_path, shot)
+    st = GameState(ts=0.0, hp=1.0)
+    r._publish(st, fsm.Wait("x"), 100.0)
+    assert r.status.exp_gained is None             # 還沒讀到 EXP，不是 +0%
+    assert r.status.exp_per_hour is None
+
+    r.exp.update(0.50, 100.0)
+    r.exp.update(0.60, 100.0 + 3600)
+    r._publish(st, fsm.Wait("x"), 100.0 + 3600)
+    assert r.status.exp_gained == pytest.approx(0.10)
+    assert r.status.exp_per_hour == pytest.approx(0.10)
+
+
+def test_a_stale_pause_reason_is_not_published(tmp_path, shot):
+    """舊的 toggle 直接寫 safety.paused = False，原因還留在 Safety 裡；
+    Status 不能出現「沒暫停卻有暫停原因」。"""
+    r = _runner(tmp_path, shot)
+    r.safety.pause("你按了 F9", by_user=True)
+    r._publish_pause()
+    assert (r.status.paused, r.status.pause_reason, r.status.paused_by_user) == \
+        (True, "你按了 F9", True)
+    r.safety.paused = False
+    r._publish_pause()
+    assert (r.status.paused, r.status.pause_reason, r.status.paused_by_user) == \
+        (False, "", False)
+
+
+def test_the_dry_run_tick_line_is_marked(tmp_path, shot, caplog):
+    """GUI 靠 tick=True 把每 tick 一行收起來；沒標的話只能比對字串開頭。"""
+    caplog.set_level(logging.INFO, logger="maplebot.test.guards")
+    r = _runner(tmp_path, shot)
+    r.max_ticks = 2
+    r.run()
+    ticks = [rec for rec in caplog.records if rec.getMessage().startswith("tick ")]
+    assert len(ticks) == 2
+    assert all(getattr(rec, "tick", False) is True for rec in ticks)
+    others = [rec for rec in caplog.records if not rec.getMessage().startswith("tick ")]
+    assert others and not any(getattr(rec, "tick", False) for rec in others)
+
+
+def test_exp_rate_waits_for_enough_data(tmp_path, shot):
+    """EXP 條一格約 0.4%：開跑 20 秒跳一格就是「每小時 +78%」。累積夠久才顯示。"""
+    from maplebot.brain import fsm
+    from maplebot.brain.state import GameState
+    from maplebot.runner import RATE_WARMUP
+
+    r = _runner(tmp_path, shot)
+    st = GameState(ts=0.0, hp=1.0)
+    r.exp.update(0.500, 100.0)
+    r.exp.update(0.504, 120.0)
+    r._publish(st, fsm.Wait("x"), 120.0)
+    assert r.status.exp_gained == pytest.approx(0.004)
+    assert r.status.exp_per_hour is None
+    r._publish(st, fsm.Wait("x"), 100.0 + RATE_WARMUP)
+    assert r.status.exp_per_hour is not None

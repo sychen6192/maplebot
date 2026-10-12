@@ -1,13 +1,13 @@
 """YOLO 怪物偵測（選配）。
 
 需要 `pip install ultralytics`，並用自己蒐集的資料集訓練模型
-（流程見 README「進階：ML 感知層」）。RTX 5090 上 YOLO11n/s
+（流程見 docs/YOLO_TRAINING.md）。RTX 5090 上 YOLO11n/s
 推理可達數百 FPS，適合當即時感知層。
 
-`.pt` 與 `.onnx` 都收。ONNX 的意義是「不用扛 PyTorch」：ultralytics 走
-onnxruntime 後端時，安裝體積從 2GB 級掉到幾十 MB，CPU 推理也普遍比
-PyTorch eager 快——沒有顯卡、或不想在掛機的機器上裝 CUDA 的人走這條。
-匯出用 tools/export_onnx.py。
+`.pt` 與 `.onnx` 都收。ONNX 走 onnxruntime 後端，CPU 推理普遍比 PyTorch eager
+快——沒有顯卡、或不想在掛機的機器上裝 CUDA 的人走這條。但兩者都經 ultralytics
+載入，ultralytics 依賴 torch，所以 torch 還是要裝；完全不裝 torch 的路線是
+remote（tools/serve_yolo.py）。匯出用 tools/export_onnx.py。
 """
 import os
 from typing import List, Optional

@@ -157,7 +157,8 @@ class OutlineMobDetector:
                f"｜外框上限 {s.get('max_size', ('?', '?'))}")
         hints = []
         if s["blobs"] == 0:
-            hints.append("完全沒抓到黑塊 -> outline_black_level 調高（8→15）")
+            hints.append("完全沒抓到黑塊 -> outline_black_level 調高"
+                         "（即時擷取一般 0~8、JPEG 12~20，有些客戶端要 16~32）")
         if s["too_small"] > s["kept"]:
             hints.append("多數被判太小 -> outline_min_area 調低")
         if s["too_big"]:

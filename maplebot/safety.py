@@ -5,6 +5,7 @@
 """
 import os
 import sys
+import threading
 import time
 from datetime import datetime
 from typing import Optional
@@ -23,18 +24,68 @@ ANOMALY_DIR = os.path.join("logs", "anomalies")
 
 
 class Safety:
+    """暫停與停止的旗標，外加「為什麼」。
+
+    paused / stop 維持純 bool：主迴圈與既有測試直接讀它們。原因另外放在
+    pause_reason / stop_reason——同一個「已暫停」可能是使用者按了熱鍵、
+    也可能是 watchdog 判定異常，回來看的人要知道是哪一種才知道該不該看畫面。
+
+    寫入的人有三個執行緒（主迴圈的熱鍵與 watchdog、督導層、GUI），讀的人
+    （Status、GUI）不上鎖，所以順序有講究：先寫原因再設 paused=True、先清
+    paused 再清原因。這樣不上鎖的讀者看到 paused=True 時原因一定已經在了。
+    """
+
     def __init__(self, stop_key: str, pause_key: str, logger):
         self.stop = False
         self.paused = False
+        self.pause_reason = ""
+        self.paused_by_user = False
+        self.stop_reason = ""
         self.log = logger
         self._stop_vk = _VK.get(stop_key.lower())
         self._pause_vk = _VK.get(pause_key.lower())
+        # 原因給人看，用遊戲裡鍵帽上的寫法（F9），不是設定檔裡的 f9
+        self._stop_name = stop_key.upper()
+        self._pause_name = pause_key.upper()
         self._prev_down = {"stop": False, "pause": False}
+        # 只擋寫入者之間的「檢查後設定」競態；讀者靠上面的寫入順序
+        self._lock = threading.Lock()
         if IS_WINDOWS:
             import ctypes
             self._gaks = ctypes.windll.user32.GetAsyncKeyState
         else:
             self._gaks = None
+
+    def pause(self, reason: str, by_user: bool = False) -> bool:
+        """暫停並記下原因。已經在暫停就什麼都不做、回 False。
+
+        不覆蓋第一個原因：watchdog 剛暫停、使用者的點擊緊接著落下時，
+        要留下的是 watchdog 的理由——那才是回來的人需要看的。
+        """
+        with self._lock:
+            if self.paused:
+                return False
+            self.pause_reason = reason
+            self.paused_by_user = by_user
+            self.paused = True
+            return True
+
+    def resume(self) -> bool:
+        """解除暫停。本來就沒暫停回 False。"""
+        with self._lock:
+            if not self.paused:
+                return False
+            self.paused = False
+            self.pause_reason = ""
+            self.paused_by_user = False
+            return True
+
+    def request_stop(self, reason: str) -> None:
+        """要求主迴圈結束。原因以第一次為準（停機後使用者又按 F12 不該蓋掉）。"""
+        with self._lock:
+            if not self.stop_reason:
+                self.stop_reason = reason
+            self.stop = True
 
     def _rising_edge(self, name: str, vk: Optional[int]) -> bool:
         # GetAsyncKeyState 的 LSB（上次呼叫以來按過）會被其他行程清掉，
@@ -51,9 +102,12 @@ class Safety:
             return
         if self._rising_edge("stop", self._stop_vk):
             self.log.warning("偵測到停止熱鍵，正在結束…")
-            self.stop = True
+            self.request_stop(f"你按了 {self._stop_name}")
         if self._rising_edge("pause", self._pause_vk):
-            self.paused = not self.paused
+            if self.paused:
+                self.resume()
+            else:
+                self.pause(f"你按了 {self._pause_name}", by_user=True)
             self.log.warning("熱鍵切換：%s", "已暫停" if self.paused else "繼續執行")
 
 

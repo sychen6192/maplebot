@@ -434,6 +434,11 @@ def _parse_waypoint(raw) -> Waypoint:
     raise ConfigError(f"看不懂的 waypoint 格式: {raw!r}")
 
 
+# GUI 存檔前要用**跟載入時同一套**規則檢查巡邏點：以前 UI 自己猜格式，不合法的
+# 巡邏點先寫進檔案、下次啟動才被 load_profile 擋下，變成「設定錯誤」打不開。
+parse_waypoint = _parse_waypoint
+
+
 def resolve_local_path(config_path: str) -> str:
     """local.yaml 找的是**設定檔旁邊**那一個，不是當前目錄底下的。
 

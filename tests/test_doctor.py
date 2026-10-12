@@ -4,6 +4,9 @@
 `❌ 找不到模型 → 改回 outline 或看 docs/YOLO_TRAINING.md` 才有用。
 所以這裡不只斷言狀態，也斷言 fix 欄位有指向具體的動作。
 """
+import sys
+
+import pytest
 import yaml
 
 from maplebot import doctor
@@ -240,3 +243,156 @@ def test_writable_check_on_a_real_directory(tmp_path):
     check = doctor.check_writable(str(tmp_path / "logs"))
     assert check.status == doctor.OK
     assert not (tmp_path / "logs" / ".doctor_write_test").exists()   # 探針要清掉
+
+
+# ---- 角色名牌 ----
+
+def test_missing_nametag_is_a_warning_that_names_both_ways_to_fix_it(tmp_path):
+    """沒截名牌不會讓 bot 起不來，但角色會被當成怪打——要講清楚去哪裡補：
+    CLI 的指令（problem_for 也靠 player_nametag 這個字認出來）跟控制台的那一步。"""
+    check = doctor.check_nametag(str(tmp_path / "ui"))
+    assert check.status == doctor.WARN
+    assert check.detail == "還沒截角色名牌"
+    assert "grab_template.py" in check.fix and "--name player_nametag" in check.fix
+    assert str(tmp_path / "ui") in check.fix
+    assert "準備" in check.fix
+
+
+def test_either_nametag_file_counts(tmp_path):
+    for name in ("player_nametag.png", "player_feature.png"):
+        ui = tmp_path / name.split(".")[0]
+        ui.mkdir()
+        (ui / name).write_bytes(b"png")
+        assert doctor.check_nametag(str(ui)).status == doctor.OK
+
+
+def test_nametag_check_uses_the_injected_exists(tmp_path):
+    seen = []
+    check = doctor.check_nametag("ui", exists=lambda p: seen.append(p) or False)
+    assert check.status == doctor.WARN
+    assert len(seen) == 2
+
+
+def test_nametag_files_match_what_the_locator_loads():
+    """doctor 為了不連帶載入 cv2 自己抄了一份檔名，兩邊不能分家。"""
+    from maplebot.vision.nametag import FEATURE_NAMES
+    assert set(doctor.NAMETAG_FILES) == set(FEATURE_NAMES)
+
+
+# ---- run_all（tools/doctor.py 與 GUI 共用的組合）----
+
+def _write(tmp_path, name, data):
+    p = tmp_path / name
+    p.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+    return str(p)
+
+
+def _cfg_path(tmp_path):
+    # 這組 region 的血條在 y=609，校正尺寸要裝得下，否則「ROI 是否在畫面內」會 FAIL
+    return _write(tmp_path, "cfg.yaml", {
+        "window": {"title": "楓之谷", "calibrated_for": [1024, 768]},
+        "regions": {"minimap": [18, 98, 128, 58], "hp_bar": [223, 609, 105, 10],
+                    "mp_bar": [332, 609, 103, 10], "playfield": [8, 60, 790, 520]},
+    })
+
+
+def _profile_path(tmp_path):
+    return _write(tmp_path, "prof.yaml", {
+        "name": "t", "patrol": {"waypoints": [30, 90]}, "attack": {"key": "ctrl"},
+        "potions": {"hp": {"key": "pageup", "below_ratio": 0.5}}})
+
+
+def _names(sections):
+    return [(title, [c.name for c in checks]) for title, checks in sections]
+
+
+def test_run_all_is_the_same_composition_as_the_cli(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)              # check_writable 會建 logs/
+    cfg_path, prof_path = _cfg_path(tmp_path), _profile_path(tmp_path)
+    sections = doctor.run_all(cfg_path, prof_path, lambda m: True,
+                              window_finder=lambda title: None)
+
+    cfg = load_config(cfg_path)
+    expected = [
+        ("執行環境", ["Python 版本", "平台", "套件 numpy", "套件 opencv-python",
+                      "套件 PyYAML", "選配 mss", "選配 psutil", "選配 matplotlib",
+                      "選配 ultralytics", "選配 requests", "可寫入 logs/"]),
+        ("設定檔", ["全域設定", "必要 ROI", "ROI 是否在畫面內", "playfield 是否乾淨",
+                    "怪物偵測", "角色名牌",
+                    # psutil 有沒有裝決定這項叫「遊戲行程」還是「遊戲行程監看」
+                    doctor.check_game_process(cfg).name]),
+        (f"Profile（{prof_path}）", ["Profile", "攻擊鍵", "巡邏路線", "補血藥"]),
+    ]
+    if sys.platform == "win32":              # 非 Windows 整段跳過
+        expected.append(("遊戲視窗", ["遊戲視窗"]))
+    assert _names(sections) == expected
+    assert doctor.config_failed(sections) is False
+    nametag = _by_name(sections[1][1], "角色名牌")
+    assert nametag.status == doctor.WARN     # conftest 把 UI 模板目錄指到空資料夾
+
+
+def test_run_all_stops_when_the_config_cannot_be_read(tmp_path, monkeypatch):
+    """全域設定讀不起來時後面每一項都要 cfg，硬跑只會多一串無關的錯。"""
+    monkeypatch.chdir(tmp_path)
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("window: [unclosed\n", encoding="utf-8")
+    sections = doctor.run_all(str(bad), _profile_path(tmp_path), lambda m: True)
+    assert [t for t, _ in sections] == ["執行環境", "設定檔"]
+    only = sections[1][1]
+    assert [(c.name, c.status) for c in only] == [("全域設定", doctor.FAIL)]
+    assert str(bad) in only[0].fix
+    assert doctor.config_failed(sections) is True
+
+
+def test_run_all_reports_an_unreadable_source_shot(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    sections = doctor.run_all(_cfg_path(tmp_path), _profile_path(tmp_path),
+                              lambda m: True, window_finder=lambda t: None,
+                              source=str(tmp_path / "nope.png"))
+    title, checks = sections[3]
+    assert title == "辨識（用 --source 的截圖驗）"
+    assert [(c.name, c.status) for c in checks] == [("截圖", doctor.FAIL)]
+
+
+# ---- tools/doctor.py ----
+
+def _doctor_cli():
+    import importlib.util
+    import os
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "tools", "doctor.py")
+    spec = importlib.util.spec_from_file_location("doctor_cli", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_cli_exits_1_on_a_broken_config(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    cli = _doctor_cli()
+    monkeypatch.setattr(cli, "_can_import", lambda m: True)
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("window: [unclosed\n", encoding="utf-8")
+    assert cli.main(["--config", str(bad), "--profile",
+                     _profile_path(tmp_path)]) == 1
+    out = capsys.readouterr().out
+    assert "設定檔讀不起來，後面的檢查沒有意義" in out
+    assert "── Profile" not in out
+
+
+@pytest.mark.skipif(sys.platform == "win32",
+                    reason="Windows 上會真的去找遊戲視窗，找不到就是 exit 1")
+def test_cli_prints_every_check_of_run_all_in_order(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    cli = _doctor_cli()
+    monkeypatch.setattr(cli, "_can_import", lambda m: True)
+    cfg_path, prof_path = _cfg_path(tmp_path), _profile_path(tmp_path)
+    assert cli.main(["--config", cfg_path, "--profile", prof_path]) == 0
+    out = capsys.readouterr().out
+
+    pos = 0
+    for title, checks in doctor.run_all(cfg_path, prof_path, lambda m: True):
+        pos = out.index(f"── {title} ", pos)
+        for c in checks:
+            pos = out.index("  " + c.line(), pos)
+    assert "項提醒" in out[pos:]
