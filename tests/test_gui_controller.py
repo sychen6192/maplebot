@@ -239,7 +239,9 @@ from maplebot.gui import setup
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROFILES = os.path.join(REPO, "config", "profiles")
-ROPE_MAP = "弓箭手訓練場一-1366x768.yaml"
+# x=54 那條繩（grab run、tolerance 1）讀凍結的複本：config/profiles 裡那張是
+# 使用者自己在掛的地圖，他重錄路線不該讓「存檔不能洗掉這條繩」的測試變紅
+ROPE_MAP = os.path.join(REPO, "tests", "fixtures", "profiles", "弓箭手訓練場一-1366x768.yaml")
 
 
 def _config(tmp_path, **regions):
@@ -254,10 +256,12 @@ def _config(tmp_path, **regions):
 
 
 def _copy_profile(tmp_path, name, as_name=None):
+    """name 是 config/profiles 底下的範本檔名，或測試資料的完整路徑。"""
     folder = tmp_path / "profiles"
     folder.mkdir(exist_ok=True)
-    dst = folder / (as_name or name)
-    shutil.copyfile(os.path.join(PROFILES, name), dst)
+    src = name if os.path.isabs(name) else os.path.join(PROFILES, name)
+    dst = folder / (as_name or os.path.basename(name))
+    shutil.copyfile(src, dst)
     return str(dst)
 
 

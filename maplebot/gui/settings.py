@@ -363,7 +363,8 @@ def describe_waypoints(text: str) -> Problem:
         return Problem("warn", "只有 1 個巡邏點，角色會站在原地——至少 2 個點，或改用自動探邊")
     levels = sorted({p.y for p in pts if p.y is not None})
     if len(levels) >= 2:
-        # 錄製原始輸出可以有 21 層（爬繩途中都被當成樓層），全列出來一行放不下
+        # 錄製原始輸出可以有 21 層（爬繩途中都被當成樓層），全列出來一行放不下；
+        # 實例見 tests/fixtures/profiles/弓箭手訓練場二-錄製原始輸出.yaml
         ys = "／".join(_fmt(y) for y in levels) if len(levels) <= 5 \
             else f"{_fmt(levels[0])}–{_fmt(levels[-1])}"
         msg = f"{n} 個巡邏點、{len(levels)} 層（y {ys}）"

@@ -193,7 +193,10 @@ from maplebot.brain.state import GameState
 from maplebot.config import AppCfg, BuffCfg
 
 PROFILES = Path(__file__).resolve().parent.parent / "config" / "profiles"
-ROPE_MAP = PROFILES / "弓箭手訓練場一-1366x768.yaml"
+# 釘 x=54 那條繩（tolerance 1、grab: run）和檔內註解的測試讀凍結的複本：
+# config/profiles 裡那張是使用者自己在掛的地圖，他重錄路線或改註解不該讓測試變紅
+ROPE_MAP = (Path(__file__).resolve().parent / "fixtures" / "profiles"
+            / "弓箭手訓練場一-1366x768.yaml")
 EXAMPLE = PROFILES / "example.yaml"
 
 
@@ -605,8 +608,7 @@ def test_write_patch_edits_in_place_or_backs_up_once(tmp_path):
 
 def test_a_list_edit_only_replaces_that_block(tmp_path):
     """錄一次路線不能把檔案其他地方記錄實測數據的註解洗掉。"""
-    src = PROFILES / "弓箭手訓練場一-1366x768.yaml"
-    path = _copy(src, tmp_path)
+    path = _copy(ROPE_MAP, tmp_path)
     text = Path(path).read_text(encoding="utf-8")
     route = [{"x": 10, "y": 90}, {"x": 80, "y": 90, "tolerance": 1}]
     new = settings.patch_scalars(text, {"patrol": {"waypoints": route}})
