@@ -54,4 +54,7 @@ attack_auto_scale: true
 chase_px: 0
 
 # 怪靠得比這麼近就先退開再打（0 = 關掉，近戰要設 0）
-keep_away_px: 45
+# 60 而不是 45：中心離角色 50 以內的偵測會被當成角色自己濾掉
+#（vision.outline_player_box 寬 100 的一半），45 的話後退永遠不會觸發。
+# 要明顯小於 range_px 110，不然怪一進射程就退、永遠打不到
+keep_away_px: 60

@@ -4,6 +4,7 @@
 `❌ 找不到模型 → 改回 outline 或看 docs/YOLO_TRAINING.md` 才有用。
 所以這裡不只斷言狀態，也斷言 fix 欄位有指向具體的動作。
 """
+from pathlib import Path
 import sys
 
 import pytest
@@ -321,7 +322,7 @@ def test_run_all_is_the_same_composition_as_the_cli(tmp_path, monkeypatch):
                     "怪物偵測", "角色名牌",
                     # psutil 有沒有裝決定這項叫「遊戲行程」還是「遊戲行程監看」
                     doctor.check_game_process(cfg).name]),
-        (f"Profile（{prof_path}）", ["Profile", "攻擊鍵", "巡邏路線", "補血藥"]),
+        (f"Profile（{prof_path}）", ["Profile", "攻擊鍵", "巡邏路線", "補血藥", "射程設定"]),
     ]
     if sys.platform == "win32":              # 非 Windows 整段跳過
         expected.append(("遊戲視窗", ["遊戲視窗"]))
@@ -396,3 +397,79 @@ def test_cli_prints_every_check_of_run_all_in_order(tmp_path, monkeypatch, capsy
         for c in checks:
             pos = out.index("  " + c.line(), pos)
     assert "項提醒" in out[pos:]
+
+
+# ---- 射程、追擊、後退、排除範圍、找怪範圍互相打架 ----
+
+def _reach(**prof):
+    from maplebot.config import AppCfg, Profile
+    cfg = AppCfg()
+    cfg.regions = {"playfield": [0, 0, 790, 400]}     # 1:1，數字直接對得上
+    p = Profile()
+    p.attack.range_px = prof.get("range_px", 110)
+    p.chase_px = prof.get("chase_px", 0)
+    p.keep_away_px = prof.get("keep_away_px", 0)
+    if "box" in prof:
+        cfg.vision.mob_search_box = prof["box"]
+    return [c for c in doctor.check_reach(cfg, p) if c.status != doctor.OK]
+
+
+def test_reach_settings_that_agree_are_ok():
+    from maplebot.config import AppCfg, Profile
+    cfg, p = AppCfg(), Profile()
+    p.attack.range_px, p.chase_px = 55, 120
+    checks = doctor.check_reach(cfg, p)
+    assert [c.status for c in checks] == [doctor.OK]
+
+
+def test_keep_away_inside_the_self_exclusion_never_fires():
+    """法師範本的 45：貼身的怪在 ±50 就被當成角色濾掉，後退永遠不會觸發。"""
+    (c,) = _reach(range_px=110, keep_away_px=45)
+    assert "keep_away_px=45" in c.detail and "outline_player_box" in c.fix
+
+
+def test_keep_away_beyond_the_range_means_never_attacking():
+    problems = _reach(range_px=110, keep_away_px=120)
+    assert any("不小於" in c.detail and "range_px=110" in c.detail for c in problems)
+
+
+def test_chase_shorter_than_the_range_never_chases():
+    problems = _reach(range_px=110, chase_px=100)
+    assert any("chase_px=100" in c.detail for c in problems)
+
+
+def test_a_search_box_narrower_than_the_chase_is_reported_in_real_pixels():
+    problems = _reach(range_px=55, chase_px=280, box=(400, 300))
+    (c,) = problems
+    assert "400" in c.detail and "561" in c.fix
+
+
+def test_an_ult_that_needs_several_mobs_is_not_the_chase_yardstick():
+    """多技能：大絕 300 要 3 隻才放，不會擋追擊（fsm 只看單隻怪就會放的招）。"""
+    from maplebot.config import AppCfg, AttackCfg, Profile
+    cfg = AppCfg()
+    cfg.regions = {"playfield": [0, 0, 790, 400]}
+    p = Profile()
+    p.chase_px = 280
+    p.skills = [AttackCfg(key="ctrl", range_px=55), AttackCfg(key="v", range_px=300, min_mobs=3)]
+    assert [c.status for c in doctor.check_reach(cfg, p)] == [doctor.OK]
+
+
+def test_keep_away_advice_is_in_its_own_units_when_scaling_is_off():
+    """attack_auto_scale 關掉時 keep_away_px 是實際像素，建議值也要用同一個單位。"""
+    from maplebot.config import AppCfg, Profile
+    cfg = AppCfg()
+    cfg.regions = {"playfield": [0, 0, 1580, 800]}     # 2 倍寬：排除範圍半寬 100px
+    p = Profile()
+    p.attack.range_px, p.keep_away_px, p.attack_auto_scale = 300, 90, False
+    (c,) = [c for c in doctor.check_reach(cfg, p) if c.status == doctor.WARN]
+    assert "半寬 100px" in c.detail and "至少設 102" in c.fix
+
+
+def test_the_shipped_ranged_template_passes_the_reach_check():
+    from maplebot.config import AppCfg, load_profile
+    p = load_profile(str(Path(__file__).resolve().parents[1] / "config" / "profiles"
+                         / "範本-遠程站樁（法師標賊）.yaml"))
+    cfg = AppCfg()
+    cfg.regions = {"playfield": [0, 0, 790, 400]}
+    assert [c.status for c in doctor.check_reach(cfg, p)] == [doctor.OK]

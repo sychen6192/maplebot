@@ -186,6 +186,8 @@ class Runtime:
     climb_retries: int = 0
     chase_dir: int = 0                  # 追擊方向承諾（防止與巡邏互搶抖動）
     chase_until: float = 0.0
+    away_since: float = 0.0             # 這一段「怪太近、往後退」從什麼時候開始（0 = 沒在退）
+    away_seen: float = 0.0              # 上一次看到怪在後退距離內的時間（寬限期用）
     grab_plan: int = 0                  # 下一次助跑跳抓往哪邊跑（0 = 還沒決定），每跳一次換邊
     grab_attempts: int = 0              # 這個巡邏點已經助跑跳抓幾次（換點歸零）
     grab_memory: Dict[int, int] = field(default_factory=dict)  # 巡邏點序號 -> 上次抓到時跑的方向
@@ -491,6 +493,29 @@ def _climb(rt: Runtime, player: Tuple[int, int], pat: PatrolCfg, wp: Waypoint,
 
 CHASE_BOUND_MARGIN = 6   # 追擊可以越過路線端點多少 px（再多就折返）
 
+# 遠程「怪太近先退」最多連續退幾秒，之後就站著打。正常退一兩步（每步
+# max_step_seconds 0.45 秒）就拉開了；退了 2 秒怪還貼著，代表背後是牆、或怪
+# 一路跟上來——繼續退只會每個 tick 都在退、一下都不打，要等 12 秒的空揮保護
+# 才脫身。這個值沒有實測，取「夠退兩三步」的量級
+KEEP_AWAY_MAX_SECONDS = 2.0
+
+# 怪離開後退距離多久，才把「已經退了多久」歸零。偵測在信心邊緣一幀有一幀
+# 沒有（追擊方向承諾就是為這個）；一幀沒看到就歸零的話，2 秒上限每閃一次
+# 就重來，退不了的角色照樣一直退
+AWAY_GRACE_SECONDS = 1.0
+
+# 冷卻剩這麼久以內的技能仍算「構得到、等一下就打」，不去追。只有大絕那種
+# 長冷卻才放行追擊。不設這條的話，冷卻比出招時間長的單一技能（例如冷卻
+# 1.5 秒、出招 0.6 秒）每打完一下就「沒有能放的技能」，角色朝著還在射程裡
+# 的怪走過去、穿過牠——遠程連後退距離都踩進去（review 模擬：每輪冷卻穿一次）
+ENGAGE_COOLDOWN_SECONDS = 3.0
+
+
+def _end_backing(rt: Runtime, now: float) -> None:
+    """怪不在後退距離內：過了寬限期才把「已經退了多久」歸零（見 AWAY_GRACE_SECONDS）。"""
+    if rt.away_since and now - rt.away_seen > AWAY_GRACE_SECONDS:
+        rt.away_since = 0.0
+
 
 def waypoints_for_bounds(pat: PatrolCfg, rt: Runtime) -> List[Waypoint]:
     """算追擊邊界要用的巡邏點：auto 模式用量出來的那組。"""
@@ -665,6 +690,13 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
         # 冷卻好了、MP 夠、而且範圍內的怪數達到 min_mobs
         #（大絕設 min_mobs=3 就不會浪費在單隻怪身上）。
         mobs_near = False        # 任一技能範圍內有怪 -> 先打完再撿東西
+        # 有「放得出來、或冷卻快好」的技能構得到怪 -> 不用追。只看 min_mobs 與
+        # 冷卻：大絕框得到一隻怪、卻要 3 隻才放，以前也算「旁邊有怪」把追擊擋掉，
+        # 角色就照巡邏往反方向走（主攻 55、大絕 300、怪在 200 實測回 Move(-1)）。
+        # 冷卻快好的仍然算（見 ENGAGE_COOLDOWN_SECONDS）；MP 不夠也仍然算：
+        # 那是在等回魔，追過去也只能站著空揮
+        engaged = False
+        backing_checked = False
         may_attack = now >= rt.attack_break_until
         s = attack_scale(playfield_center[0] * 2, profile.attack_auto_scale)
         for i, sk in enumerate(profile.active_skills()):
@@ -675,11 +707,14 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
             ]
             if in_range:
                 mobs_near = True
+            enough = len(in_range) >= max(sk.min_mobs, 1)
+            cool_left = sk.cooldown - (now - rt.last_skill.get(i, 0.0))
+            usable = enough and cool_left <= 0
+            if enough and cool_left <= ENGAGE_COOLDOWN_SECONDS:
+                engaged = True
             if not may_attack:
                 continue          # 打太久沒進展，這幾秒先讓路給巡邏
-            if len(in_range) < max(sk.min_mobs, 1):
-                continue
-            if now - rt.last_skill.get(i, 0.0) < sk.cooldown:
+            if not usable:
                 continue
             # MP 不夠就換下一個技能；都放不出來就繼續巡邏等回魔，不站著空揮
             if _mp_below(state, sk.min_mp):
@@ -690,17 +725,32 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
                 break             # 跳出攻擊，往下走巡邏
             nearest = min(in_range, key=lambda m: abs(m.cx - center_x))
             # 遠程職業被貼臉時先退開再打（近戰把 keep_away_px 設 0 關掉）。
-            # 退一步下個 tick 就打得到了，等於邊退邊射。
+            # 退一步下個 tick 就打得到了，等於邊退邊射。退不了就照打：
+            # 退的方向出了巡邏路線（跟追擊一樣要避開端點外的傳送門），或已經
+            # 連續退了 KEEP_AWAY_MAX_SECONDS 怪還貼著
+            backing_checked = True
             if profile.keep_away_px > 0 and \
                     abs(nearest.cx - center_x) < profile.keep_away_px * s:
-                return Chase(-1 if nearest.cx >= center_x else 1,
-                             pat.max_step_seconds, away=True)
+                away = -1 if nearest.cx >= center_x else 1
+                rt.away_seen = now
+                if not rt.away_since:
+                    rt.away_since = now
+                lo, hi = _route_x_bounds(waypoints_for_bounds(pat, rt),
+                                         state.minimap_size, pat.tolerance)
+                blocked = (state.minimap_xy is not None
+                           and _chase_out_of_bounds(state.minimap_xy[0], away, lo, hi))
+                if not blocked and now - rt.away_since < KEEP_AWAY_MAX_SECONDS:
+                    return Chase(away, pat.max_step_seconds, away=True)
+            else:
+                _end_backing(rt, now)
             direction = 1 if nearest.cx >= center_x else -1
             target = (int(nearest.cx - nearest.w / 2), int(nearest.cy - nearest.h / 2),
                       int(nearest.w), int(nearest.h))
             return Attack(direction, sk.key, sk.cast_seconds, sk.repeat,
                           aoe=(sk.type == "aoe"), index=i, target=target)
 
+        if not backing_checked:
+            _end_backing(rt, now)  # 這個 tick 沒輪到「太近要不要退」
         if not mobs_near:
             rt.attack_pos = None   # 沒目標了，連續攻擊的計時重來
 
@@ -715,13 +765,16 @@ def decide(state: GameState, cfg: AppCfg, profile: Profile, rt: Runtime,
         # 看得到怪但構不到 -> 走過去，不要照原定路線走掉。
         # 只追同一層（用主技能的垂直範圍當判準）：樓上樓下的怪追過去也打不到，
         # 追了反而會被拉離巡邏路線。撿東西排在前面，免得追下一隻就把掉落物丟了。
-        if not mobs_near and profile.chase_px > 0 and now >= rt.attack_break_until:
+        if not engaged and profile.chase_px > 0 and now >= rt.attack_break_until:
             sk = profile.active_skills()[0]
             reach = profile.chase_px * s
             vertical = sk.vertical_range_px * s
+            # 已經在後退距離內的怪不追：追過去下一個 tick 又要退，來回踩
+            too_close = profile.keep_away_px * s
             near = [m for m in state.mobs
                     if abs(m.cx - center_x) <= reach + m.w // 2
-                    and abs(m.cy - center_y) <= vertical + m.h // 2]
+                    and abs(m.cy - center_y) <= vertical + m.h // 2
+                    and abs(m.cx - center_x) >= too_close]
             # 信心門檻邊緣的怪一幀有一幀沒有，追擊會和巡邏每 tick 互搶方向
             #（追擊往左、巡邏往右），角色原地抖動誰也沒贏——實測 150 秒只
             # 攻擊了 2 次。所以追擊方向有短暫承諾期：期間內目標閃沒了就

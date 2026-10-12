@@ -223,6 +223,84 @@ def check_nametag(ui_dir: str, exists: Callable[[str], bool] = os.path.exists) -
                  "或畫面正中央，鏡頭一偏就會把角色自己當成怪站著打")
 
 
+REACH = "射程設定"
+
+
+def check_reach(cfg, profile) -> List[Check]:
+    """射程、追擊、後退、角色排除範圍、找怪範圍彼此有沒有打架。
+
+    這幾個數字分散在 Profile（range_px／chase_px／keep_away_px）與 Config
+    （outline_player_box／mob_search_box），單看每一個都合理，湊在一起才會
+    出事，而且症狀都是「怎麼不打／不追／不退」，看不出是設定互相抵銷。
+    全部換成 playfield 的實際像素再比：outline_player_box 與 Profile 的距離
+    以 790 寬為基準縮放（ADR 0003），mob_search_box 則是實際像素、不縮放。
+
+    比的是「單隻怪就會放」的技能（min_mobs <= 1）：fsm 平常靠它打，要好幾隻
+    才放的大絕不會擋追擊，也不是後退距離要配合的那一招。
+    """
+    import math
+    from .config import REFERENCE_WIDTH
+    pf_w = cfg.regions.get("playfield", (0, 0, REFERENCE_WIDTH, 0))[2] or REFERENCE_WIDTH
+    base = pf_w / REFERENCE_WIDTH                       # 790 基準 -> 實際像素
+    s = base if profile.attack_auto_scale else 1.0      # Profile 距離的換算
+    skills = profile.active_skills()
+    basic = [sk for sk in skills if max(sk.min_mobs, 1) <= 1] or skills[:1]
+    ref = basic[0]
+    single_reach = max(sk.range_px for sk in basic)
+    longest = max(sk.range_px for sk in skills)
+    # 跟 Perceiver 丟掉角色自己的規則一樣：框寬換成實際像素取整數再除 2，
+    # 中心離角色 <= 這個值的偵測一律丟掉
+    half = int(cfg.vision.outline_player_box[0] * base) // 2
+    name = f"「{ref.key}」" if ref.key else "主攻"
+    out = []
+
+    keep = profile.keep_away_px
+    if keep > 0 and keep * s <= half + 1:
+        least = math.floor((half + 1) / s) + 1
+        out.append(Check(REACH, WARN,
+                         f"後退距離 keep_away_px={keep}（實際 {keep * s:.0f}px）沒超過"
+                         f"角色排除範圍的半寬 {half}px",
+                         "貼著角色的怪在決策前就被當成角色自己濾掉了，永遠不會觸發後退。"
+                         f"keep_away_px 至少設 {least}，或把 vision.outline_player_box 的寬縮小"))
+    if keep > 0 and keep >= ref.range_px:
+        out.append(Check(REACH, WARN,
+                         f"後退距離 keep_away_px={keep} 不小於{name}的射程 range_px={ref.range_px}",
+                         "怪一進射程就先後退，退開了又打不到，等於永遠不打。"
+                         "keep_away_px 要明顯小於 range_px（遠程範本是 60 對 110）"))
+    if ref.range_px * s <= half:
+        out.append(Check(REACH, WARN,
+                         f"{name}射程 range_px={ref.range_px}（實際 {ref.range_px * s:.0f}px）"
+                         f"沒超過角色排除範圍的半寬 {half}px",
+                         "中心離角色這麼近的怪都會被當成角色自己濾掉，能打的只剩"
+                         "比排除範圍再遠一點、框邊剛好碰到射程的怪。調大 range_px，"
+                         "或縮小 vision.outline_player_box 的寬"))
+    if profile.chase_px > 0 and profile.chase_px <= single_reach:
+        out.append(Check(REACH, WARN,
+                         f"追擊距離 chase_px={profile.chase_px} 不大於單隻怪就會放的射程 "
+                         f"range_px={single_reach}",
+                         "射程外的怪也在追擊範圍外，追擊永遠不會發生。chase_px 要比它大"
+                         "（實機 1366 寬的近戰 55 配 120 跑得順）。要好幾隻才放的大絕不算，"
+                         "它不會擋追擊"))
+    box = cfg.vision.mob_search_box
+    if box:
+        need = max(longest, profile.chase_px) * s
+        if box[0] / 2 < need:
+            out.append(Check(REACH, WARN,
+                             f"找怪範圍 mob_search_box 寬 {box[0]}px，一半 {box[0] // 2}px 小於"
+                             f"{'追擊距離' if profile.chase_px > longest else '射程'}"
+                             f"換算後的 {need:.0f}px",
+                             "框外的怪根本看不到，射程與追擊都被截斷。mob_search_box 是"
+                             f"實際像素、不跟著視窗縮放，寬至少要 {int(need * 2 + 1)}"))
+    if not out:
+        detail = f"射程 {ref.range_px}" + (f"（最長 {longest}）" if longest != ref.range_px else "")
+        if profile.chase_px:
+            detail += f"・追擊 {profile.chase_px}"
+        if keep:
+            detail += f"・後退 {keep}"
+        out.append(Check(REACH, OK, detail + "，彼此不衝突"))
+    return out
+
+
 def check_profile(profile, critical_hp_ratio: Optional[float] = None) -> List[Check]:
     out = []
     skills = profile.active_skills()
@@ -461,6 +539,7 @@ def run_all(cfg_path: str, profile_path: str, importer: Callable[[str], bool],
     else:
         prof = [Check("Profile", OK, profile.name)]
         prof += check_profile(profile, cfg.safety.critical_hp_ratio)
+        prof += check_reach(cfg, profile)
     sections.append((f"Profile（{profile_path}）", prof))
 
     if source:
