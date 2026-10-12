@@ -13,8 +13,8 @@ pytest>=7.4
 # 選配：收工報告的曲線圖（沒裝就只出 .md 與 .json 摘要）
 # matplotlib>=3.7
 
-# 選配：YOLO 怪物偵測（RTX 5090 建議路線，見 README「進階：ML 感知層」）
+# 選配：YOLO 怪物偵測（流程見 docs/YOLO_TRAINING.md）
 # ultralytics>=8.3
 
-# 選配：只跑 ONNX 推理的機器裝這個就好，不需要 torch（見 tools/export_onnx.py）
+# 選配：用 .onnx 模型推理時再加裝這個（.onnx 仍經 ultralytics 載入，torch 還是要裝）
 # onnxruntime>=1.17

@@ -2,6 +2,7 @@
 
 職責只剩調度與安全：實際辨識在 Perceiver、按鍵在 Executor。
 """
+import os
 import threading
 import time
 from dataclasses import dataclass
@@ -27,6 +28,7 @@ from .vision.locate import BR_NAME, TL_NAME, find_minimap, load_ui_template
 from .vision.mobs import MobDetector
 
 IDLE_WARN_SECONDS = 20.0   # 連續閒置這麼久就把 Wait 的理由升級成警告
+RATE_WARMUP = 300.0        # 經驗效率至少累積幾秒才顯示（見 _publish）
 
 
 @dataclass
@@ -46,6 +48,23 @@ class Status:
     reason: str = ""
     fps: float = 0.0
     game_mem_mb: Optional[float] = None
+    # 以下給 GUI 回答「現在在幹嘛、為什麼停了」，不必伸手進 runner 內部。
+    # 開場自檢：'' 還沒跑 -> 'checking' -> 'ok' | 'fail'（小地圖定位失敗也算 fail）。
+    # 自檢要好幾秒（調視窗大小、第一次偵測），沒有這一格 GUI 分不出「還在
+    # 檢查」與「已經在跑」，也分不出「自檢沒過就結束了」與「跑完了」
+    preflight: str = ""
+    pause_reason: str = ""          # 暫停中才有值；恢復後清空
+    paused_by_user: bool = False    # 熱鍵/控制台暫停 = True；watchdog 暫停 = False
+    stop_reason: str = ""           # 收工時才寫（finally），跟收工報告的「結束原因」同一句
+    dry_run: bool = False
+    target_fps: float = 0.0         # cfg.fps，GUI 拿 fps 跟它比才知道是不是跟不上
+    # time.monotonic()，跟 max_runtime 同一個基準。不用 time.time()：整晚掛機
+    # 時 NTP 校時會讓牆上時間跳動，已跑時間跟著跳
+    started_at: float = 0.0
+    ended_at: float = 0.0           # 0 = 還沒結束
+    exp_gained: Optional[float] = None    # 單位「等」（0.042 = +4.2%）；None = 還沒讀到 EXP
+    exp_per_hour: Optional[float] = None  # 用 bot 時鐘算，暫停那段不攤進去
+    report_path: str = ""           # 收工報告 .md 的絕對路徑；沒寫報告就是 ''
 
 
 class Runner:
@@ -66,7 +85,7 @@ class Runner:
         self.alerts = Alerts(cfg.safety.sound_alerts)
         self.rt = fsm.Runtime()
         self.stats = Stats()
-        self.status = Status()
+        self.status = Status(dry_run=dry_run, target_fps=cfg.fps)
         self.exp = ExpTracker(stall_seconds=cfg.safety.exp_stall_minutes * 60)
         self.perceiver = Perceiver(cfg, detector)
         self.executor = Executor(keyboard, self.rt, self.stats, logger, dry_run)
@@ -236,21 +255,33 @@ class Runner:
                     "會**默默丟掉**所有按鍵（SendInput 回報成功、遊戲收不到、"
                     "角色一步都不會動，還會站在原地被怪圍毆）。"
                     "請關掉 bot，用「以系統管理員身分執行」重新開終端機或 GUI")
+        self._refocus("已把遊戲視窗帶到前景（按鍵只送給前景視窗）")
+
+    def _refocus(self, done: str = "已把遊戲視窗帶回前景（按鍵只送給前景視窗）") -> bool:
+        """只做 _focus_game 的「帶到前景」那一半，給暫停後繼續用。
+
+        從 GUI 按「繼續」的那一刻前景是控制台：不帶回去的話，SendInput 會把
+        方向鍵和技能鍵打進 Tk（_focus_game 只在開跑時跑一次）。提權檢查不重做：
+        暫停期間權限不會變，開跑時已經講過了。
+        """
+        if self.dry_run:
+            return False
         focus_fn = getattr(self.capture, "focus", None)
         if focus_fn is None:
-            return
+            return False
         try:
             ok = focus_fn()
         except Exception as e:
             self.log.warning("聚焦遊戲視窗失敗（%s）——請自己點一下遊戲視窗", e)
-            return
+            return False
         if ok:
-            self.log.info("已把遊戲視窗帶到前景（按鍵只送給前景視窗）")
+            self.log.info("%s", done)
         else:
             self.alerts.ping("warn", "無法聚焦遊戲視窗")
             self.log.warning(
                 "無法把遊戲視窗帶到前景！請在 bot 開跑後**自己點一下遊戲視窗**，"
                 "否則所有按鍵都會打進別的程式（log 看起來正常、角色卻不會動）")
+        return bool(ok)
 
     # ---- 安全事件 ----
 
@@ -304,7 +335,7 @@ class Runner:
         return True
 
     def _on_advisor_abnormal(self, note: str) -> None:
-        self.safety.paused = True
+        self.safety.pause(f"VLM 督導判定異常：{note}")
         self.alerts.ping("warn", f"VLM 督導判定異常：{note}")
         save_anomaly(self._last_frame, f"VLM 督導: {note}", self.log)
         self.log.warning("VLM 督導判定異常，已切換為暫停。確認畫面後按 %s 繼續",
@@ -324,7 +355,8 @@ class Runner:
             self._resolve_minimap()
         self.log.warning("連續 %.0fs 找不到玩家位置，自動暫停（按 %s 繼續）",
                          self.cfg.safety.lost_player_timeout, self.cfg.safety.pause_key)
-        self.safety.paused = True
+        self.safety.pause(f"連續 {self.cfg.safety.lost_player_timeout:.0f} 秒找不到"
+                          "角色的小地圖黃點（換圖、被傳走或斷線）")
 
     # ---- bot 時鐘 ----
 
@@ -574,6 +606,9 @@ class Runner:
                 self.stats, self.exp, self.metrics, self.alerts, self.sysmon,
                 self.series, dry_run=self.dry_run, stop_reason=self._stop_reason)
             paths = report_mod.save(data, self.cfg.report.dir, self.cfg.report.chart)
+            # 絕對路徑：GUI 的「開啟收工報告」不能依賴當下的工作目錄
+            md = next((p for p in paths if p.endswith(".md")), "")
+            self.status.report_path = os.path.abspath(md) if md else ""
             self.log.info("收工報告：%s", "、".join(paths))
             if self.cfg.report.chart and not any(p.endswith(".png") for p in paths):
                 self.log.info("（沒有曲線圖：pip install matplotlib 之後就會一起產生）")
@@ -582,7 +617,8 @@ class Runner:
             # 主迴圈 finally 區塊的其他清理工作（放開按鍵）擋在後面
             self.log.warning("寫收工報告失敗（不影響已完成的執行）: %s", e)
 
-    def _publish(self, state, action) -> None:
+    def _publish(self, state, action, now: float) -> None:
+        """now 是 bot 時鐘：經驗效率要扣掉暫停那段，跟 ExpTracker 收到的時間同一條軸。"""
         st = self.status
         st.ticks = self.stats.ticks
         st.hp, st.mp, st.exp = state.hp, state.mp, state.exp
@@ -590,8 +626,31 @@ class Runner:
         st.followers = len(self.perceiver.last_followers)
         st.action = type(action).__name__
         st.reason = getattr(action, "reason", "")
-        st.paused = self.safety.paused
         st.fps = self.metrics.fps
+        # gained() 在還沒讀到 EXP 時回 0.0，跟「真的 +0%」分不開——GUI 要顯示「—」
+        st.exp_gained = self.exp.gained() if self.exp.started is not None else None
+        # EXP 條是照像素寬讀的，一格約 0.4%：開跑第 20 秒跳一格就會算成「每小時
+        # +78%」。控制台每 tick 都顯示，所以累積滿 RATE_WARMUP 秒（bot 時鐘）才給
+        st.exp_per_hour = (self.exp.per_hour(now) if self.exp.started is not None
+                           and now - self.exp.started >= RATE_WARMUP else None)
+
+    def _publish_pause(self) -> None:
+        """暫停相關三格一起更新。主迴圈每一圈都呼叫（暫停時 tick 整個跳過，
+        _publish 不會跑），所以 _publish 不再碰 paused。
+
+        原因只在 paused 為真時抄過來：有人直接寫 safety.paused = False（舊的
+        toggle 路徑）時，留在 safety 裡的舊原因不該出現在畫面上。寫入順序
+        跟 Safety 一樣（先原因後 paused、先 paused 後原因），GUI 不上鎖讀。
+        """
+        st, sf = self.status, self.safety
+        if sf.paused:
+            st.pause_reason = sf.pause_reason
+            st.paused_by_user = sf.paused_by_user
+            st.paused = True
+        else:
+            st.paused = False
+            st.pause_reason = ""
+            st.paused_by_user = False
 
     def _check_input_delivered(self) -> None:
         """SendInput 被擋掉時，log 會照常顯示「已送出按鍵」但遊戲毫無反應。
@@ -616,7 +675,7 @@ class Runner:
             "連續 %.0f 分鐘沒賺到經驗，自動暫停（按 %s 繼續）。"
             "常見原因：技能鍵設錯、怪物偵測抓不到、角色卡在打不到怪的地方",
             mins, self.cfg.safety.pause_key)
-        self.safety.paused = True
+        self.safety.pause(f"連續 {mins:g} 分鐘沒有經驗進帳")
         self.exp.last_gain_at = now   # 繼續後重新計時，不要一恢復就再次觸發
 
     def _panic(self, frame: np.ndarray, reason: str, return_home: bool = True) -> None:
@@ -631,7 +690,7 @@ class Runner:
             self.kb.tap(self.profile.panic_return_key, 0.1)
             time.sleep(2.0)
         self.log.error("停止所有動作")
-        self.safety.stop = True
+        self.safety.request_stop(self._stop_reason)
 
     # ---- 畫面來源 ----
 
@@ -712,11 +771,29 @@ class Runner:
 
     # ---- 主迴圈 ----
 
-    def run(self) -> None:
+    def _checks_pass(self) -> bool:
         if not self._resolve_minimap():
-            return
+            return False
         if not self._preflight():
             self.alerts.ping("warn", "開場自檢沒過")
+            return False
+        return True
+
+    def run(self) -> None:
+        st = self.status
+        st.dry_run = self.dry_run          # 建構後還可能被改（測試、main 的旗標）
+        st.target_fps = self.cfg.fps
+        st.started_at = self._started_mono
+        st.preflight = "checking"
+        passed = False
+        try:
+            passed = self._checks_pass()
+        finally:
+            # 自檢途中丟例外也要落在 fail：不然 GUI 會一直顯示「啟動中」
+            st.preflight = "ok" if passed else "fail"
+            if not passed:
+                st.ended_at = time.monotonic()
+        if not passed:
             return
         tick_interval = 1.0 / max(self.cfg.fps, 1.0)
         self.log.info("開始執行 profile「%s」%s", self.profile.name,
@@ -733,6 +810,7 @@ class Runner:
         self.advisor.start()
         self.status.running = True
         deadline = time.monotonic() + self.max_seconds if self.max_seconds else None
+        was_paused = False
         try:
             while not self.safety.stop:
                 if deadline is not None and time.monotonic() >= deadline:
@@ -742,13 +820,19 @@ class Runner:
                 self.safety.poll()
                 # 暫停時整個 tick 都會跳過，狀態也要在這裡更新——不然 UI 上的
                 # 燈號會一直停在「執行中」，看起來像按了沒反應
-                self.status.paused = self.safety.paused
+                self._publish_pause()
                 if self.safety.paused:
+                    was_paused = True
                     self._go_offline(loop_start)
                     self.executor.stop_movement()
                     self.kb.release_all()
                     time.sleep(0.2)
                     continue
+                if was_paused:
+                    # 從 GUI 按繼續時前景是控制台，第一個按鍵之前要把遊戲帶回來
+                    # （dry-run 不送鍵，_refocus 自己會跳過）
+                    was_paused = False
+                    self._refocus()
 
                 wall = time.monotonic()
                 if self._check_runtime_limit(wall):
@@ -778,7 +862,8 @@ class Runner:
                         self.log.warning("畫面持續全黑 %.0f 秒，自動暫停（按 %s 繼續）",
                                          wall - self._black_since,
                                          self.cfg.safety.pause_key)
-                        self.safety.paused = True
+                        self.safety.pause(f"黑屏持續 {wall - self._black_since:.0f} 秒"
+                                          "（斷線、換頻道或讀圖）")
                         self._black_since = None
                     else:
                         self.executor.stop_movement()   # 換圖途中別按著方向鍵
@@ -830,13 +915,15 @@ class Runner:
                     # Wait 的理由一定要印出來——否則「每 tick 都 Wait」看起來
                     # 像卡住，實際上是某條規則一直擋著（例如誤判有其他玩家）
                     why = f"（{action.reason}）" if isinstance(action, fsm.Wait) else ""
+                    # tick=True 讓 GUI 的 log handler 認得出這是每 tick 一行、預設
+                    # 收起來（8 FPS 一小時近三萬行，會把警告洗掉）；檔案 log 照寫
                     self.log.info(
                         "tick %d | HP %s MP %s | 玩家 %s | 怪 %d | 他人 %d | -> %s%s",
                         self.stats.ticks,
                         f"{state.hp:.0%}" if state.hp is not None else "?",
                         f"{state.mp:.0%}" if state.mp is not None else "?",
                         state.minimap_xy, len(state.mobs), len(state.other_players),
-                        type(action).__name__, why)
+                        type(action).__name__, why, extra={"tick": True})
                 self._check_idle(action, now)
                 if self.mob_worker is not None:
                     # 位置是這一幀量的，畫面也是這一幀——整包送進去，
@@ -849,7 +936,7 @@ class Runner:
                 self._notice_attack_break()
                 self._notice_potions_dry(frame)
                 self._notice_bar_glitch()
-                self._publish(state, action)
+                self._publish(state, action, now)
                 self._sample(state, wall)   # 圖表的時間軸是現實時間，跟 _started_mono 同基準
                 if self.preview is not None:
                     self.preview.show(frame, state, action, fps=self.metrics.fps,
@@ -886,7 +973,13 @@ class Runner:
                     time.sleep(tick_interval - elapsed)
         finally:
             if not self._stop_reason and self.safety.stop:
-                self._stop_reason = f"使用者按下 {self.cfg.safety.stop_key} 停止"
+                # 停止可能來自熱鍵或控制台，Safety 記著是哪一個；寫死「按下 f12」
+                # 在 GUI 停止時是錯的，還會原樣進收工報告。沒原因（有人直接寫
+                # safety.stop = True）才退回舊說法
+                self._stop_reason = (self.safety.stop_reason or
+                                     f"使用者按下 {self.cfg.safety.stop_key} 停止")
+            st.stop_reason = self._stop_reason
+            st.ended_at = time.monotonic()
             self.status.running = False
             if self.mob_worker is not None:
                 self.mob_worker.stop()

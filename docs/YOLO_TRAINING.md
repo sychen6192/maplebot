@@ -238,7 +238,7 @@ pip install labelImg && labelImg datasets/raw datasets/raw/classes.txt
 
 ## 6. 部署與驗證
 
-`config/default.yaml`：
+`config/local.yaml`（`train_yolo.py` 結尾的提示寫 `default.yaml`，貼哪邊都會生效，但 `local.yaml` 不進版控、更新程式不會被蓋掉）：
 
 ```yaml
 vision:
@@ -255,6 +255,30 @@ python main.py --profile config/profiles/example.yaml             # 上線
 
 推理耗時 1~3ms/幀，相對 8 FPS 主迴圈（125ms/tick）完全無感；
 `vision/yolo_mobs.py` 與模板匹配實作同一個 `MobDetector` 介面，其餘程式碼零改動。
+
+### 轉成 ONNX（掛機那台只做推理）
+
+```bash
+python tools/export_onnx.py --model runs/mobs/mobs/weights/best.pt --imgsz 800 --benchmark
+```
+
+掛機那台只做推理、不做訓練。轉成 ONNX 之後推理走 onnxruntime，CPU 上通常比
+PyTorch eager 快，沒顯卡的筆電也有機會走 YOLO 路線——快多少因機器而異，
+`--benchmark` 會當場量平均延遲，並換算成佔 8 FPS 預算（125ms）的幾成。
+轉檔要 ultralytics，在這台有訓練環境的機器做一次就好，再把 `.onnx` 複製到掛機那台。
+`vision.yolo_model` 填 `.pt` 或 `.onnx` 都收；轉完會印出要貼進 `config/local.yaml` 的設定。
+
+- **`--imgsz` 要跟訓練時同一個值**：ONNX 的輸入尺寸在匯出那一刻就定死了，
+  `export_onnx.py` 預設 640，而 `train_yolo.py` 預設用 800 練（照開頭 VLM 標註那段用 1376 練的就帶 1376）。
+  800 練的模型照預設 640 匯出的話，推理時畫面會被縮得比訓練時更小，小怪更容易漏掉。值不是 640 時，
+  腳本印出的設定會多一行 `yolo_imgsz`，一起貼上
+- 權重路徑以訓練結尾印出的為準（同名的 run 已存在時，ultralytics 會自動改名成 `mobs2`、`mobs3`…）
+
+> **目前還省不掉 PyTorch。** 匯出的初衷是讓掛機那台只裝 `onnxruntime`（幾十 MB），
+> 不必扛 `torch` + `torchvision`（2GB 起跳、還要對 CUDA 版本）。但現在
+> `vision/yolo_mobs.py` 不論 `.pt` 或 `.onnx` 都經過 ultralytics 載入，而 ultralytics
+> 本身就相依 torch，所以掛機那台仍然要 `pip install ultralytics onnxruntime`。
+> 真的不想在那台裝 PyTorch，現在能走的是下一節的推理伺服器（`mob_detector: remote`）。
 
 ## GPU 在另一台機器？用推理伺服器
 

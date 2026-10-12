@@ -1,11 +1,11 @@
-"""校正工具：框選小地圖 / HP / MP / EXP / playfield 區域，輸出 YAML。
+"""校正工具：框選小地圖 / HP / MP / EXP / playfield 這幾個 region，輸出 YAML。
 
 用法：
-  python tools/calibrate.py                     # 從遊戲視窗抓一張畫面
+  python tools/calibrate.py --write             # 從遊戲視窗抓一張畫面，寫回 config/local.yaml
+  python tools/calibrate.py                     # 只印出 regions 區塊，自己貼
   python tools/calibrate.py --source shot.png   # 用現成截圖校正
 
-每個區域會跳出框選視窗：拖曳出矩形後按 Enter 確認、按 c 跳過。
-結束後把輸出的 regions 區塊貼回 config/default.yaml。
+每個 region 會跳出框選視窗：拖曳出矩形後按 Enter 確認、按 c 跳過。
 """
 import argparse
 import os
@@ -24,11 +24,13 @@ from maplebot.vision.statusbar import find_status_bars  # noqa: E402
 BAR_COLORS = {"hp_bar": "red", "mp_bar": "blue", "exp_bar": "yellow"}
 
 REGIONS = [
-    ("minimap", "小地圖（含玩家黃點的地圖範圍）"),
+    # 只框地圖畫布：標題列上有固定不動的黃色圖示（自由市場那顆），框進來的話
+    # 玩家點偵測會一直鎖在它身上（實測 fixture 整張框 -> 讀成 (20, 14)、不會動）
+    ("minimap", "小地圖的地圖畫布本體（不含標題列與圖示；角色黃點要在裡面）"),
     ("hp_bar", "HP 條（只框紅色條本體，不含文字外框）"),
     ("mp_bar", "MP 條（只框藍色條本體）"),
     ("exp_bar", "EXP 條（可跳過）"),
-    ("playfield", "遊戲主畫面（不含下方 UI 列）"),
+    ("playfield", "角色與怪物活動的那一塊（不含下方狀態列）"),
 ]
 
 
@@ -52,7 +54,7 @@ def main() -> int:
     results = {}
 
     # 三條狀態列是遊戲畫的 UI，顏色固定、又永遠並排在畫面底部——這種東西
-    # 沒道理要人拿滑鼠去拉。先自動找，找到就不用框，只剩小地圖與主畫面。
+    # 沒道理要人拿滑鼠去拉。先自動找，找到就不用框，只剩小地圖與 playfield。
     auto = find_status_bars(frame)
     if auto and not args.no_auto:
         print("已自動找到狀態列（要自己框的話加 --no-auto）：")
@@ -65,8 +67,11 @@ def main() -> int:
         print()
 
     todo = [(n, h) for n, h in REGIONS if n not in results]
-    print("在每個視窗中拖曳框選後按 Enter/Space 確認；直接按 c 可跳過該區域\n")
+    print("在每個視窗中拖曳框選後按 Enter/Space 確認；直接按 c 可跳過這個 region\n")
     for name, hint in todo:
+        # 提示也印到輸出：控制台會把它收進日誌，而 cv2 視窗標題的中文在某些
+        # Windows 上會變亂碼
+        print(f"框選 {name}：{hint}")
         title = f"{name}: {hint}"
         x, y, w, h = cv2.selectROI(title, frame, showCrosshair=True)
         cv2.destroyWindow(title)

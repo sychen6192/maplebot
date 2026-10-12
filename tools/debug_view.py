@@ -6,6 +6,7 @@ HP/MP/EXP 比例、怪物框、狀態機當下會做的決策。
 用法：
   python tools/debug_view.py                       # 即時視窗（按 q 離開）
   python tools/debug_view.py --snapshot out.png    # 只存一張標註圖，不開視窗
+  python tools/debug_view.py --snapshot out.png --report out.json   # 外加 JSON 報告（GUI 自檢用）
   python tools/debug_view.py --source shot.png     # 用靜態截圖當來源
 
 擷取方式若是 screen（客戶端不支援 PrintWindow），偵錯視窗蓋住遊戲時會
@@ -26,6 +27,7 @@ from maplebot.config import load_config, load_profile  # noqa: E402
 from maplebot.overlay import annotate, display_size  # noqa: E402
 from maplebot.overlay import pct as _pct  # noqa: E402
 from maplebot.perception import Perceiver  # noqa: E402
+from maplebot.selfcheck import snapshot  # noqa: E402
 from maplebot.vision.mobs import make_detector  # noqa: E402
 from maplebot.window import pick_free_position, virtual_screen  # noqa: E402
 
@@ -50,24 +52,25 @@ def _place_away_from_game(cap, disp_w, disp_h) -> None:
               "請改用 --snapshot out.png（不開視窗），或縮小遊戲視窗／用副螢幕")
 
 
-def _report(state, action, followers=(), detector=None):
-    print(f"  HP {_pct(state.hp)} | MP {_pct(state.mp)} | EXP {_pct(state.exp)}")
-    print(f"  玩家小地圖座標: {state.minimap_xy}｜其他玩家: {len(state.other_players)}")
-    print(f"  角色畫面位置: {state.screen_xy or '（名牌與組隊紅條都沒抓到，退回畫面中央）'}")
-    print(f"  偵測到怪物: {len(state.mobs)}")
-    for mob in state.mobs[:5]:
-        print(f"    - {mob.name} ({mob.cx},{mob.cy}) {mob.w}x{mob.h} "
-              f"面積 {mob.w * mob.h}")
+def _report(report, detector=None):
+    """印自檢結果。讀的是 VisionReport 而不是 GameState：GUI 判讀的也是
+    同一份報告，CLI 與 GUI 才不會各說各話。"""
+    print(f"  HP {_pct(report.hp)} | MP {_pct(report.mp)} | EXP {_pct(report.exp)}")
+    print(f"  玩家小地圖座標: {report.minimap_xy}｜其他玩家: {report.others}")
+    print(f"  角色畫面位置: {report.screen_xy or '（名牌與組隊紅條都沒抓到，退回畫面中央）'}")
+    print(f"  偵測到怪物: {report.mobs}")
+    for name, cx, cy, w, h in report.mob_boxes[:5]:
+        print(f"    - {name} ({cx},{cy}) {w}x{h} 面積 {w * h}")
     if detector is not None and hasattr(detector, "explain"):
         print(f"    {detector.explain()}")
-    bars = sum(1 for m in state.mobs if m.name == "hpbar")
+    bars = sum(1 for box in report.mob_boxes if box[0] == "hpbar")
     if bars:
         print(f"    其中 {bars} 個來自怪物血條偵測（標 hpbar）。"
               "框沒落在真的血條上就把 vision.detect_hp_bars 關掉——"
               "長草的地圖很容易整片草地被誤判")
-    if followers:
-        print(f"  跟隨物（寵物，不攻擊）: {len(followers)}")
-    print(f"  當下決策: {type(action).__name__}")
+    if report.followers:
+        print(f"  跟隨物（寵物，不攻擊）: {report.followers}")
+    print(f"  當下決策: {report.action}")
 
 
 def main() -> int:
@@ -77,9 +80,13 @@ def main() -> int:
     ap.add_argument("--source", default="", help="用靜態截圖當畫面來源")
     ap.add_argument("--snapshot", default="",
                     help="只抓一幀存成標註圖後結束，完全不開視窗")
+    ap.add_argument("--report", default="",
+                    help="搭配 --snapshot：把辨識結果另存成 JSON（GUI 的辨識自檢讀這個）")
     ap.add_argument("--track", action="store_true",
                     help="持續印出玩家小地圖座標，用來讀巡邏點（Ctrl+C 結束）")
     args = ap.parse_args()
+    if args.report and not args.snapshot:
+        ap.error("--report 要搭配 --snapshot 使用")
 
     cfg = load_config(args.config)
     print(f"設定檔: {' + '.join(cfg.sources)}")
@@ -154,15 +161,16 @@ def main() -> int:
         return 0
 
     if args.snapshot:
-        now = time.monotonic()
-        frame = cap.grab()
-        state = perceiver.perceive(frame, now)
-        action = fsm.decide(state, cfg, profile, rt, now, center)
-        cv2.imwrite(args.snapshot, annotate(frame, state, action, cfg,
-                                            followers=perceiver.last_followers,
-                                            profile=profile))
+        report = snapshot(cfg, profile, cap, args.snapshot, perceiver=perceiver)
         print(f"\n已存標註圖: {args.snapshot}")
-        _report(state, action, perceiver.last_followers, detector)
+        _report(report, detector)
+        if args.report:
+            d = os.path.dirname(args.report)
+            if d:
+                os.makedirs(d, exist_ok=True)
+            with open(args.report, "w", encoding="utf-8") as f:
+                f.write(report.to_json())
+            print(f"已存自檢報告: {args.report}")
         return 0
 
     # 只建立「一個」視窗；不這樣做的話，某些 Windows OpenCV 版本會在

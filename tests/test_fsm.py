@@ -1343,3 +1343,109 @@ def test_low_hp_rescue_window_is_not_eaten_by_a_pause(cfg, profile):
     # 真的連續撐了 critical_hp_seconds 還是低血，才該停機
     late = NOW + cfg.safety.critical_hp_seconds + 0.1
     assert isinstance(fsm.decide(low(), cfg, profile, rt, late, CENTER), fsm.Panic)
+
+
+# ---- 手長手短：放不出來的技能不擋追擊、退不了就打 ----
+
+def _ult_profile(**ult):
+    """主攻短（55）、大絕長（300）但要 3 隻才放：多技能 profile 的典型寫法。"""
+    from maplebot.config import AttackCfg
+    p = _chase_profile(chase_px=280)
+    p.skills = [AttackCfg(key="ctrl", range_px=55, vertical_range_px=35),
+                AttackCfg(key="v", range_px=300, vertical_range_px=35,
+                          min_mobs=ult.get("min_mobs", 3), cooldown=ult.get("cooldown", 0.0),
+                          min_mp=ult.get("min_mp", 0.0))]
+    return p
+
+
+def test_a_skill_that_cannot_fire_does_not_block_chasing():
+    """大絕框得到怪卻因 min_mobs 放不出來，以前照樣把追擊擋掉——角色往反方向巡邏走掉。"""
+    cfg, p = AppCfg(), _ult_profile()
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, minimap_xy=(70, 90),
+                      mobs=[_mob_at(600, 300)])          # 主攻構不到、大絕構得到但只有 1 隻
+    action = fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300))
+    assert isinstance(action, fsm.Chase) and action.direction == 1, action
+
+
+def test_a_skill_on_cooldown_does_not_block_chasing():
+    cfg, p = AppCfg(), _ult_profile(min_mobs=1, cooldown=30.0)
+    rt = fsm.Runtime()
+    rt.note_skill(1, NOW - 1.0)                          # 大絕剛放過
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, minimap_xy=(70, 90),
+                      mobs=[_mob_at(600, 300)])
+    action = fsm.decide(state, cfg, p, rt, NOW, (400, 300))
+    assert isinstance(action, fsm.Chase) and action.direction == 1, action
+
+
+def test_a_skill_waiting_for_mp_still_holds_off_the_chase():
+    """MP 不夠是等回魔：照舊巡邏，不追過去站著空揮。"""
+    cfg, p = AppCfg(), _ult_profile(min_mobs=1, min_mp=0.5)
+    state = GameState(ts=0.0, hp=1.0, mp=0.1, minimap_xy=(70, 90),
+                      mobs=[_mob_at(600, 300)])
+    assert not isinstance(fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300)),
+                          fsm.Chase)
+
+
+def test_backing_off_never_leaves_the_route():
+    """路線端點刻意避開的東西（傳送門）退的時候也要避開；退不了就直接打。"""
+    cfg, p = AppCfg(), _chase_profile()
+    p.attack.range_px = 150
+    p.keep_away_px = 60
+    # 路線是 x 12~130；角色已經在右端外面，怪貼在左邊 -> 要往右退，但右邊出界了
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, minimap_xy=(140, 90),
+                      mobs=[_mob_at(370, 300)])
+    action = fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300))
+    assert isinstance(action, fsm.Attack), action
+
+
+def test_backing_off_gives_up_when_it_gets_nowhere():
+    """被逼到牆邊（或怪一直跟上來）時不能每個 tick 都在退、一下都不打。"""
+    cfg, p = AppCfg(), _chase_profile()
+    p.attack.range_px = 150
+    p.keep_away_px = 60
+    rt = fsm.Runtime()
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, minimap_xy=(70, 90),
+                      mobs=[_mob_at(430, 300)])
+    first = fsm.decide(state, cfg, p, rt, NOW, (400, 300))
+    assert isinstance(first, fsm.Chase) and first.away
+    later = fsm.decide(state, cfg, p, rt, NOW + fsm.KEEP_AWAY_MAX_SECONDS + 0.1, (400, 300))
+    assert isinstance(later, fsm.Attack), later
+    # 怪走開（或死了）之後下一隻貼上來，又會先試著退
+    far = GameState(ts=0.0, hp=1.0, mp=1.0, minimap_xy=(70, 90), mobs=[_mob_at(560, 300)])
+    fsm.decide(far, cfg, p, rt, NOW + 5, (400, 300))
+    again = fsm.decide(state, cfg, p, rt, NOW + 6, (400, 300))
+    assert isinstance(again, fsm.Chase) and again.away
+
+
+def test_a_short_cooldown_does_not_send_the_character_through_its_target():
+    """冷卻比出招長的單一技能：剛打完那幾個 tick 不能朝射程內的怪走過去、穿過牠。"""
+    cfg, p = AppCfg(), _chase_profile(chase_px=280)
+    p.attack.range_px, p.attack.cooldown, p.keep_away_px = 110, 1.5, 60
+    rt = fsm.Runtime()
+    rt.note_skill(0, NOW - 0.6)                          # 剛打完一下
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, minimap_xy=(70, 90),
+                      mobs=[_mob_at(480, 300)])          # 射程內、後退距離外
+    action = fsm.decide(state, cfg, p, rt, NOW, (400, 300))
+    assert not (isinstance(action, fsm.Chase) and not action.away), action
+
+
+def test_chase_never_targets_a_mob_inside_the_keep_away_distance():
+    cfg, p = AppCfg(), _chase_profile(chase_px=280)
+    p.attack.range_px, p.keep_away_px = 30, 60           # 射程比後退距離短（設定錯，但不能亂衝）
+    state = GameState(ts=0.0, hp=1.0, mp=1.0, minimap_xy=(70, 90),
+                      mobs=[_mob_at(445, 300)])          # 在後退距離內、射程外
+    action = fsm.decide(state, cfg, p, fsm.Runtime(), NOW, (400, 300))
+    assert not (isinstance(action, fsm.Chase) and action.direction == 1), action
+
+
+def test_one_missed_frame_does_not_restart_the_back_off_limit():
+    """偵測一幀有一幀沒有：2 秒上限不能每閃一次就重來。"""
+    cfg, p = AppCfg(), _chase_profile()
+    p.attack.range_px, p.keep_away_px = 150, 60
+    rt = fsm.Runtime()
+    close = GameState(ts=0.0, hp=1.0, mp=1.0, minimap_xy=(70, 90), mobs=[_mob_at(430, 300)])
+    empty = GameState(ts=0.0, hp=1.0, mp=1.0, minimap_xy=(70, 90), mobs=[])
+    assert isinstance(fsm.decide(close, cfg, p, rt, NOW, (400, 300)), fsm.Chase)
+    fsm.decide(empty, cfg, p, rt, NOW + 0.5, (400, 300))    # 一幀沒看到
+    later = fsm.decide(close, cfg, p, rt, NOW + fsm.KEEP_AWAY_MAX_SECONDS + 0.1, (400, 300))
+    assert isinstance(later, fsm.Attack), later

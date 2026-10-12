@@ -120,14 +120,18 @@ vision:
   # 怪物偵測方式：
   #   outline  【預設，零設定】靠 sprite 的黑色描邊找怪。不用模板、
   #            不用訓練、不用標註，換地圖換怪都直接能用
-  #   template 模板匹配（要先用 grab_template.py 截圖）
+  #   template 模板匹配（要先用 grab_template.py 截圖）。同一隻怪截 2~3 張
+  #            不同動作幀（站立/移動）才穩；漏抓或誤抓再調 mob_match_threshold
   #   yolo     本機 GPU 跑訓練好的模型（最穩，但要先訓練）
   #   remote   送到另一台有 GPU 的機器推理（那台跑 tools/serve_yolo.py）
   mob_detector: outline
 
   # --- outline 模式參數（用 tools/debug_view.py 邊看邊調）---
   outline_black_level: 8      # 判定為描邊的最大亮度。即時擷取是無損的用 0~8；
-                              # 拿 JPEG 截圖離線測試時要調到 12~20
+                              # 拿 JPEG 截圖離線測試時要調到 12~20。
+                              # 但不是每個客戶端的描邊都是純黑：實測有客戶端即時
+                              # 擷取就落在 16~32，預設 8 漏掉了地上每一隻蝸牛。
+                              # --snapshot 看到小怪成排沒框就往上調
   outline_min_area: 300       # 小於此面積視為雜訊（以 790px 寬的畫面為基準）
   outline_max_area: 20000     # 大於此面積視為背景/UI（同上）
   outline_auto_scale: true    # 依實際畫面寬度自動縮放上面兩個門檻。
@@ -227,9 +231,10 @@ vision:
   # mob_search_box: [700, 400]
 
 safety:
-  stop_key: f12             # 緊急停止
+  stop_key: f12             # 停止
   pause_key: f9             # 暫停 / 繼續
-  critical_hp_ratio: 0.25   # HP 低於此比例直接停止程式並截圖
+  critical_hp_ratio: 0.25   # 危險線：低於它先灌藥搶救，撐過 critical_hp_seconds
+                            # （預設 4 秒）還拉不回來才停機並截圖
   critical_hp_frames: 3     # 要連續幾幀都讀到低血才停機。血條被特效蓋住或
                             # 擷取抖一下都會讀成 0，一幀就停機等於整晚白掛
   pause_when_players: true  # 小地圖出現其他玩家時暫停動作
@@ -277,11 +282,13 @@ report:
   chart: true                 # 產生 PNG 曲線（需要 matplotlib，沒裝就自動跳過）
 
 # 選配：本地 VLM 督導層（slow loop）。
-# 每 interval 秒看一次畫面，判斷卡死/對話框/斷線等異常，異常時只會把 bot 暫停。
+# VLM 看一張圖要 0.5~2 秒，當不了每 125ms 一輪的即時反應層，所以只每 interval
+# 秒看一次畫面，判斷卡死/對話框/驗證碼視窗/斷線等異常，異常時只會把 bot 暫停。
 # 必須是「視覺」模型（要看截圖），純文字模型不行。
 #
 # Ollama（最簡單）：
 #   ollama pull qwen2.5vl:7b        # 6GB，判斷異常綽綽有餘（相容最廣的安全預設）
+#   要更強的判斷力可換 qwen2.5vl:32b（21GB）。
 #   較新版 Ollama 也可用 qwen3-vl:8b（新一代、同級大小），
 #   或任何你已有的視覺模型（例如 qwen3.6 系列非 -mlx 標籤都有 vision，
 #   用 `ollama show <model>` 確認 capabilities 含 vision）。
@@ -292,7 +299,12 @@ report:
 #   兩顆大的塞不下會被 Ollama LRU 換出，若 log 出現督導呼叫逾時，
 #   把 timeout 調高或改用小 VL 專職督導。
 #
-# vLLM 使用者改成：
+# vLLM 使用者先這樣開伺服器：
+#   vllm serve Qwen/Qwen2.5-VL-7B-Instruct --max-model-len 8192
+#   （--max-model-len：不設的話 vLLM 要求 KV cache 放得下一整條模型上限長度
+#   的序列（這顆是 128K），顯存小的卡會直接開不起來；督導一次只送一張畫面
+#   加一段提示，用不到那麼長）
+# 然後改成：
 #   endpoint: "http://127.0.0.1:8000/v1/chat/completions"
 #   model: "Qwen/Qwen2.5-VL-7B-Instruct"
 advisor:
