@@ -4,7 +4,7 @@ import sys
 import types
 from dataclasses import replace
 
-from maplebot.doctor import FAIL, OK, WARN, Check
+from maplebot.diagnostics.doctor import FAIL, OK, WARN, Check
 from maplebot.gui import live, setup
 from maplebot.gui.setup import SetupFacts
 

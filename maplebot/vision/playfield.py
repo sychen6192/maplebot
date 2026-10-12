@@ -1,6 +1,6 @@
 """playfield 影像的共用前處理：疊在上面的 UI，以及角色自己那一塊。
 
-即時執行（perception.py）與離線自動標註（teachers.py）必須用**同一套**規則。
+即時執行（perception.py）與離線自動標註（training/teachers.py）必須用**同一套**規則。
 老師標出來的框跟 bot 實際看到的不一樣，學生就是在學另一個問題——所以這兩段
 邏輯放在這裡共用，而不是各抄一份。
 """
@@ -8,7 +8,7 @@ from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from ..vision.mobs import Mob
+from .types import Mob
 
 Rect = Tuple[int, int, int, int]
 

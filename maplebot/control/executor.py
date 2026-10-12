@@ -8,8 +8,8 @@ import time
 from dataclasses import dataclass, field
 from random import random
 
-from .brain import fsm
-from .control.input_win import Keyboard
+from ..brain import fsm
+from .input_win import Keyboard
 
 # 估計還要走這麼久以上就持續按住方向鍵；短於此就用短按精準微調
 HOLD_MIN_SECONDS = 0.2

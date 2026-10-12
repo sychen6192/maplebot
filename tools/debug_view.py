@@ -24,10 +24,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from maplebot.brain import fsm  # noqa: E402
 from maplebot.capture import ImageCapture, WindowCapture  # noqa: E402
 from maplebot.config import load_config, load_profile  # noqa: E402
-from maplebot.overlay import annotate, display_size  # noqa: E402
-from maplebot.overlay import pct as _pct  # noqa: E402
+from maplebot.diagnostics.overlay import annotate, display_size  # noqa: E402
+from maplebot.diagnostics.overlay import pct as _pct  # noqa: E402
+from maplebot.diagnostics.selfcheck import snapshot  # noqa: E402
 from maplebot.perception import Perceiver  # noqa: E402
-from maplebot.selfcheck import snapshot  # noqa: E402
 from maplebot.vision.mobs import make_detector  # noqa: E402
 from maplebot.window import pick_free_position, virtual_screen  # noqa: E402
 

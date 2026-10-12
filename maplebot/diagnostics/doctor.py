@@ -195,7 +195,7 @@ def check_detector(cfg, exists: Callable[[str], bool] = os.path.exists,
 
 
 def _is_pretrained(path: str) -> bool:
-    from .vision.yolo_mobs import is_pretrained_name
+    from ..vision.yolo_mobs import is_pretrained_name
     return is_pretrained_name(path)
 
 
@@ -239,7 +239,7 @@ def check_reach(cfg, profile) -> List[Check]:
     才放的大絕不會擋追擊，也不是後退距離要配合的那一招。
     """
     import math
-    from .config import REFERENCE_WIDTH
+    from ..config import REFERENCE_WIDTH
     pf_w = cfg.regions.get("playfield", (0, 0, REFERENCE_WIDTH, 0))[2] or REFERENCE_WIDTH
     base = pf_w / REFERENCE_WIDTH                       # 790 基準 -> 實際像素
     s = base if profile.attack_auto_scale else 1.0      # Profile 距離的換算
@@ -365,7 +365,7 @@ def check_window(cfg, finder: Optional[Callable[[str], object]] = None) -> List[
     if sys.platform != "win32":
         return []
     if finder is None:
-        from .window import find_game_window
+        from ..window import find_game_window
         finder = find_game_window
     win = finder(cfg.window_title)
     if win is None:
@@ -385,7 +385,7 @@ def check_window(cfg, finder: Optional[Callable[[str], object]] = None) -> List[
     # 遊戲就是收不到。角色站在原地被圍毆、藥也喝不下去。
     hwnd = getattr(win, "hwnd", None)
     if hwnd:
-        from .window import current_process_elevated, window_process_elevated
+        from ..window import current_process_elevated, window_process_elevated
         game_elev = window_process_elevated(hwnd)
         if game_elev is True and current_process_elevated() is False:
             out.append(Check(
@@ -402,7 +402,7 @@ def check_window(cfg, finder: Optional[Callable[[str], object]] = None) -> List[
 
 
 def check_game_process(cfg) -> Check:
-    from .sysmon import HAVE_PSUTIL
+    from ..telemetry.sysmon import HAVE_PSUTIL
     if not HAVE_PSUTIL:
         return Check("遊戲行程", WARN, "沒裝 psutil，無法偵測遊戲當掉",
                      "pip install psutil")
@@ -446,7 +446,7 @@ def check_status_bars(cfg, frame) -> List[Check]:
     frame 是一張完整的遊戲畫面（client 區）。自動偵測認不出來時只警告不擋——
     那可能只是這個客戶端的狀態列長得不一樣，不代表使用者的設定是錯的。
     """
-    from .vision.statusbar import find_status_bars
+    from ..vision.statusbar import find_status_bars
 
     found = find_status_bars(frame)
     if not found:
@@ -511,7 +511,7 @@ def run_all(cfg_path: str, profile_path: str, importer: Callable[[str], bool],
     「遊戲視窗」那段只在有結果時出現（非 Windows 整段跳過）；
     「辨識」那段只在給了 source 截圖時出現。
     """
-    from .config import ConfigError, load_config, load_profile
+    from ..config import ConfigError, load_config, load_profile
 
     env = [check_python(), check_platform()]
     env += check_modules(importer)

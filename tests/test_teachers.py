@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 
 from maplebot.config import AppCfg
-from maplebot.teachers import (OutlineTeacher, TemplateTeacher,
-                               class_from_template_name, make_teacher)
+from maplebot.training.teachers import (OutlineTeacher, TemplateTeacher,
+                                        class_from_template_name, make_teacher)
 from maplebot.vision.outline_mobs import OutlineMobDetector
 
 W, H = 790, 520                      # 參考解析度，scale = 1.0
@@ -237,7 +237,7 @@ def _cfg():
 
 
 def test_it_labels_an_unambiguous_minimap():
-    from maplebot.teachers import make_teacher
+    from maplebot.training.teachers import make_teacher
     t = make_teacher("minimap_dot", _cfg())
     labels = t.label(_mm(dots=((30, 20),)))
     assert len(labels) == 1
@@ -252,7 +252,7 @@ def test_it_refuses_to_label_when_colour_is_ambiguous():
     照標的話等於拿「標題文字是玩家」去訓練，而那正是模型該學會分辨的畫面。
     寧可少標也不要標錯：老師抓不到的學生學不到，但老師**標錯**的學生會學得很牢。
     """
-    from maplebot.teachers import make_teacher
+    from maplebot.training.teachers import make_teacher
     t = make_teacher("minimap_dot", _cfg())
     assert t.label(_mm(dots=((30, 20),), decoys=((80, 8), (95, 8)))) == []
     assert t.ambiguous == 1
@@ -260,14 +260,14 @@ def test_it_refuses_to_label_when_colour_is_ambiguous():
 
 
 def test_an_empty_minimap_labels_nothing():
-    from maplebot.teachers import make_teacher
+    from maplebot.training.teachers import make_teacher
     t = make_teacher("minimap_dot", _cfg())
     assert t.label(_mm(dots=())) == []
     assert t.empty == 1
 
 
 def test_explain_says_why_most_images_were_skipped():
-    from maplebot.teachers import make_teacher
+    from maplebot.training.teachers import make_teacher
     t = make_teacher("minimap_dot", _cfg())
     for _ in range(4):
         t.label(_mm(dots=((30, 20),), decoys=((80, 8), (95, 8))))
@@ -279,7 +279,7 @@ def test_explain_says_why_most_images_were_skipped():
 
 def test_boxes_are_a_fixed_size_not_the_blob_bbox():
     """框用固定大小：玩家點是遊戲畫的固定標記，色塊外接框會隨雜訊抖。"""
-    from maplebot.teachers import make_teacher
+    from maplebot.training.teachers import make_teacher
     t = make_teacher("minimap_dot", _cfg())
     a = t.label(_mm(dots=((30, 20),)))[0][1]
     b = t.label(_mm(dots=((70, 30),)))[0][1]
@@ -287,5 +287,5 @@ def test_boxes_are_a_fixed_size_not_the_blob_bbox():
 
 
 def test_minimap_dot_is_a_registered_teacher():
-    from maplebot.teachers import TEACHERS
+    from maplebot.training.teachers import TEACHERS
     assert "minimap_dot" in TEACHERS

@@ -1,6 +1,6 @@
 """錄製路線 -> 巡邏點的壓縮。"""
-from maplebot.route import (RoutePoint, Sample, compress, coverage,
-                            describe, to_yaml_block)
+from maplebot.recording.route import (RoutePoint, Sample, compress, coverage,
+                                      describe, to_yaml_block)
 
 
 def _walk(xs, y=20, keys=()):

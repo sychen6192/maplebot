@@ -31,9 +31,9 @@
 | **VLM grounding**（督導層的模型） | `tools/label_vlm.py` | 已經設好 `advisor`（本地 VLM）時。整張畫面請模型一隻一框，掉落物、玩家、寵物另外標成 item/player/pet、不進標籤。描邊會把蝸牛和旁邊的楓幣黏成一框、擠成一排的怪寬過上限整串丟掉，這兩個它都沒有。實測 10 張（1366x768 訓練場）：督導判過是怪的描邊框 65/68 被框到，另外多框到 32 隻描邊漏掉的；框成怪的 118 個錯 2~3 個。一張約 3 秒，500 張半小時，中斷重跑只問沒問過的 |
 | **GroundingDINO**（大模型） | `tools/label_gdino.py` | 完全不想截模板、又想要語意標籤。但它是拿真實照片訓練的，對卡通 sprite 語意很模糊——實測標籤會混成 `"slime npc signboard"` 這種複合詞而被 reject 過濾掉。**先 `--test` 試一張** |
 
-兩條描邊路線的差別：`auto_pipeline.py` 走 `teachers.py` 的老師介面，偵測器由
-`make_detector` 依 config 建立（跟 bot 執行時同一個函式），還附 `--preview`
-看標註、`--check` 只標不練；`autolabel_outline.py` 是直接開參數的標註專用工具，
+兩條描邊路線的差別：`auto_pipeline.py` 走 `maplebot/training/teachers.py` 的老師介面，偵測器由
+`make_detector` 依 config 建立（跟 bot 執行時同一個函式），標完一定先輸出 6 張
+預覽到 `<images>/_preview`，`--check` 只標不練；`autolabel_outline.py` 是直接開參數的標註專用工具，
 多了模板聯集與 `--exclude`。
 
 最短路徑（描邊 ∪ 模板）：
@@ -254,7 +254,7 @@ python main.py --profile config/profiles/example.yaml             # 上線
 ```
 
 推理耗時 1~3ms/幀，相對 8 FPS 主迴圈（125ms/tick）完全無感；
-`vision/yolo_mobs.py` 與模板匹配實作同一個 `MobDetector` 介面，其餘程式碼零改動。
+`vision/yolo_mobs.py` 與描邊偵測、模板匹配實作同一個 `MobDetector` 介面（`vision/types.py`），其餘程式碼零改動。
 
 ### 轉成 ONNX（掛機那台只做推理）
 
@@ -401,7 +401,7 @@ python tools/train_yolo.py --imgsz 320 --name minimap
 `minimap_dot` 老師就是現在的顏色偵測，但它**只在有把握的時候才標**：
 畫面上只有一個同色候選才產生標註，有好幾個就整張跳過。
 
-這一點很重要。teachers.py 開頭那句「老師抓不到的，學生也學不到」還有更糟的
+這一點很重要。maplebot/training/teachers.py 開頭那句「老師抓不到的，學生也學不到」還有更糟的
 一半：**老師標錯的，學生會學得非常牢**。自由市場那張圖如果照標，等於拿
 「地板是玩家」當真值去訓練。
 

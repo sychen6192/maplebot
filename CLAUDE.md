@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-python -m pytest -q                              # full suite (~960 tests, runs offline)
+python -m pytest -q                              # full suite (~990 tests, runs offline)
 python -m pytest tests/test_fsm.py -q            # one file
 python -m pytest tests/test_fsm.py::test_name -q # one test
 python -m pytest -k "outline or teacher" -q      # by name
@@ -36,8 +36,21 @@ One tick is `capture → perceive → decide → execute`, and each arrow is a h
 - **`capture.py`** grabs one full frame per tick. Everything downstream slices that array; nothing else touches the screen.
 - **`perception.py`** (`Perceiver`) turns the frame into a `GameState` (`brain/state.py`). Regions come from `cfg.regions`; a region that falls outside the frame leaves its field `None` rather than raising.
 - **`brain/fsm.py`** (`decide`) is a **pure function** — no keyboard, no screen, no clock. `now` and `playfield_center` are passed in, and cross-tick memory lives in the `Runtime` dataclass held by the caller. This is why the whole hunting policy is unit-testable; keep it that way (ADR 0002).
-- **`executor.py`** turns the returned `Action` into keystrokes and writes cooldown timestamps back into the same `Runtime`. `decide` and `execute` must therefore be handed the **same** `now`.
+- **`control/executor.py`** turns the returned `Action` into keystrokes and writes cooldown timestamps back into the same `Runtime`. `decide` and `execute` must therefore be handed the **same** `now`.
 - **`runner.py`** owns the loop, safety and watchdogs.
+
+### Package layout
+
+The package root holds only the live loop and its config — `capture`, `window`, `pipeline`, `perception`, `runner`, `safety`, `config`, `yaml_edit`, `log` — next to the stage subpackages `vision/`, `brain/`, `control/` and the `gui/`. Everything else lives in a subpackage named for *when it runs*:
+
+- `diagnostics/` — preflight checks and annotated snapshots (`doctor`, `selfcheck`, `overlay`).
+- `telemetry/` — what the loop measures and reports (`metrics`, `progress`, `sysmon`, `alerts`, `report`).
+- `recording/` — turning a walked route into waypoints (`route`, `recorder`); runs only while the bot is not hunting.
+- `training/` — offline labeling and datasets (`dataset`, `teachers`); runs on the training machine (see Auto-labeling below).
+
+A new module goes where it runs, not at the root. The live loop never imports `recording/` or `training/`; `tests/test_layering.py` fails if `import maplebot.runner` loads either, so a change to route compression or to the labeling pipeline cannot change bot behavior.
+
+Outside the package, `tools/` stays one flat folder exactly one level below the repo root: the GUI runs `tools/calibrate.py`, `grab_template.py` and `debug_view.py` by relative path, `gui/live.py` regex-matches `tools/<name>.py` in doctor's fix hints, and every script puts the directory above `tools/` (the repo root) on `sys.path`. `tools/README.md` groups the 17 scripts by which machine runs them. `scripts/dev/` holds the elevated worker used to drive key tests while the game runs as administrator; read its README for the trust model before starting it.
 
 ### The bot clock
 
@@ -45,7 +58,9 @@ One tick is `capture → perceive → decide → execute`, and each arrow is a h
 
 ### Pluggable detectors
 
-`vision/mobs.py:make_detector` returns one of four implementations behind the `MobDetector` interface — `outline` (default, zero setup, finds mobs by their black sprite outline), `template`, `yolo`, `remote`. The decision layer never knows which is in use. Add a detector by implementing `detect(img) -> List[Mob]`, not by branching in `perception.py`.
+`vision/mobs.py:make_detector` returns one of four implementations behind the `MobDetector` interface — `outline` (default, zero setup, finds mobs by their black sprite outline), `template`, `yolo`, `remote`, each in its own `vision/<kind>_mobs.py`. The decision layer never knows which is in use. Add a detector by implementing `detect(img) -> List[Mob]`, not by branching in `perception.py`.
+
+`Mob` and `MobDetector` are defined in `vision/types.py`, which imports neither cv2 nor numpy, so `brain/` can use them without loading OpenCV; `tests/test_layering.py` fails if `import maplebot.brain.fsm` pulls either in. `vision/mobs.py` re-exports both (and `TemplateMobDetector`) for older imports, but code under `brain/` must import from `vision/types.py`.
 
 ### Two config layers
 
@@ -54,20 +69,27 @@ One tick is `capture → perceive → decide → execute`, and each arrow is a h
 
 `local.yaml` overrides `default.yaml` and is where calibration output belongs.
 
+Both the GUI and `tools/calibrate.py --write` write these files through `maplebot/yaml_edit.py:write_patch`, which edits values in place so hand-written comments (often the measurement behind a value) survive, and leaves a `<file>.bak` before any rewrite that would drop them. Write user config files through it rather than `yaml.safe_dump`. `yaml_edit` must not import `gui` or `config` (`config` imports its `_deep_merge`; `tests/test_gui_imports.py` checks both).
+
 ### The 790px reference width
 
 Every pixel threshold in config — attack range, outline area, nametag offset, chase distance — is expressed against a 790px-wide playfield and rescaled at runtime (`REFERENCE_WIDTH`). `range_px: 320` running on a 2560-wide window is not a bug. When adding a pixel threshold, decide whether it scales and say so in a comment (ADR 0003).
 
 ### Auto-labeling (YOLO route)
 
-Three entry points, deliberately kept separate:
+The labeling and dataset code lives in `maplebot/training/`, which the live loop never imports (see Package layout).
 
-- `tools/auto_pipeline.py` → `dataset.autolabel_dir` with a teacher object from `teachers.py`. Config-driven; the outline teacher builds its detector through the same `make_detector` the bot runs, so the teacher's boxes match what the bot actually sees.
-- `tools/autolabel_outline.py` → `dataset.autolabel_outline_dir`. Explicit parameters, unions the outline and template teachers by IoU (their blind spots are complementary), supports `--exclude` for fixed HUD rectangles.
-- `tools/label_vlm.py` → `dataset.ground_label_dir` with `Advisor.ground`: the advisor's VLM boxes every object on the whole frame (thinking off, PNG); only `monster` boxes become labels, the other kinds stay in the cache. A frame the VLM never answered gets **no** label file — `prepare_dataset` treats a missing label as a negative sample.
+Five entry points; `tools/README.md` says when to pick which. The three `training.dataset` labeling paths behind them are deliberately kept separate — do not merge their semantics:
+
+- `tools/auto_pipeline.py` → `training.dataset.autolabel_dir` with a teacher object from `training/teachers.py`, then split and train in the same run. Config-driven; the outline teacher builds its detector through the same `make_detector` the bot runs, so the teacher's boxes match what the bot actually sees.
+- `tools/autolabel.py` → the same `autolabel_dir` and teachers, but label only — the route for hand-correcting boxes in labelImg. It adds `--scan-black` to sweep the outline black level, and it is the documented entry for the `minimap_dot` teacher (the minimap player-dot model).
+- `tools/autolabel_outline.py` → `training.dataset.autolabel_outline_dir`. Explicit parameters, unions the outline and template teachers by IoU (their blind spots are complementary), supports `--exclude` for fixed HUD rectangles.
+- `tools/label_vlm.py` → `training.dataset.ground_label_dir` with `Advisor.ground`: the advisor's VLM boxes every object on the whole frame (thinking off, PNG); only `monster` boxes become labels, the other kinds stay in the cache. A frame the VLM never answered gets **no** label file — `prepare_dataset` treats a missing label as a negative sample.
+- `tools/label_gdino.py` → GroundingDINO through HF `transformers`: keeps boxes whose label matches `--prompt` and drops any whose label matches, or that overlap a box labeled with, a `--reject` phrase (NPCs, players, signboards). It shares only the label writer `training.dataset.write_yolo_labels`. Its logic lives in the tool itself; `tests/test_label_gdino.py` loads it by file path.
 
 ## Conventions
 
 - Comments and commit messages in this repo explain **why**, usually with the measurement that motivated the change. Match that; a comment restating the code is worse than none.
 - Tests validate against both synthetic images and `tests/fixtures/mapleaga_800x600.jpg`. The fixture's HP/MP/EXP ROIs are calibration data — `test_status.py` asserts against them, so do not re-encode that image without checking the readings still come out `1.0 / 1.0 / 0.591304`.
+- Tests that pin a profile's values read a frozen copy under `tests/fixtures/profiles/`, not `config/profiles/`: that folder holds the user's own maps, and re-recording a route there must not turn the suite red. Tests about the shipped templates (`example.yaml`, `multilevel.yaml`, `範本-*.yaml`) keep reading `config/profiles/`.
 - The bot reads the screen and sends synthetic input only. It does not read game memory or touch packets, and that is a deliberate constraint, not a gap (ADR 0001).

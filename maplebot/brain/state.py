@@ -2,7 +2,7 @@
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
-from ..vision.mobs import Mob
+from ..vision.types import Mob
 
 
 @dataclass

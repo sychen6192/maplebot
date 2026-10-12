@@ -16,7 +16,7 @@ from typing import List, Tuple
 import cv2
 import numpy as np
 
-from .mobs import Mob
+from .types import Mob
 
 # 怪物血條的綠色（BGR）。跟 MapleStoryAutoLevelUp 用的同一組值
 HP_BAR_BGR: Tuple[int, int, int] = (71, 204, 64)

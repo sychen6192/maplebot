@@ -5,7 +5,7 @@ import cv2
 import numpy as np
 import pytest
 
-from maplebot.vision.mobs import TemplateMobDetector, _nms
+from maplebot.vision.template_mobs import TemplateMobDetector, _nms
 
 
 def _make_mob_sprite():

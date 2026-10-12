@@ -1,6 +1,6 @@
 """錄路線：你自己把路線走一遍，程式生出 profile 的 patrol.waypoints。
 
-跟 GUI 的「錄製路線」同一套引擎（maplebot/recorder.py + route.py），
+跟 GUI 的「錄製路線」同一套引擎（maplebot/recording/recorder.py + route.py），
 給不開 GUI 的人用：
 
   python tools/record_route.py --profile config/profiles/弓箭手訓練場一.yaml
@@ -28,8 +28,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from maplebot.capture import ImageCapture, WindowCapture  # noqa: E402
 from maplebot.config import load_config, load_profile  # noqa: E402
 from maplebot.perception import Perceiver  # noqa: E402
-from maplebot.recorder import KeyWatcher, Recorder  # noqa: E402
-from maplebot.route import compress, coverage, describe, to_yaml_block  # noqa: E402
+from maplebot.recording.recorder import KeyWatcher, Recorder  # noqa: E402
+from maplebot.recording.route import compress, coverage, describe, to_yaml_block  # noqa: E402
 from maplebot.vision.mobs import make_detector  # noqa: E402
 
 

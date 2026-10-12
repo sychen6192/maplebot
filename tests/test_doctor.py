@@ -10,8 +10,8 @@ import sys
 import pytest
 import yaml
 
-from maplebot import doctor
 from maplebot.config import load_config, load_profile
+from maplebot.diagnostics import doctor
 
 
 def _cfg(tmp_path, **overrides):

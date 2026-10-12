@@ -29,7 +29,7 @@ import cv2
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from maplebot.dataset import list_images, write_yolo_labels  # noqa: E402
+from maplebot.training.dataset import list_images, write_yolo_labels  # noqa: E402
 
 TINY = "IDEA-Research/grounding-dino-tiny"
 BASE = "IDEA-Research/grounding-dino-base"

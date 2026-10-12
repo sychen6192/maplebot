@@ -10,7 +10,9 @@ $ErrorActionPreference = "Continue"
 $dir = $QueueDir
 New-Item -ItemType Directory -Force $dir | Out-Null
 ("boot " + (Get-Date -Format o)) | Out-File "$dir\boot.txt" -Encoding utf8
-Set-Location $PSScriptRoot
+# This file lives in scripts/dev/; queued commands (python tools/..., pytest)
+# use repo-relative paths, so start them at the repo root two levels up.
+Set-Location (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 
 $id = [Security.Principal.WindowsIdentity]::GetCurrent()
 $admin = (New-Object Security.Principal.WindowsPrincipal($id)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)

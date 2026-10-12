@@ -26,8 +26,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from maplebot.config import load_config  # noqa: E402
-from maplebot.dataset import autolabel_dir, prepare_dataset, preview_labels, train  # noqa: E402
-from maplebot.teachers import TEACHERS, make_teacher  # noqa: E402
+from maplebot.training.dataset import autolabel_dir, prepare_dataset, preview_labels, train  # noqa: E402
+from maplebot.training.teachers import TEACHERS, make_teacher  # noqa: E402
 
 PREVIEW_COUNT = 6
 

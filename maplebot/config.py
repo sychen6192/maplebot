@@ -10,6 +10,10 @@ from typing import Dict, List, Optional, Tuple
 
 import yaml
 
+# 讀設定時 local.yaml 蓋過 default.yaml 的規則，跟存檔時 patch 併進 local.yaml
+# 的是同一個。原本兩邊各有一份一模一樣的實作，只留一份才不會改了一邊忘了另一邊
+from .yaml_edit import _deep_merge
+
 Region = Tuple[int, int, int, int]  # x, y, w, h（遊戲視窗 client 區座標）
 
 # 所有「畫面像素」類的設定值都是對這個 playfield 寬度校正的。
@@ -38,16 +42,6 @@ def _region(raw, name: str) -> Region:
     if w <= 0 or h <= 0:
         raise ConfigError(f"regions.{name} 的寬高必須為正: {raw!r}")
     return (x, y, w, h)
-
-
-def _deep_merge(base: dict, override: dict) -> dict:
-    out = dict(base)
-    for k, v in override.items():
-        if isinstance(v, dict) and isinstance(out.get(k), dict):
-            out[k] = _deep_merge(out[k], v)
-        else:
-            out[k] = v
-    return out
 
 
 @dataclass
@@ -191,7 +185,7 @@ class SafetyCfg:
 
 @dataclass
 class MonitorCfg:
-    """系統/遊戲行程監看（需要 psutil，沒裝就自動停用）。詳見 sysmon.py。"""
+    """系統/遊戲行程監看（需要 psutil，沒裝就自動停用）。詳見 telemetry/sysmon.py。"""
     enabled: bool = True
     interval: float = 5.0             # 幾秒取樣一次（psutil 掃行程有成本）
     stop_when_game_exits: bool = True  # 遊戲行程消失就停機（強烈建議開著）
@@ -203,7 +197,7 @@ class MonitorCfg:
 
 @dataclass
 class ReportCfg:
-    """收工報告。詳見 report.py。"""
+    """收工報告。詳見 telemetry/report.py。"""
     enabled: bool = True
     dir: str = "logs/reports"
     sample_interval: float = 10.0     # 曲線取樣間隔（0=不記曲線）

@@ -24,7 +24,7 @@ from typing import List, Optional
 import cv2
 import numpy as np
 
-from .mobs import Mob
+from .types import Mob
 
 WARN_INTERVAL = 10.0   # 連線失敗的警告最多幾秒印一次，避免洗版
 

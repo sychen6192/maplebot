@@ -31,7 +31,7 @@ from typing import List, Optional, Sequence, Tuple
 import cv2
 import numpy as np
 
-from .mobs import Mob
+from .types import Mob
 
 
 class FollowerFilter:

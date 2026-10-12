@@ -8,8 +8,8 @@ import typing
 
 import pytest
 
-from maplebot import doctor
 from maplebot.brain import fsm
+from maplebot.diagnostics import doctor
 from maplebot.gui import live, settings
 from maplebot.gui.live import Context, Limits, LogLine, Monitor
 from maplebot.runner import Status

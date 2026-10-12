@@ -13,7 +13,7 @@ import pytest
 
 from maplebot.capture import ImageCapture
 from maplebot.config import load_config, load_profile
-from maplebot.selfcheck import VisionReport, fit, preview_path, snapshot, verdicts
+from maplebot.diagnostics.selfcheck import VisionReport, fit, preview_path, snapshot, verdicts
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIXTURE = os.path.join(ROOT, "tests", "fixtures", "mapleaga_800x600.jpg")
@@ -107,7 +107,7 @@ def test_debug_view_writes_the_same_report(tmp_path):
 
 def test_selfcheck_does_not_pull_in_tkinter():
     """GUI 以外的模組要在沒有顯示環境的 CI 上 import 得起來。"""
-    code = ("import sys, maplebot.selfcheck; "
+    code = ("import sys, maplebot.diagnostics.selfcheck; "
             "assert 'tkinter' not in sys.modules, 'tkinter imported'")
     proc = subprocess.run([sys.executable, "-c", code], cwd=ROOT,
                           capture_output=True, timeout=120)

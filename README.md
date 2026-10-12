@@ -76,6 +76,7 @@ python main.py --source tests/fixtures/mapleaga_800x600.jpg --max-ticks 20   # �
 |---|---|
 | 手把手設定、每一步的預期結果、疑難排解 | [docs/TUTORIAL.md](docs/TUTORIAL.md) |
 | 升級 YOLO 偵測（拿描邊當老師，免手動標註）、轉 ONNX | [docs/YOLO_TRAINING.md](docs/YOLO_TRAINING.md) |
+| `tools/` 每支腳本做什麼、在哪一台跑、五個標註入口怎麼挑 | [tools/README.md](tools/README.md) |
 | 選配的 VLM 督導層（只做判讀，從不執行它給的指令） | `config/default.yaml` 的 `advisor` 段 |
 | 跟同類高星開源專案的取捨 | [docs/COMPARISON.md](docs/COMPARISON.md) |
 | 用語定義、已定案不再重議的設計決策 | [CONTEXT.md](CONTEXT.md)、[docs/adr/](docs/adr/) |

@@ -21,16 +21,17 @@ from typing import Callable, Deque, Dict, List, Optional, Tuple
 
 import yaml
 
-from .. import doctor, window
+from .. import window
 from ..capture import WindowCapture
 from ..config import ConfigError, load_config, load_profile, resolve_local_path
 from ..control.input_win import IS_WINDOWS, Keyboard, NullBackend
+from ..diagnostics import doctor
+from ..diagnostics.selfcheck import VisionReport, verdicts
 from ..perception import Perceiver
-from ..recorder import KeyWatcher, Recorder
-from ..route import compress, coverage, describe, to_yaml_block
+from ..recording.recorder import KeyWatcher, Recorder
+from ..recording.route import compress, coverage, describe, to_yaml_block
 from ..runner import Runner, Status
 from ..safety import ANOMALY_DIR
-from ..selfcheck import VisionReport, verdicts
 from ..vision.mobs import make_detector
 from . import live, settings, setup
 from .live import LogLine

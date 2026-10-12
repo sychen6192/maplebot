@@ -6,9 +6,10 @@ import numpy as np
 import pytest
 import yaml
 
-from maplebot.dataset import (autolabel_dir, class_from_template_name,
-                              draw_labels, ground_label_dir, list_images,
-                              prepare_dataset, preview_labels, write_yolo_labels)
+from maplebot.training.dataset import (autolabel_dir, class_from_template_name,
+                                       draw_labels, ground_label_dir, list_images,
+                                       prepare_dataset, preview_labels,
+                                       write_yolo_labels)
 from maplebot.vision.mobs import Mob
 
 
@@ -161,7 +162,7 @@ def outline_raw(tmp_path):
 
 
 def test_outline_autolabel_writes_labels(outline_raw):
-    from maplebot.dataset import autolabel_outline_dir
+    from maplebot.training.dataset import autolabel_outline_dir
     res = autolabel_outline_dir(outline_raw, black_level=40, min_area=100,
                                 min_size=(10, 10), ui_dir="does/not/exist")
     assert res.images == 3
@@ -173,7 +174,7 @@ def test_outline_autolabel_writes_labels(outline_raw):
 
 def test_outline_autolabel_excludes_ui_regions(outline_raw):
     """UI 每幀都在同一個位置，不排除就會被學成一隻怪。"""
-    from maplebot.dataset import autolabel_outline_dir
+    from maplebot.training.dataset import autolabel_outline_dir
     before = autolabel_outline_dir(outline_raw, black_level=40, min_area=100,
                                    min_size=(10, 10), ui_dir="does/not/exist")
     after = autolabel_outline_dir(outline_raw, black_level=40, min_area=100,
@@ -184,7 +185,7 @@ def test_outline_autolabel_excludes_ui_regions(outline_raw):
 
 def test_outline_autolabel_keeps_empty_frames_as_negatives(outline_raw):
     """沒有怪的畫面要寫出空 .txt——那是壓低誤報用的背景負樣本。"""
-    from maplebot.dataset import autolabel_outline_dir
+    from maplebot.training.dataset import autolabel_outline_dir
     autolabel_outline_dir(outline_raw, black_level=40, min_area=100,
                           min_size=(10, 10), ui_dir="does/not/exist",
                           exclude=[(0, 0, 60, 60)])
@@ -194,7 +195,7 @@ def test_outline_autolabel_keeps_empty_frames_as_negatives(outline_raw):
 
 
 def test_outline_autolabel_boxes_are_normalized(outline_raw):
-    from maplebot.dataset import autolabel_outline_dir
+    from maplebot.training.dataset import autolabel_outline_dir
     autolabel_outline_dir(outline_raw, black_level=40, min_area=100,
                           min_size=(10, 10), ui_dir="does/not/exist")
     with open(os.path.join(outline_raw, "f0.txt"), encoding="utf-8") as f:
@@ -206,7 +207,7 @@ def test_outline_autolabel_boxes_are_normalized(outline_raw):
 
 def test_outline_autolabel_unions_template_teacher(outline_raw, tmp_path):
     """兩個老師的盲點互補，聯集要比單一個抓得多（重疊的不重複計）。"""
-    from maplebot.dataset import autolabel_outline_dir
+    from maplebot.training.dataset import autolabel_outline_dir
     # 只有模板認得的怪：沒有黑描邊，描邊老師一定看不到
     tpl = tmp_path / "tpl"
     tpl.mkdir()
@@ -232,7 +233,7 @@ def test_outline_autolabel_unions_template_teacher(outline_raw, tmp_path):
 
 def test_union_does_not_double_count_the_same_mob(outline_raw, tmp_path):
     """同一隻怪被兩個老師都抓到時只能算一次，否則標註會出現重疊的重複框。"""
-    from maplebot.dataset import autolabel_outline_dir
+    from maplebot.training.dataset import autolabel_outline_dir
     tpl = tmp_path / "tpl2"
     tpl.mkdir()
     img = cv2.imread(os.path.join(outline_raw, "f0.jpg"))

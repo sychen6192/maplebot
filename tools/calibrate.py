@@ -10,6 +10,7 @@
 import argparse
 import os
 import sys
+from typing import Optional
 
 import cv2
 import yaml
@@ -20,6 +21,7 @@ from maplebot.capture import ImageCapture, WindowCapture  # noqa: E402
 from maplebot.config import load_config  # noqa: E402
 from maplebot.vision.status import bar_ratio  # noqa: E402
 from maplebot.vision.statusbar import find_status_bars  # noqa: E402
+from maplebot.yaml_edit import write_patch  # noqa: E402
 
 BAR_COLORS = {"hp_bar": "red", "mp_bar": "blue", "exp_bar": "yellow"}
 
@@ -32,6 +34,17 @@ REGIONS = [
     ("exp_bar", "EXP 條（可跳過）"),
     ("playfield", "角色與怪物活動的那一塊（不含下方狀態列）"),
 ]
+
+
+def write_local(path: str, patch: dict) -> Optional[str]:
+    """把校正結果寫進 path（通常是 config/local.yaml），回傳留下的 .bak 路徑，沒有就 None。
+
+    以前走 merge_into（safe_dump 整份重寫）：重校正一次，local.yaml 裡手寫的註解
+    全部消失，也不留備份，控制台的「準備 › 2 校正」跑的也是這支。write_patch 能就地
+    改值就只動那幾行；檔裡還沒有這些 key（第一次校正、上次跳過的 region）才整份
+    重寫，重寫前先留一份 .bak，已經有的 .bak 不蓋——那份才是還有註解的原檔。
+    """
+    return write_patch(path, patch, set())
 
 
 def main() -> int:
@@ -87,10 +100,11 @@ def main() -> int:
              "regions": results}
     if args.write:
         from maplebot.config import resolve_local_path
-        from maplebot.gui.settings import merge_into
         path = resolve_local_path(args.config) if args.write == "auto" else args.write
-        merge_into(path, patch)
+        bak = write_local(path, patch)
         print(f"\n已寫入 {path}（原有的其他設定都保留）")
+        if bak:
+            print(f"{os.path.basename(path)} 有些註解沒辦法原地保留，舊檔備份在 {bak}")
         return 0
 
     print("\n=== 把下面貼進 config/local.yaml（建議）或 default.yaml ===\n")

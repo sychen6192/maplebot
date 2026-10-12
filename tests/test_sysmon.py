@@ -5,7 +5,7 @@
 時候不會亂報遊戲死掉」。
 """
 from maplebot.config import MonitorCfg
-from maplebot.sysmon import ALERT_COOLDOWN, SysSnapshot, SystemMonitor, evaluate
+from maplebot.telemetry.sysmon import ALERT_COOLDOWN, SysSnapshot, SystemMonitor, evaluate
 
 
 def snap(**kw):

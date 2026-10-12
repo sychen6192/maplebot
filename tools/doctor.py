@@ -5,7 +5,7 @@
   python tools/doctor.py --source shot.png    # 順便用一張截圖驗血條 ROI
 
 有任何 ❌ 就回傳 exit code 1，方便寫進批次檔或 CI。
-檢查邏輯全在 maplebot/doctor.py（純函式、有測試），這裡只負責印。
+檢查邏輯全在 maplebot/diagnostics/doctor.py（純函式、有測試），這裡只負責印。
 """
 import argparse
 import importlib
@@ -14,7 +14,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from maplebot import doctor  # noqa: E402
+from maplebot.diagnostics import doctor  # noqa: E402
 from maplebot.log import console_safe  # noqa: E402
 
 console_safe()   # cp950 終端機印 ✅/❌ 不炸掉

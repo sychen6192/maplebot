@@ -35,7 +35,7 @@ def draw_attack_box(canvas, cfg, profile, screen_xy=None) -> None:
 
     短劍砍不到卻一直揮、或是明明構得到卻不打，看這個框跟怪的相對位置就知道。
     """
-    from .brain import fsm
+    from ..brain import fsm
 
     if "playfield" not in cfg.regions:
         return
