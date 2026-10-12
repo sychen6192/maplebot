@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-python -m pytest -q                              # full suite (~960 tests, runs offline)
+python -m pytest -q                              # full suite (~990 tests, runs offline)
 python -m pytest tests/test_fsm.py -q            # one file
 python -m pytest tests/test_fsm.py::test_name -q # one test
 python -m pytest -k "outline or teacher" -q      # by name

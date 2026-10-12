@@ -32,8 +32,8 @@
 | **GroundingDINO**（大模型） | `tools/label_gdino.py` | 完全不想截模板、又想要語意標籤。但它是拿真實照片訓練的，對卡通 sprite 語意很模糊——實測標籤會混成 `"slime npc signboard"` 這種複合詞而被 reject 過濾掉。**先 `--test` 試一張** |
 
 兩條描邊路線的差別：`auto_pipeline.py` 走 `maplebot/training/teachers.py` 的老師介面，偵測器由
-`make_detector` 依 config 建立（跟 bot 執行時同一個函式），還附 `--preview`
-看標註、`--check` 只標不練；`autolabel_outline.py` 是直接開參數的標註專用工具，
+`make_detector` 依 config 建立（跟 bot 執行時同一個函式），標完一定先輸出 6 張
+預覽到 `<images>/_preview`，`--check` 只標不練；`autolabel_outline.py` 是直接開參數的標註專用工具，
 多了模板聯集與 `--exclude`。
 
 最短路徑（描邊 ∪ 模板）：
