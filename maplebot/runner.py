@@ -2,6 +2,7 @@
 
 職責只剩調度與安全：實際辨識在 Perceiver、按鍵在 Executor。
 """
+import logging
 import os
 import threading
 import time
@@ -911,19 +912,22 @@ class Runner:
                     action = fsm.decide(state, self.cfg, self.profile, self.rt,
                                         now, self.playfield_center)
                 self._request_target_check(action, frame, now)
-                if self.dry_run:
-                    # Wait 的理由一定要印出來——否則「每 tick 都 Wait」看起來
-                    # 像卡住，實際上是某條規則一直擋著（例如誤判有其他玩家）
-                    why = f"（{action.reason}）" if isinstance(action, fsm.Wait) else ""
-                    # tick=True 讓 GUI 的 log handler 認得出這是每 tick 一行、預設
-                    # 收起來（8 FPS 一小時近三萬行，會把警告洗掉）；檔案 log 照寫
-                    self.log.info(
-                        "tick %d | HP %s MP %s | 玩家 %s | 怪 %d | 他人 %d | -> %s%s",
-                        self.stats.ticks,
-                        f"{state.hp:.0%}" if state.hp is not None else "?",
-                        f"{state.mp:.0%}" if state.mp is not None else "?",
-                        state.minimap_xy, len(state.mobs), len(state.other_players),
-                        type(action).__name__, why, extra={"tick": True})
+                # Wait 的理由一定要印出來——否則「每 tick 都 Wait」看起來
+                # 像卡住，實際上是某條規則一直擋著（例如誤判有其他玩家）
+                why = f"（{action.reason}）" if isinstance(action, fsm.Wait) else ""
+                # tick=True 讓 GUI 的 log handler 認得出這是每 tick 一行、預設
+                # 收起來（8 FPS 一小時近三萬行，會把警告洗掉）；檔案 log 照寫。
+                # 實跑也寫，但用 DEBUG（只進檔案）：巡邏卡在哪一層要的就是這行的
+                # 小地圖座標。實跑不寫的時候只能另開行程重截小地圖，跟 bot 搶擷取
+                # （10/12 實機：二層讀 70、profile 寫 72，就是這樣量出來的）
+                self.log.log(
+                    logging.INFO if self.dry_run else logging.DEBUG,
+                    "tick %d | HP %s MP %s | 玩家 %s | 怪 %d | 他人 %d | -> %s%s",
+                    self.stats.ticks,
+                    f"{state.hp:.0%}" if state.hp is not None else "?",
+                    f"{state.mp:.0%}" if state.mp is not None else "?",
+                    state.minimap_xy, len(state.mobs), len(state.other_players),
+                    type(action).__name__, why, extra={"tick": True})
                 self._check_idle(action, now)
                 if self.mob_worker is not None:
                     # 位置是這一幀量的，畫面也是這一幀——整包送進去，
