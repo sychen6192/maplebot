@@ -36,7 +36,7 @@ One tick is `capture → perceive → decide → execute`, and each arrow is a h
 - **`capture.py`** grabs one full frame per tick. Everything downstream slices that array; nothing else touches the screen.
 - **`perception.py`** (`Perceiver`) turns the frame into a `GameState` (`brain/state.py`). Regions come from `cfg.regions`; a region that falls outside the frame leaves its field `None` rather than raising.
 - **`brain/fsm.py`** (`decide`) is a **pure function** — no keyboard, no screen, no clock. `now` and `playfield_center` are passed in, and cross-tick memory lives in the `Runtime` dataclass held by the caller. This is why the whole hunting policy is unit-testable; keep it that way (ADR 0002).
-- **`executor.py`** turns the returned `Action` into keystrokes and writes cooldown timestamps back into the same `Runtime`. `decide` and `execute` must therefore be handed the **same** `now`.
+- **`control/executor.py`** turns the returned `Action` into keystrokes and writes cooldown timestamps back into the same `Runtime`. `decide` and `execute` must therefore be handed the **same** `now`.
 - **`runner.py`** owns the loop, safety and watchdogs.
 
 ### The bot clock
@@ -64,11 +64,13 @@ Every pixel threshold in config — attack range, outline area, nametag offset, 
 
 ### Auto-labeling (YOLO route)
 
+The labeling and dataset code lives in `maplebot/training/`, which the live loop never imports; `tests/test_layering.py` fails if `import maplebot.runner` loads it. Keep it that way, so a change to the labeling pipeline cannot change bot behavior.
+
 Three entry points, deliberately kept separate:
 
-- `tools/auto_pipeline.py` → `dataset.autolabel_dir` with a teacher object from `teachers.py`. Config-driven; the outline teacher builds its detector through the same `make_detector` the bot runs, so the teacher's boxes match what the bot actually sees.
-- `tools/autolabel_outline.py` → `dataset.autolabel_outline_dir`. Explicit parameters, unions the outline and template teachers by IoU (their blind spots are complementary), supports `--exclude` for fixed HUD rectangles.
-- `tools/label_vlm.py` → `dataset.ground_label_dir` with `Advisor.ground`: the advisor's VLM boxes every object on the whole frame (thinking off, PNG); only `monster` boxes become labels, the other kinds stay in the cache. A frame the VLM never answered gets **no** label file — `prepare_dataset` treats a missing label as a negative sample.
+- `tools/auto_pipeline.py` → `training.dataset.autolabel_dir` with a teacher object from `training/teachers.py`. Config-driven; the outline teacher builds its detector through the same `make_detector` the bot runs, so the teacher's boxes match what the bot actually sees.
+- `tools/autolabel_outline.py` → `training.dataset.autolabel_outline_dir`. Explicit parameters, unions the outline and template teachers by IoU (their blind spots are complementary), supports `--exclude` for fixed HUD rectangles.
+- `tools/label_vlm.py` → `training.dataset.ground_label_dir` with `Advisor.ground`: the advisor's VLM boxes every object on the whole frame (thinking off, PNG); only `monster` boxes become labels, the other kinds stay in the cache. A frame the VLM never answered gets **no** label file — `prepare_dataset` treats a missing label as a negative sample.
 
 ## Conventions
 

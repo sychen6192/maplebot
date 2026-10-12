@@ -18,7 +18,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from maplebot.config import load_config  # noqa: E402
-from maplebot.dataset import autolabel_outline_dir  # noqa: E402
+from maplebot.training.dataset import autolabel_outline_dir  # noqa: E402
 from maplebot.log import console_safe  # noqa: E402
 
 

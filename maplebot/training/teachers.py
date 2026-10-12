@@ -24,12 +24,12 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
-from .config import REFERENCE_WIDTH
-from .vision import minimap as minimap_vision
-from .vision import nametag, player_bar, playfield
-from .vision.mobs import make_detector
-from .vision.template_mobs import TemplateMobDetector
-from .vision.types import Mob
+from ..config import REFERENCE_WIDTH
+from ..vision import minimap as minimap_vision
+from ..vision import nametag, player_bar, playfield
+from ..vision.mobs import make_detector
+from ..vision.template_mobs import TemplateMobDetector
+from ..vision.types import Mob
 
 Labeled = List[Tuple[int, Mob]]     # [(類別編號, 框), ...]
 

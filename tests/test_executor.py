@@ -4,8 +4,8 @@ import logging
 import pytest
 
 from maplebot.brain import fsm
+from maplebot.control.executor import Executor, Stats
 from maplebot.control.input_win import Keyboard, NullBackend, SCANCODES
-from maplebot.executor import Executor, Stats
 
 NOW = 500.0
 

@@ -20,7 +20,7 @@
     python tools/train_yolo.py --data datasets/yolo/dataset.yaml --imgsz 320
     python tools/export_onnx.py            # 掛機那台就不用裝 PyTorch
 
-老師會**自動跳過顏色分不出來的畫面**（見 teachers.MinimapDotTeacher），
+老師會**自動跳過顏色分不出來的畫面**（見 training.teachers.MinimapDotTeacher），
 所以訓練資料裡不會混進「地板是玩家」這種標註。
 """
 import os

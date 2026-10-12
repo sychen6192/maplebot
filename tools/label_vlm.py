@@ -29,7 +29,7 @@ import cv2  # noqa: E402
 
 from maplebot.brain.advisor import _GROUND_PROMPT, Advisor  # noqa: E402
 from maplebot.config import load_config  # noqa: E402
-from maplebot.dataset import ground_label_dir, list_images  # noqa: E402
+from maplebot.training.dataset import ground_label_dir, list_images  # noqa: E402
 
 # 快取跟著提示走：同一張圖換了提示答案就不一樣（加一句「香菇叢是裝飾」，
 # 一張圖的怪從 12 隻變 7 隻），沿用舊答案等於拿舊提示的錯去訓練

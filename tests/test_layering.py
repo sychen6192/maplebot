@@ -1,4 +1,4 @@
-"""決策層不能經由 import 把 OpenCV 拉進來。
+"""分層靠 import 守住：決策層不能把 OpenCV 拉進來，即時迴圈不能把離線訓練程式拉進來。
 
 ADR 0002 要 decide() 是純函式，import 這一層也一樣。以前 brain/state.py 從
 vision/mobs.py 拿 Mob，mobs.py 頂層就 import cv2，所以 `import maplebot.brain.fsm`
@@ -17,6 +17,17 @@ def test_decision_layer_does_not_pull_in_opencv():
     code = ("import maplebot.brain.fsm, sys; "
             "leaked = [m for m in ('cv2', 'numpy') if m in sys.modules]; "
             "assert not leaked, f'brain.fsm pulled in {leaked}'")
+    proc = subprocess.run([sys.executable, "-c", code], cwd=REPO, capture_output=True,
+                          text=True, timeout=120)
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_live_loop_does_not_pull_in_training_code():
+    # maplebot/training/ 只給 GPU 機上的標註、訓練工具用。即時迴圈一旦 import 它，
+    # 改標註流程就可能改到 bot 行為，目錄分出來的意義就沒了
+    code = ("import maplebot.runner, sys; "
+            "leaked = sorted(m for m in sys.modules if m.startswith('maplebot.training')); "
+            "assert not leaked, f'runner pulled in {leaked}'")
     proc = subprocess.run([sys.executable, "-c", code], cwd=REPO, capture_output=True,
                           text=True, timeout=120)
     assert proc.returncode == 0, proc.stderr

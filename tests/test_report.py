@@ -9,7 +9,7 @@ import time
 from maplebot import report
 from maplebot.alerts import Alerts
 from maplebot.config import MonitorCfg
-from maplebot.executor import Stats
+from maplebot.control.executor import Stats
 from maplebot.metrics import LoopMetrics, Series
 from maplebot.progress import ExpTracker
 from maplebot.sysmon import SystemMonitor

@@ -15,7 +15,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from maplebot.dataset import train  # noqa: E402
+from maplebot.training.dataset import train  # noqa: E402
 
 
 def main() -> int:

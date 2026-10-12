@@ -4,7 +4,7 @@
 .txt 與 classes.txt。之後可以用 labelImg 開該資料夾人工校對，也可以直接
 跑 tools/prepare_dataset.py 硬練。
 
-兩種老師（見 maplebot/teachers.py）：
+兩種老師（見 maplebot/training/teachers.py）：
   outline  描邊偵測，**不用截任何模板**（預設）。只有一個類別 mob。
   template 模板匹配，要先用 tools/grab_template.py 截怪；有怪種資訊。
 
@@ -21,8 +21,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from maplebot.config import load_config  # noqa: E402
-from maplebot.dataset import autolabel_dir, list_images, preview_labels  # noqa: E402
-from maplebot.teachers import TEACHERS, OutlineTeacher, make_teacher  # noqa: E402
+from maplebot.training.dataset import autolabel_dir, list_images, preview_labels  # noqa: E402
+from maplebot.training.teachers import TEACHERS, OutlineTeacher, make_teacher  # noqa: E402
 
 SCAN_LEVELS = (0, 8, 12, 15, 20, 25)
 SCAN_SAMPLE = 8
