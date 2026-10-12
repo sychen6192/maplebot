@@ -8,7 +8,7 @@ from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from ..vision.mobs import Mob
+from .types import Mob
 
 Rect = Tuple[int, int, int, int]
 

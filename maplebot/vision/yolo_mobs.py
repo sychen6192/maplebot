@@ -14,7 +14,7 @@ from typing import List, Optional
 
 import numpy as np
 
-from .mobs import Mob
+from .types import Mob
 
 MODEL_SUFFIXES = (".pt", ".onnx", ".engine", ".torchscript")
 

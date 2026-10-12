@@ -20,7 +20,7 @@ from typing import List, Optional, Tuple
 import cv2
 import numpy as np
 
-from .mobs import Mob
+from .types import Mob
 
 
 # 所有尺寸類參數都是對這個參考寬度校正的；實際畫面較大時等比例放大。

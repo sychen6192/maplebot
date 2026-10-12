@@ -45,7 +45,9 @@ One tick is `capture → perceive → decide → execute`, and each arrow is a h
 
 ### Pluggable detectors
 
-`vision/mobs.py:make_detector` returns one of four implementations behind the `MobDetector` interface — `outline` (default, zero setup, finds mobs by their black sprite outline), `template`, `yolo`, `remote`. The decision layer never knows which is in use. Add a detector by implementing `detect(img) -> List[Mob]`, not by branching in `perception.py`.
+`vision/mobs.py:make_detector` returns one of four implementations behind the `MobDetector` interface — `outline` (default, zero setup, finds mobs by their black sprite outline), `template`, `yolo`, `remote`, each in its own `vision/<kind>_mobs.py`. The decision layer never knows which is in use. Add a detector by implementing `detect(img) -> List[Mob]`, not by branching in `perception.py`.
+
+`Mob` and `MobDetector` are defined in `vision/types.py`, which imports neither cv2 nor numpy, so `brain/` can use them without loading OpenCV; `tests/test_layering.py` fails if `import maplebot.brain.fsm` pulls either in. `vision/mobs.py` re-exports both (and `TemplateMobDetector`) for older imports, but code under `brain/` must import from `vision/types.py`.
 
 ### Two config layers
 

@@ -16,7 +16,7 @@ from .vision import (minimap, mob_hpbar, nametag, player_bar, playfield,
                      revive, status)
 from .vision.locate import PLAYER_NAME, load_ui_template
 from .vision.follower import FollowerFilter
-from .vision.mobs import MobDetector
+from .vision.types import MobDetector
 from .vision.outline_mobs import REFERENCE_WIDTH
 from .vision.minimap_scroll import MinimapScroll
 from .vision.minimap_yolo import make_minimap_detector

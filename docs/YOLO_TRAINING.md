@@ -254,7 +254,7 @@ python main.py --profile config/profiles/example.yaml             # 上線
 ```
 
 推理耗時 1~3ms/幀，相對 8 FPS 主迴圈（125ms/tick）完全無感；
-`vision/yolo_mobs.py` 與模板匹配實作同一個 `MobDetector` 介面，其餘程式碼零改動。
+`vision/yolo_mobs.py` 與描邊偵測、模板匹配實作同一個 `MobDetector` 介面（`vision/types.py`），其餘程式碼零改動。
 
 ### 轉成 ONNX（掛機那台只做推理）
 

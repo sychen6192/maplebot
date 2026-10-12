@@ -22,9 +22,10 @@ import yaml
 
 from .teachers import TemplateTeacher, class_from_template_name  # noqa: F401
 from .vision import mob_hpbar, playfield
-from .vision.mobs import Mob, TemplateMobDetector
 from .vision.nametag import load_locator
 from .vision.outline_mobs import OutlineMobDetector
+from .vision.template_mobs import TemplateMobDetector
+from .vision.types import Mob
 
 IMG_EXTS = (".jpg", ".jpeg", ".png")
 
